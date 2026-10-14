@@ -8,6 +8,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: `modeler install` aggiunge `__pycache__/` (o `tools/modeler/**/__pycache__/`) al `.gitignore` dell'app se manca, come fa la skill per `.modeler/proposals/`; un test in `test_modeler.py` lo verifica, e il passo 4 della skill install lo cita.
 - **Plugin**: modeler
 - **Tipo**: skill
+- **Stato**: applicata il 2026-10-14: `modeler install` aggiunge `__pycache__/` al `.gitignore` dell'app (test `test_install_ignores_python_bytecode`).
 
 ## 2026-10-14 — Automatizzare pull request e merge su main dopo conferma
 - **Progetto**: guest-invitations-af (con iovino-harness)
@@ -15,6 +16,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: una skill `core:ship` (o `core:pr`) che, dopo i controlli del progetto, fa push del branch, apre la PR (titolo e corpo dai Conventional Commits, con l'attribuzione), aspetta l'esito della CI e la mostra, poi **chiede conferma esplicita** e solo allora fa il merge su `main` (e cancella il branch). Prerequisito: `gh` installato e autenticato (`! brew install gh && gh auth login`), o in alternativa l'API GitHub. Regola in `conventions.md`: il merge su `main` di un'app con deploy automatico richiede sempre la conferma, anche se la PR l'ha aperta Claude; per l'harness ricordare `release.py --write` prima del push.
 - **Plugin**: core
 - **Tipo**: skill
+- **Stato**: da applicare (serve `gh` installato e autenticato).
 
 ## 2026-10-14 — Editor e diagrammi di modellazione: modello leggibile, connettori non sovrapposti
 - **Progetto**: guest-invitations-af (diagramma del workflow in `/admin/workflows/[id]`; vale anche per l'editor del metamodello)
@@ -29,3 +31,4 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
   Riferimento d'implementazione: `src/lib/workflow-layout.ts` e `tests/workflow-layout.test.ts` di guest-invitations-af. Valutare di portare le stesse regole nell'editor del metamodello (`kit/metamodel-editor.js`).
 - **Plugin**: core (convenzione) + modeler (editor del metamodello)
 - **Tipo**: convenzione
+- **Stato**: in parte applicata il 2026-10-14: regole nella skill `core:diagrams`, richiamata da `conventions.md`. Da fare nell'editor del metamodello: layout come funzione pura con test, bus, etichette tra più candidati, porte in entrata sfalsate, evidenziazione al passaggio del mouse.
