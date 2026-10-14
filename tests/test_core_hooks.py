@@ -95,6 +95,26 @@ class SessionTests(unittest.TestCase):
             self.assertIn("HANDOFF.md", out)
             self.assertIn("Node", out)
 
+    def test_harness_notes_to_review(self):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init", "-q", "-b", "main", d], check=True)
+            (Path(d) / ".claude-plugin").mkdir()
+            (Path(d) / ".claude-plugin/marketplace.json").write_text("{}")
+            (Path(d) / "plugins/core").mkdir(parents=True)
+            notes = Path(d) / "NOTES.md"
+            notes.write_text("# Note per l'harness\n\n"
+                             "## 2026-01-01 — a\n- **Stato**: applicata il 2026-01-02: x\n\n"
+                             "## 2026-01-01 — b\n- **Stato**: scartata il 2026-01-02: y\n\n"
+                             "## 2026-01-01 — c\n- **Stato**: rinviata il 2026-01-02: z\n\n"
+                             "## 2026-01-01 — d\n- **Stato**: in parte applicata: w\n\n"
+                             "## 2026-01-01 — e\n- **Plugin**: core\n")
+            res = run("session", {"cwd": d}, {"CLAUDE_PLUGIN_OPTION_HARNESS_REPO": ""})
+            self.assertIn("2 note da valutare in NOTES.md (più 1 rinviate)", res.stdout)
+            self.assertIn("/core:harness-review", res.stdout)
+            notes.write_text("# Note per l'harness\n\n## 2026-01-01 — a\n- **Stato**: applicata: x\n")
+            res = run("session", {"cwd": d}, {"CLAUDE_PLUGIN_OPTION_HARNESS_REPO": ""})
+            self.assertNotIn("note da valutare", res.stdout)
+
     def test_not_a_repo(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "CLAUDE.md").write_text("x")

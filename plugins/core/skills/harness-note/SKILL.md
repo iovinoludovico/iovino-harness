@@ -26,7 +26,10 @@ Aggiungi in fondo una voce con questo formato:
 - **Proposta**: <modifica concreta: riga da aggiungere a conventions.md, regola di guard, nuova skill, modifica a una skill esistente>
 - **Plugin**: core | modeler | nuovo
 - **Tipo**: convenzione | guardrail | skill | agente | altro
+- **Stato**: da valutare
 ```
+
+La riga **Stato** la aggiorna `/core:harness-review` quando la nota viene applicata, scartata o rinviata.
 
 Se l'utente non ha dato una lezione esplicita, ricavala dalla sessione e mostrala prima di scriverla.
 
@@ -34,4 +37,4 @@ Se l'utente non ha dato una lezione esplicita, ricavala dalla sessione e mostral
 
 - Una voce per lezione, niente duplicati: leggi prima il file e, se una voce simile esiste, aggiornala aggiungendo il nuovo caso.
 - Niente dati riservati del progetto (segreti, nomi di clienti, dati personali): la nota deve essere generale.
-- Non modificare direttamente `conventions.md`, gli hook o le skill dei plugin: le note si rivedono e si applicano in una sessione dedicata dentro il repository harness. Non committare lì senza richiesta.
+- Non modificare direttamente `conventions.md`, gli hook o le skill dei plugin: le note si rivedono e si applicano in una sessione dedicata dentro il repository harness, con `/core:harness-review`. Non committare lì senza richiesta.

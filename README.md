@@ -6,7 +6,7 @@ Harness personale per Claude Code: un marketplace di plugin da installare su ogn
 
 | Plugin | Cosa fa |
 | :- | :- |
-| `core` | Convenzioni iniettate a inizio sessione, guardrail su segreti e comandi distruttivi, autoformattazione, agenti `code-reviewer` e `debugger`, skill `project-init`, `handoff`, `commit`, `db-push`, `harness-note` |
+| `core` | Convenzioni iniettate a inizio sessione, guardrail su segreti e comandi distruttivi, autoformattazione, agenti `code-reviewer` e `debugger`, skill `project-init`, `handoff`, `commit`, `db-push`, `harness-note`, `harness-review` |
 | `modeler` | Sviluppo model-based delle app Next.js + Supabase: metamodello di dominio `domain.ecore.yaml` (notazione Ecore) dal prompt o ricavato dal database, modellatore web che diventa parte dell'app (`/admin/model`, proposte, CLI `tools/modeler/` con gli script `npm run model:*`), controllo di allineamento metamodello ↔ database, export Ecore/Emfatic/Mermaid. Dettagli in `plugins/modeler/README.md` |
 
 In arrivo: `research`, `mde`.
@@ -75,6 +75,7 @@ Differenze rispetto alla strada A:
 | `/core:handoff` | Fine sessione o cambio computer: aggiorna HANDOFF.md |
 | `/core:db-push` | Porta in produzione (Supabase cloud) le migrazioni nuove: controlli, anteprima, conferma, verifica |
 | `/core:harness-note <lezione>` | Qualcosa da migliorare nell'harness: finisce in `NOTES.md` |
+| `/core:harness-review` | Nel repository harness: valuta le note aperte, applica quelle approvate, segna applicata/scartata/rinviata |
 | `/modeler:install` | Mette il modellatore in un'app (o lo aggiorna): metamodello dal database se manca, `/admin/model`, `npm run model:*` |
 | `/modeler:metamodel <descrizione>` | Metamodello dal prompt, poi migrazione, codice e `model:drift` |
 | `/modeler:apply` | Applica le proposte salvate dal modellatore web (sviluppo o produzione) |
@@ -128,7 +129,7 @@ plugins/core/
   hooks/hooks.json
   scripts/hook.py
   agents/{code-reviewer,debugger}.md
-  skills/{project-init,handoff,commit,db-push,harness-note}/SKILL.md
+  skills/{project-init,handoff,commit,db-push,harness-note,harness-review}/SKILL.md
 plugins/modeler/                ← metamodello e modellatore web delle app (README proprio)
 settings/recommended-settings.json, merge_settings.py
 scripts/release.py              ← versioni dei plugin a ogni rilascio
