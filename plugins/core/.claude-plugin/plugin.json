@@ -1,7 +1,7 @@
 {
   "name": "core",
   "displayName": "Core harness",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Convenzioni di lavoro caricate a ogni sessione, guardrail su segreti e git, formattazione automatica, agenti di revisione e debug, skill per inizializzare progetti, commit, migrazioni sul Supabase cloud e passaggi di consegne.",
   "author": { "name": "Ludovico Iovino" },
   "license": "MIT",
