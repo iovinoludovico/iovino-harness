@@ -206,7 +206,9 @@ ASK_RULES = [
     (re.compile(r"\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba|z)?sh\b"), "esegue uno script scaricato dalla rete"),
     (re.compile(r"\bchmod\s+(-R\s+)?777\b"), "permessi 777"),
     (re.compile(r"\bsudo\b"), "comando con sudo"),
-    (re.compile(r"\bsupabase\s+(db\s+reset|db\s+push|link)\b"), "operazione sul database Supabase"),
+    # db push --dry-run only previews (used by /core:db-push): no question for it
+    (re.compile(r"\bsupabase\s+(db\s+reset|link)\b|\bsupabase\s+db\s+push\b(?!.*--dry-run)"),
+     "operazione sul database Supabase"),
     (re.compile(r"\bdocker\s+(system|volume|image)\s+prune\b|\bdocker\s+compose\s+down\s+.*-v\b"),
      "cancella volumi o immagini Docker"),
     (re.compile(r"\b(cat|less|more|head|tail|bat|source|\.)\s+(\S*/)?\.env(\.(?!example\b)\w+)*(\s|$)"),
