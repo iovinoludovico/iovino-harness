@@ -25,7 +25,7 @@
   const RESERVED = ["id", "createdAt", "updatedAt", "created_at", "updated_at"];
   const BOX_W = 210, HEAD_H = 32, ROW_H = 19, PAD = 8, CHAR_W = 7.4;
   const MAX_ROWS = 12;                     // attributes shown in a box before "+N" (all of them with "Tutti")
-  const GAP_X = 70, GAP_Y = 50, MARGIN = 24, K_MIN = 0.25, K_MAX = 2;
+  const GAP_X = 110, GAP_Y = 56, MARGIN = 24, K_MIN = 0.25, K_MAX = 2;
 
   const T = {
     it: {
@@ -115,7 +115,8 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .edge { stroke:var(--muted); fill:none; stroke-width:1.6; }
 .edge.inherit { stroke-dasharray:none; }
 .elabel { fill:var(--muted); font-size:12px; paint-order:stroke; stroke:var(--bg); stroke-width:4px; stroke-linejoin:round; }
-.mk-open { fill:var(--bg); stroke:var(--muted); }
+.mk-open { fill:var(--bg); stroke:var(--muted); stroke-width:1.2; }
+.mk-line { fill:none; stroke:var(--muted); stroke-width:1.6; stroke-linejoin:round; }
 .status.warn { color:#d97706; }
 .issues div.w { color:#b45309; }
 .mk-fill { fill:var(--muted); }
@@ -377,6 +378,10 @@ button.on { border-color:var(--accent); color:var(--accent); }
         const m = a.lower === 0 && a.upper === 1 ? "" : ` [${multText(a.lower, a.upper)}]`;
         return `${a.id ? "🔑 " : ""}${an}: ${a.type}${m}`;
       });
+      // references to the application users have no box to point to: listed in the class, dimmed
+      for (const [rn, r] of Object.entries(c.references)) {
+        if (r.type === "User") lines.push(`↗ ${rn}: User${r.lower === 0 && r.upper === 1 ? "" : ` [${multText(r.lower, r.upper)}]`}`);
+      }
       if (this._allAttrs || lines.length <= MAX_ROWS) return lines;
       return [...lines.slice(0, MAX_ROWS - 1), `… +${lines.length - MAX_ROWS + 1} ${this.t.more}`];
     }
@@ -479,6 +484,9 @@ button.on { border-color:var(--accent); color:var(--accent); }
       for (const [n, p] of pos) {
         const s = this._boxSize(n);
         x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x + s.w); y1 = Math.max(y1, p.y + s.h);
+      }
+      if (this._ext) {   // connectors that run around the boxes stay in view
+        x0 = Math.min(x0, this._ext.x0); y0 = Math.min(y0, this._ext.y0); x1 = Math.max(x1, this._ext.x1); y1 = Math.max(y1, this._ext.y1);
       }
       const k = Math.min(K_MAX, Math.max(K_MIN, Math.min((r.width - 2 * MARGIN) / (x1 - x0), (r.height - 2 * MARGIN) / (y1 - y0))));
       this._view = { k, x: (r.width - (x1 - x0) * k) / 2 - x0 * k, y: (r.height - (y1 - y0) * k) / 2 - y0 * k };
@@ -646,67 +654,151 @@ button.on { border-color:var(--accent); color:var(--accent); }
       if (!canvas) return;
       const mm = this._mm;
       const defs = svg("defs", {},
-        svg("marker", { id: "tri", viewBox: "0 0 12 12", refX: "11", refY: "6", markerWidth: "14", markerHeight: "14", orient: "auto-start-reverse" },
+        svg("marker", { id: "tri", viewBox: "0 0 12 12", refX: "11", refY: "6", markerWidth: "16", markerHeight: "16", orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" },
           svg("path", { d: "M1,1 L11,6 L1,11 z", class: "mk-open" })),
-        svg("marker", { id: "arrow", viewBox: "0 0 12 12", refX: "11", refY: "6", markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse" },
-          svg("path", { d: "M1,1 L11,6 L1,11", class: "edge" })),
-        svg("marker", { id: "diamond", viewBox: "0 0 16 10", refX: "1", refY: "5", markerWidth: "16", markerHeight: "10", orient: "auto-start-reverse" },
+        svg("marker", { id: "arrow", viewBox: "0 0 12 12", refX: "11", refY: "6", markerWidth: "11", markerHeight: "11", orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" },
+          svg("path", { d: "M1,1 L11,6 L1,11", class: "mk-line" })),
+        svg("marker", { id: "diamond", viewBox: "0 0 16 10", refX: "15", refY: "5", markerWidth: "20", markerHeight: "12", orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" },
           svg("path", { d: "M1,5 L8,1 L15,5 L8,9 z", class: "mk-fill" })));
       const g = svg("g", { transform: `translate(${this._view.x},${this._view.y}) scale(${this._view.k})` });
       const edges = svg("g", {});
       const labels = svg("g", {});
+      // EMF / Ecore Tools notation: reference = open arrow at the target; containment = filled diamond at the
+      // container; a pair of opposite references = one connector with both ends; inheritance = hollow triangle
+      // at the supertype. Connectors are orthogonal with rounded corners.
+      const list = [];
       const drawn = new Set();
       for (const [cn, c] of Object.entries(mm.classes)) {
-        const a = this._center(cn);
-        if (!a) continue;
+        if (!mm.diagram[cn]) continue;
         for (const s of c.supertypes) {
-          const b = this._center(s);
-          if (!b) continue;
-          const p1 = this._anchor(cn, b), p2 = this._anchor(s, a);
-          edges.append(svg("path", { d: `M${p1.x},${p1.y} L${p2.x},${p2.y}`, class: "edge inherit", "marker-end": "url(#tri)" }));
+          if (mm.diagram[s] && mm.classes[s]) list.push({ a: cn, b: s, end: "url(#tri)", cls: "edge inherit" });
         }
         for (const [rn, r] of Object.entries(c.references)) {
           if (drawn.has(`${cn}.${rn}`)) continue;
-          const b = r.type === "User" ? null : this._center(r.type);
-          if (!b) {
-            const p = mm.diagram[cn];
-            labels.append(svg("text", { x: p.x + 4, y: p.y + this._boxSize(cn).h + 14, class: "elabel" }, `${rn} → User`));
-            continue;
-          }
+          if (r.type === "User" || !mm.diagram[r.type] || !mm.classes[r.type]) continue;   // User: a row in the box
           const o = r.opposite ? mm.classes[r.type]?.references?.[r.opposite] : null;
           if (o) drawn.add(`${r.type}.${r.opposite}`);
-          let p1, p2, d;
-          if (r.type === cn) {   // self reference: a loop on the right side
-            const p = mm.diagram[cn];
-            const s = this._boxSize(cn);
-            p1 = { x: p.x + s.w, y: p.y + 10 };
-            p2 = { x: p.x + s.w, y: p.y + 26 };
-            d = `M${p1.x},${p1.y} C${p1.x + 50},${p1.y - 30} ${p2.x + 50},${p2.y + 30} ${p2.x},${p2.y}`;
-          } else {
-            p1 = this._anchor(cn, b);
-            p2 = this._anchor(r.type, a);
-            d = `M${p1.x},${p1.y} L${p2.x},${p2.y}`;
-          }
-          const attrs = { d, class: "edge" };
-          if (r.containment) attrs["marker-start"] = "url(#diamond)";
-          if (o?.containment) attrs["marker-end"] = "url(#diamond)";
-          else if (!o) attrs["marker-end"] = "url(#arrow)";
-          edges.append(svg("path", attrs));
-          const lab = (pt, from, text) => {
-            // a little way along the line from its end, extending away from the box it touches
-            const ux = from.x - pt.x, uy = from.y - pt.y, len = Math.hypot(ux, uy) || 1;
-            const x = pt.x + (ux / len) * 14, y = pt.y + (uy / len) * 14;
-            const horizontal = Math.abs(ux) >= Math.abs(uy);
-            const anchor = horizontal ? (ux < 0 ? "end" : "start") : "start";
-            labels.append(svg("text", {
-              x: horizontal ? x : x + 6, y: horizontal ? y - 5 : y + (uy < 0 ? -2 : 12),
-              "text-anchor": anchor, class: "elabel",
-            }, text));
-          };
-          lab(p2, p1, `${rn} ${multText(r.lower, r.upper)}`);
-          if (o) lab(p1, p2, `${r.opposite} ${multText(o.lower, o.upper)}`);
+          list.push({
+            a: cn, b: r.type, cls: "edge",
+            start: r.containment ? "url(#diamond)" : (o ? "url(#arrow)" : null),
+            end: o?.containment ? "url(#diamond)" : "url(#arrow)",
+            labelB: `${rn} ${multText(r.lower, r.upper)}`,
+            labelA: o ? `${r.opposite} ${multText(o.lower, o.upper)}` : null,
+          });
         }
       }
+      const rect = (n) => { const p = mm.diagram[n], s = this._boxSize(n); return { x: p.x, y: p.y, w: s.w, h: s.h }; };
+      const out = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };
+      const SIDES = ["right", "left", "bottom", "top"];
+      const mid = (R, side) => side === "left" ? { x: R.x, y: R.y + R.h / 2 } : side === "right" ? { x: R.x + R.w, y: R.y + R.h / 2 }
+        : side === "top" ? { x: R.x + R.w / 2, y: R.y } : { x: R.x + R.w / 2, y: R.y + R.h };
+      const route = (p1, sa, p2, sb, lane, self, detour = 0) => {
+        const h1 = sa === "left" || sa === "right", h2 = sb === "left" || sb === "right";
+        const step = 28 + detour * 10;   // connectors going around the boxes get a lane each
+        if (self) { const x = p1.x + step; return [p1, { x, y: p1.y }, { x, y: p2.y }, p2]; }
+        if (h1 && h2) {
+          const facing = out[sa][0] !== out[sb][0] && (out[sa][0] > 0 ? p2.x > p1.x : p2.x < p1.x);
+          const x = facing ? (p1.x + p2.x) / 2 + lane : (out[sa][0] > 0 ? Math.max(p1.x, p2.x) + step : Math.min(p1.x, p2.x) - step);
+          return Math.abs(p1.y - p2.y) < 1 && facing ? [p1, p2] : [p1, { x, y: p1.y }, { x, y: p2.y }, p2];
+        }
+        if (!h1 && !h2) {
+          const facing = out[sa][1] !== out[sb][1] && (out[sa][1] > 0 ? p2.y > p1.y : p2.y < p1.y);
+          const y = facing ? (p1.y + p2.y) / 2 + lane : (out[sa][1] > 0 ? Math.max(p1.y, p2.y) + step : Math.min(p1.y, p2.y) - step);
+          return Math.abs(p1.x - p2.x) < 1 && facing ? [p1, p2] : [p1, { x: p1.x, y }, { x: p2.x, y }, p2];
+        }
+        // one horizontal and one vertical side: an L, with short stubs out of each box
+        const a = { x: p1.x + out[sa][0] * step, y: p1.y + out[sa][1] * step };
+        const b = { x: p2.x + out[sb][0] * step, y: p2.y + out[sb][1] * step };
+        return h1 ? [p1, { x: b.x, y: p1.y }, p2] : [p1, { x: p1.x, y: b.y }, p2];
+      };
+      const boxes_ = [...Object.keys(mm.classes), ...Object.keys(mm.enums)].filter((n) => mm.diagram[n]).map((n) => [n, rect(n)]);
+      const crosses = (pts, skip) => {
+        let n = 0;
+        for (const [name, R] of boxes_) {
+          const own = skip.includes(name);
+          for (let i = 0; i < pts.length - 1; i++) {
+            const p = pts[i], q = pts[i + 1];
+            const x0 = Math.min(p.x, q.x), x1 = Math.max(p.x, q.x), y0 = Math.min(p.y, q.y), y1 = Math.max(p.y, q.y);
+            const m = own ? 2 : -4;   // the own boxes only count when the line runs inside them
+            if (x0 < R.x + R.w - m && x1 > R.x + m && y0 < R.y + R.h - m && y1 > R.y + m) n++;
+          }
+        }
+        return n;
+      };
+      const cost = (pts, skip) => {
+        let len = 0;
+        for (let i = 0; i < pts.length - 1; i++) len += Math.abs(pts[i + 1].x - pts[i].x) + Math.abs(pts[i + 1].y - pts[i].y);
+        return crosses(pts, skip) * 100000 + len + (pts.length - 2) * 40;
+      };
+      for (const e of list) {   // the sides the connector leaves and enters
+        const A = rect(e.a), B = rect(e.b);
+        e.A = A; e.B = B;
+        if (e.a === e.b) { e.sa = "right"; e.sb = "right"; continue; }
+        let best = Infinity;
+        for (const sa of SIDES) for (const sb of SIDES) {
+          const c = cost(route(mid(A, sa), sa, mid(B, sb), sb, 0, false), [e.a, e.b]);
+          if (c < best - 1e-6) { best = c; e.sa = sa; e.sb = sb; }
+        }
+      }
+      // ports: the connectors on the same side of a box are spread along it, ordered by where they go
+      const ports = {};
+      list.forEach((e, i) => {
+        for (const [end, n, side, other] of [["a", e.a, e.sa, e.B], ["b", e.b, e.sb, e.A]]) {
+          (ports[`${n}|${side}`] ||= []).push({ i, end, key: side === "left" || side === "right" ? other.y + other.h / 2 : other.x + other.w / 2 });
+        }
+      });
+      for (const [k, items] of Object.entries(ports)) {
+        const [n, side] = k.split("|");
+        const R = rect(n);
+        items.sort((u, v) => u.key - v.key);
+        items.forEach((it, j) => {
+          const t = (j + 1) / (items.length + 1);
+          const pt = side === "left" ? { x: R.x, y: R.y + HEAD_H / 2 + (R.h - HEAD_H / 2) * t }
+            : side === "right" ? { x: R.x + R.w, y: R.y + HEAD_H / 2 + (R.h - HEAD_H / 2) * t }
+              : side === "top" ? { x: R.x + R.w * t, y: R.y } : { x: R.x + R.w * t, y: R.y + R.h };
+          list[it.i][it.end === "a" ? "pa" : "pb"] = pt;
+          list[it.i][it.end === "a" ? "ja" : "jb"] = j;   // position on the side: labels alternate
+        });
+      }
+      const rounded = (pts, radius = 10) => {
+        let d = `M${pts[0].x},${pts[0].y}`;
+        for (let i = 1; i < pts.length - 1; i++) {
+          const p0 = pts[i - 1], p1 = pts[i], p2 = pts[i + 1];
+          const l1 = Math.hypot(p1.x - p0.x, p1.y - p0.y), l2 = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+          const r = Math.min(radius, l1 / 2, l2 / 2);
+          if (r < 0.5) { d += ` L${p1.x},${p1.y}`; continue; }
+          const a = { x: p1.x + ((p0.x - p1.x) / l1) * r, y: p1.y + ((p0.y - p1.y) / l1) * r };
+          const b = { x: p1.x + ((p2.x - p1.x) / l2) * r, y: p1.y + ((p2.y - p1.y) / l2) * r };
+          d += ` L${a.x},${a.y} Q${p1.x},${p1.y} ${b.x},${b.y}`;
+        }
+        const last = pts[pts.length - 1];
+        return d + ` L${last.x},${last.y}`;
+      };
+      const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };   // connectors' extent, for _fit
+      list.forEach((e, i) => {
+        const p1 = e.pa, p2 = e.pb;
+        const lane = ((i % 5) - 2) * 6;   // parallel connectors do not share the same vertical/horizontal run
+        const pts = route(p1, e.sa, p2, e.sb, lane, e.a === e.b, i % 5);
+        for (const q of pts) {
+          ext.x0 = Math.min(ext.x0, q.x - 14); ext.x1 = Math.max(ext.x1, q.x + 14);
+          ext.y0 = Math.min(ext.y0, q.y - 22); ext.y1 = Math.max(ext.y1, q.y + 22);
+        }
+        const attrs = { d: rounded(pts), class: e.cls };
+        if (e.start) attrs["marker-start"] = e.start;
+        if (e.end) attrs["marker-end"] = e.end;
+        edges.append(svg("path", attrs));
+        const lab = (pt, side, text, below) => {
+          // just outside the box, extending away from it; the two ends of a pair on opposite sides of the line
+          const [ox, oy] = out[side];
+          if (ox) {
+            labels.append(svg("text", { x: pt.x + ox * 12, y: below ? pt.y + 17 : pt.y - 6, "text-anchor": ox < 0 ? "end" : "start", class: "elabel" }, text));
+          } else {
+            labels.append(svg("text", { x: below ? pt.x - 6 : pt.x + 6, y: pt.y + (oy < 0 ? -8 : 18), "text-anchor": below ? "end" : "start", class: "elabel" }, text));
+          }
+        };
+        if (e.labelB) lab(p2, e.sb, e.labelB, e.labelA ? false : e.jb % 2 === 0);   // first port: label on its left
+        if (e.labelA) lab(p1, e.sa, e.labelA, e.ja % 2 === 0);
+      });
       const boxes = svg("g", {});
       for (const [cn, c] of Object.entries(mm.classes)) {
         const p = mm.diagram[cn];
@@ -722,8 +814,8 @@ button.on { border-color:var(--accent); color:var(--accent); }
         const rows = this._rows(c);
         if (!rows.length) b.append(svg("text", { x: 8, y, class: "muted" }, "—"));
         rows.forEach((line, i) => {
-          const more = !this._allAttrs && i === MAX_ROWS - 1 && line.startsWith("…");
-          b.append(svg("text", { x: 8, y, class: more ? "muted" : null }, line));
+          const muted = line.startsWith("↗ ") || (!this._allAttrs && i === MAX_ROWS - 1 && line.startsWith("…"));
+          b.append(svg("text", { x: 8, y, class: muted ? "muted" : null }, line));
           y += ROW_H;
         });
         boxes.append(b);
@@ -742,6 +834,7 @@ button.on { border-color:var(--accent); color:var(--accent); }
         for (const l of e.literals) { b.append(svg("text", { x: 8, y }, l.name)); y += ROW_H; }
         boxes.append(b);
       }
+      this._ext = list.length ? ext : null;
       g.append(edges, boxes, labels);   // lines under the boxes, labels on top
       const root = svg("svg", { role: "img", "aria-label": "metamodel diagram" }, defs, g);
       const old = canvas.querySelector("svg");
