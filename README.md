@@ -13,26 +13,58 @@ In arrivo: `research`, `mde`.
 
 ## Installazione su un nuovo computer
 
-Requisiti: Claude Code, `git`, `python3` (≥ 3.9).
+Requisiti: Claude Code, `git`, `python3` (≥ 3.10 per `modeler`). Il repository è
+`iovinoludovico/iovino-harness`. Due strade:
+
+### A. Clone + `install.sh` (consigliata)
 
 ```bash
-git clone git@github.com:<tuo-utente>/iovino-harness.git ~/code/iovino-harness
-cd ~/code/iovino-harness
+git clone https://github.com/iovinoludovico/iovino-harness.git ~/Documents/GitHub/iovino-harness
+cd ~/Documents/GitHub/iovino-harness
 ./install.sh
 ```
 
-Lo script:
+Lo script (si può rilanciare quando vuoi):
 
-1. registra la cartella come marketplace `iovino-harness` (caricato in place: un `git pull` aggiorna subito i plugin);
-2. installa `core` (con `harness_repo` su questa cartella) e `modeler` (`PLUGINS=core ./install.sh` per sceglierne alcuni);
-3. aggiunge i permessi di `settings/recommended-settings.json` a `~/.claude/settings.json` (unione delle liste, backup automatico). Usa `--no-settings` per saltare questo passo.
+1. registra la cartella come marketplace `iovino-harness`, caricato in place: i plugin si leggono da qui;
+2. installa `core` (con `harness_repo` su questa cartella, così `/core:harness-note` scrive in `NOTES.md`) e
+   `modeler` (`PLUGINS=core ./install.sh` per sceglierne alcuni);
+3. aggiunge i permessi di `settings/recommended-settings.json` a `~/.claude/settings.json` (unione delle liste,
+   backup automatico; `--no-settings` per saltare questo passo);
+4. attiva l'hook git di push (`core.hooksPath .githooks`) che impedisce di pubblicare un plugin modificato senza
+   alzarne la versione.
 
-Senza clone locale si può usare direttamente GitHub: `claude plugin marketplace add <tuo-utente>/iovino-harness` e poi `claude plugin install core@iovino-harness`; in questo caso `harness_repo` va impostato a mano con `/config`.
+**Aggiornare**: `git pull`, poi `/reload-plugins` nelle sessioni aperte (rilancia `./install.sh` se è cambiato).
 
-In una sessione già aperta: `/reload-plugins`.
+### B. Dal marketplace GitHub, senza clone
 
-appforge (generatore di app da `app.yaml`) è dismesso: se è installato, lo script lo segnala; rimuovilo con
-`claude plugin uninstall appforge@appforge-marketplace` e `claude plugin marketplace remove appforge-marketplace`.
+```bash
+claude plugin marketplace add iovinoludovico/iovino-harness
+claude plugin install core@iovino-harness
+claude plugin install modeler@iovino-harness
+```
+(dentro Claude Code: `/plugin marketplace add iovinoludovico/iovino-harness`, poi `/plugin`).
+
+**Aggiornare**:
+```bash
+claude plugin marketplace update iovino-harness
+claude plugin update core@iovino-harness
+claude plugin update modeler@iovino-harness
+```
+poi `/reload-plugins`. Un plugin si aggiorna solo se la sua `version` è cambiata: per questo ogni rilascio la
+alza (vedi "Rilasciare una modifica").
+
+Differenze rispetto alla strada A:
+- le note di `/core:harness-note` vanno in `~/.claude/plugins/data/core-iovino-harness/NOTES.md`; se su quel
+  computer cloni il repository, imposta `harness_repo` con `/config` per scriverle direttamente in `NOTES.md`;
+- i permessi consigliati non vengono aggiunti (li applica solo `install.sh`);
+- repository privato: l'installazione usa le credenziali git del computer (`git clone` deve funzionare); per gli
+  aggiornamenti automatici in background serve `GITHUB_TOKEN` nell'ambiente, altrimenti aggiorna con i comandi sopra.
+
+### Dopo l'installazione
+- In una sessione già aperta: `/reload-plugins`.
+- appforge (generatore di app da `app.yaml`) è dismesso: se è installato, `install.sh` lo segnala; rimuovilo con
+  `claude plugin uninstall appforge@appforge-marketplace` e `claude plugin marketplace remove appforge-marketplace`.
 
 ## Uso quotidiano
 
@@ -61,8 +93,29 @@ Gli hook sono Python solo libreria standard: nessuna dipendenza da installare.
 
 1. Durante il lavoro in qualunque progetto, quando Claude sbaglia qualcosa di ricorrente o manca una regola: `/core:harness-note …`. La nota finisce nel `NOTES.md` di questo clone (opzione `harness_repo` del plugin core, impostata da `install.sh`; senza clone va in `~/.claude/plugins/data/core-iovino-harness/NOTES.md`).
 2. Ogni tanto, apri una sessione in questo repository, rivedi `NOTES.md` e trasforma le note in modifiche a `conventions.md`, agli hook o alle skill.
-3. `python3 -m unittest discover -s tests`, `python3 -m unittest discover -s plugins/modeler/tests` e `claude plugin validate .`, poi commit e push.
-4. Sugli altri computer: `git pull` (marketplace locale) oppure `claude plugin marketplace update iovino-harness`.
+3. `python3 -m unittest discover -s tests`, `python3 -m unittest discover -s plugins/modeler/tests` e `claude plugin validate .`, poi commit.
+4. Rilascio e push (sezione seguente).
+5. Sugli altri computer: `git pull` (strada A) oppure `claude plugin marketplace update` + `claude plugin update` (strada B).
+
+## Rilasciare una modifica
+
+Ogni push che tocca un plugin ne alza la versione: senza versione nuova `claude plugin update` non scarica nulla
+sugli altri computer e le app non vedono che il loro modellatore va aggiornato.
+
+```bash
+python3 scripts/release.py           # cosa è cambiato e quale sarebbe la versione nuova
+python3 scripts/release.py --write   # alza le versioni e crea il commit chore(release): …
+git push
+```
+
+- Il livello si deduce dai Conventional Commits che toccano il plugin dall'ultima versione: `feat` → minor,
+  `!`/`BREAKING CHANGE` → major (minor finché la versione è 0.x), il resto → patch. `--level patch|minor|major`
+  lo forza.
+- `release.py` aggiorna anche le copie della versione (`__version__` del modeler).
+- L'hook `.githooks/pre-push` blocca il push se un plugin modificato ha ancora la versione vecchia.
+- Claude lo fa da solo prima di ogni push (regola nel `CLAUDE.md` di questo repository).
+- Dopo un rilascio di `modeler`, nelle app che lo usano lancia `/modeler:install` per aggiornare il modellatore
+  copiato nel repository (a inizio sessione l'hook lo ricorda quando le versioni differiscono).
 
 ## Struttura
 
@@ -77,7 +130,10 @@ plugins/core/
   skills/{project-init,handoff,commit,harness-note}/SKILL.md
 plugins/modeler/                ← metamodello e modellatore web delle app (README proprio)
 settings/recommended-settings.json, merge_settings.py
+scripts/release.py              ← versioni dei plugin a ogni rilascio
+.githooks/pre-push              ← blocca il push di un plugin non rilasciato
 tests/
 install.sh
+CLAUDE.md                       ← regole per lavorare su questo repository
 NOTES.md                         ← lezioni annotate da /core:harness-note
 ```

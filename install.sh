@@ -25,6 +25,11 @@ done
 command -v claude >/dev/null || { echo "Claude Code non trovato nel PATH." >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 è richiesto dagli hook del plugin core." >&2; exit 1; }
 
+if [ "$SOURCE" = "$HERE" ] && [ -d "$HERE/.git" ]; then
+  # il push di un plugin modificato richiede la versione alzata (scripts/release.py)
+  git -C "$HERE" config core.hooksPath .githooks
+fi
+
 echo "==> Marketplace $MARKETPLACE da $SOURCE"
 if claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE"; then
   claude plugin marketplace update "$MARKETPLACE"

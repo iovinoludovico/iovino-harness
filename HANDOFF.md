@@ -1,5 +1,5 @@
 # Handoff — sviluppo dell'harness iovino-harness
-_Aggiornato: 2026-10-14 · branch `feat/modeler-plugin`_
+_Aggiornato: 2026-10-14 · branch `feat/release-versioning`_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code, installabile su ogni computer con `./install.sh`:
@@ -18,6 +18,10 @@ Si raffina un pezzo alla volta; poi arriveranno i plugin `research` e `mde`.
   inizio sessione (versione del modellatore vendorizzato, drift con `MODELER_DRIFT_DB`).
 - appforge (generatore di app da `app.yaml`, Studio, registro) è **dismesso**: rimosso dall'harness; del suo
   codice restano solo metamodello, reverse/drift ed editor, ripuliti dal comportamento.
+- Rilasci: `scripts/release.py` alza la versione dei plugin modificati (livello dai Conventional Commits, file
+  gemelli come `__version__` del modeler) e crea `chore(release): …`; `.githooks/pre-push` (attivato da
+  `install.sh`) blocca il push di un plugin non rilasciato; regola nel `CLAUDE.md` del repository. README con le
+  due installazioni (clone + `install.sh`, marketplace GitHub `iovinoludovico/iovino-harness`).
 - Verificato: test core (`python3 -m unittest discover -s tests`), test modeler
   (`python3 -m unittest discover -s plugins/modeler/tests`, 16 test; con `MODELER_PG` anche reverse e drift su
   Postgres 16 in Docker), `tsc` del kit in un'app Next di prova, editor provato in Chromium headless.
@@ -36,7 +40,7 @@ Si raffina un pezzo alla volta; poi arriveranno i plugin `research` e `mde`.
   appforge: da migrare con `/modeler:install` quando serve (metamodello dal database).
 
 ## Prossimi passi
-1. Merge di `feat/modeler-plugin`, `./install.sh`, rimozione di `appforge@appforge-marketplace` e `~/.appforge`.
+1. Merge di `feat/release-versioning` e push (rilascio core 0.1.1, modeler 0.1.1).
 2. `/modeler:install` su un'app reale con `supabase start` (prova completa di `/admin/model` e proposte).
 3. Pubblicare il repo su GitHub (privato) e installarlo sugli altri computer.
 4. Rivedere `NOTES.md` e applicare le lezioni a convenzioni, hook e skill.
