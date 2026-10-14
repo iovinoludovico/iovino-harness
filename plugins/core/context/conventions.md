@@ -12,13 +12,13 @@
 - Prima di committare: test e lint del progetto verdi.
 
 ## Sviluppo guidato dai modelli
-- I modelli guidano sempre lo sviluppo: struttura del dominio nel metamodello (`domain.ecore.yaml`), comportamento (workflow, permessi, eventi, webhook, UI) nel modello di comportamento (`app.yaml`). Ogni modifica parte dal modello, poi si rigenera o si allinea il codice; mai il contrario.
-- Prima di scrivere codice a mano verifica se il modello (o la mappatura UI) può esprimere la richiesta; se può, cambia il modello.
+- I modelli guidano sempre lo sviluppo: la struttura del dominio sta nel metamodello `domain.ecore.yaml` (notazione Ecore). Ogni modifica di schema parte dal metamodello e va, nella stessa modifica, con la migrazione e il codice che la usa; mai il contrario.
+- Il metamodello resta allineato al database: `npm run model:drift` deve rispondere "aligned" (plugin `modeler`, che installa nell'app il modellatore web `/admin/model` e la CLI `tools/modeler/`).
+- Prima di scrivere codice a mano verifica se il metamodello può esprimere la richiesta; se può, cambia il metamodello.
 - Le personalizzazioni (ciò che il modello non esprime) sono ammesse solo se chiarite in modo esplicito:
   - registrate in `docs/customizations.md` con: identificativo, motivo per cui il modello non basta, elementi del modello coinvolti, file in cui vivono, come si verificano;
   - nel codice marcate con un commento `CUSTOM(<id>)` all'inizio del blocco;
-  - fuori dai file generati (codice, migrazioni manuali, pagine in cartelle dedicate);
-  - se una personalizzazione diventa ricorrente, proponi di portarla nel modello o nel generatore (`core:harness-note`).
+  - se una personalizzazione diventa ricorrente, proponi di portarla nel metamodello o nel plugin (`core:harness-note`).
 - Se una richiesta è ambigua tra modello e personalizzazione, chiedi prima di procedere.
 
 ## Lavoro sul codice
@@ -26,11 +26,11 @@
 - Non dichiarare finito un lavoro senza averlo verificato: test, typecheck, build o un'esecuzione reale.
 - Segreti mai nel repository: `.env*` restano locali, si versionano solo gli `.env.example`.
 - Migrazioni del database append-only: mai modificare una migrazione già applicata.
-- File generati (ad esempio da appforge) non si modificano a mano: si cambia la sorgente e si rigenera.
+- File generati non si modificano a mano: si cambia la sorgente e si rigenera. Il modellatore installato (`public/modeler/`, `src/components/modeler/`, `src/lib/modeler/metamodel-actions.ts`, `tools/modeler/`) si aggiorna con `/modeler:install`, non a mano.
 
 ## Stack ricorrente
 - Web: Next.js + Supabase (RLS, logica nel database), Docker, GitHub Actions → GHCR, deploy su VPS (Hostinger) con docker compose e Watchtower.
-- App model-based (plugin appforge): metamodello `domain.ecore.yaml` (notazione Ecore) + `app.yaml` (comportamento: workflow, eventi, webhook n8n, UI). Il modello resta sempre allineato all'app: ogni modifica di schema passa dal metamodello (`/appforge:metamodel`).
+- App model-based (plugin modeler): metamodello `domain.ecore.yaml` dal prompt (`/modeler:metamodel`) o dal database (`/modeler:install`); il modellatore web fa parte dell'app e salva proposte che si applicano con `/modeler:apply`.
 - Ricerca MDE: Eclipse/EMF, Epsilon (ETL, EOL, EVL), Java/Spring Boot, metamodelli Ecore/Emfatic.
 
 ## Fine sessione

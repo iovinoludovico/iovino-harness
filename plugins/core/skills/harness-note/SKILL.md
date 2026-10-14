@@ -1,6 +1,6 @@
 ---
 name: harness-note
-description: Annota nel repository harness una lezione appresa durante il lavoro (errore ricorrente di Claude, convenzione mancante, guardrail da aggiungere, idea per una skill), così da migliorare il plugin core nel tempo. Usala quando l'utente dice "annotalo per l'harness", "ricordatelo per la prossima volta in tutti i progetti", o a fine sessione se è emerso qualcosa di generale.
+description: Annota nel repository harness una lezione appresa durante il lavoro (errore ricorrente di Claude, convenzione mancante, guardrail da aggiungere, idea per una skill), così da migliorare nel tempo i plugin dell'harness (core, modeler). Usala quando l'utente dice "annotalo per l'harness", "ricordatelo per la prossima volta in tutti i progetti", o a fine sessione se è emerso qualcosa di generale.
 argument-hint: "<la lezione in poche parole>"
 ---
 
@@ -24,6 +24,7 @@ Aggiungi in fondo una voce con questo formato:
 - **Progetto**: <nome della cartella o del repo in cui è emersa>
 - **Cosa è successo**: <fatto concreto, 1–2 righe>
 - **Proposta**: <modifica concreta: riga da aggiungere a conventions.md, regola di guard, nuova skill, modifica a una skill esistente>
+- **Plugin**: core | modeler | nuovo
 - **Tipo**: convenzione | guardrail | skill | agente | altro
 ```
 
@@ -33,4 +34,4 @@ Se l'utente non ha dato una lezione esplicita, ricavala dalla sessione e mostral
 
 - Una voce per lezione, niente duplicati: leggi prima il file e, se una voce simile esiste, aggiornala aggiungendo il nuovo caso.
 - Niente dati riservati del progetto (segreti, nomi di clienti, dati personali): la nota deve essere generale.
-- Non modificare direttamente `conventions.md` o gli hook del plugin: le note si rivedono e si applicano in una sessione dedicata dentro il repository harness. Non committare lì senza richiesta.
+- Non modificare direttamente `conventions.md`, gli hook o le skill dei plugin: le note si rivedono e si applicano in una sessione dedicata dentro il repository harness. Non committare lì senza richiesta.

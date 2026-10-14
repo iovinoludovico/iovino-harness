@@ -15,7 +15,7 @@ Obiettivo: un CLAUDE.md **breve** (idealmente sotto le 80 righe) che dica a una 
 - Stack e versioni: Next.js, Supabase (`supabase/config.toml`, cartella `supabase/migrations`), Docker/Compose, Java/Maven, EMF/Epsilon.
 - Variabili d'ambiente: nomi da `.env.example` (mai leggere `.env`).
 - Deploy: Dockerfile, compose, GHCR, Watchtower, script di deploy.
-- Se c'è un `app.yaml` di appforge, segnala che il codice generato non va modificato a mano e che le modifiche al dominio passano dal modello.
+- Se c'è un `domain.ecore.yaml`, segnala che le modifiche di schema partono dal metamodello (`/modeler:metamodel`) e vanno con la migrazione, e riporta gli script `model:*` se l'app ha il modellatore (`tools/modeler/`).
 - Se esiste già un CLAUDE.md, leggilo: va **aggiornato** conservando ciò che l'utente ha scritto, non riscritto da zero.
 
 Argomenti dell'utente: $ARGUMENTS
@@ -39,8 +39,8 @@ Struttura suggerita, omettendo le sezioni vuote:
 <5–10 righe: cartelle chiave e responsabilità, flusso principale dei dati.>
 
 ## Modello e personalizzazioni
-- Fonte di verità: <domain.ecore.yaml + app.yaml | altro modello del progetto | "nessun modello ancora: proporre /appforge:adopt">
-- Ogni modifica parte dal modello; il codice si rigenera o si allinea (<comando: /appforge:generate, metamodel drift…>).
+- Fonte di verità: <domain.ecore.yaml | altro modello del progetto | "nessun modello ancora: proporre /modeler:install">
+- Ogni modifica parte dal modello; il codice si rigenera o si allinea (<comando: npm run model:sync / model:drift, …>).
 - Personalizzazioni: solo se il modello non le esprime, registrate in `docs/customizations.md` e marcate `CUSTOM(<id>)` nel codice.
 
 ## Regole specifiche del progetto
@@ -52,8 +52,9 @@ Struttura suggerita, omettendo le sezioni vuote:
 ```
 
 La sezione "Modello e personalizzazioni" è obbligatoria: individua il modello del progetto (`domain.ecore.yaml`,
-`app.yaml`, metamodelli `.ecore`/Emfatic nei progetti MDE). Se il progetto non ha ancora un modello, scrivilo
-nella sezione e proponi all'utente di crearlo (`/appforge:adopt` per le app Supabase + Next.js). Se esiste codice
+metamodelli `.ecore`/Emfatic nei progetti MDE). Se il progetto non ha ancora un modello, scrivilo nella sezione e
+proponi all'utente di crearlo (`/modeler:install` per le app Next.js + Supabase: ricava il metamodello dal
+database e installa il modellatore). Se esiste codice
 scritto a mano che il modello non esprime e manca `docs/customizations.md`, crealo elencando le personalizzazioni
 trovate (identificativo, motivo, elementi del modello coinvolti, file, verifica) e chiedi conferma all'utente.
 

@@ -74,8 +74,7 @@ STACK_MARKERS = [
     ("pyproject.toml", "Python"), ("requirements.txt", "Python"),
     ("pom.xml", "Maven"), ("build.gradle", "Gradle"), ("build.gradle.kts", "Gradle"),
     ("Dockerfile", "Docker"), ("docker-compose.yml", "Compose"), ("compose.yaml", "Compose"),
-    ("domain.ecore.yaml", "metamodello appforge"),
-    ("app.yaml", "appforge?"),
+    ("domain.ecore.yaml", "metamodello di dominio (plugin modeler)"),
 ]
 
 
