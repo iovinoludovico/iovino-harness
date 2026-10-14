@@ -6,7 +6,7 @@ Harness personale per Claude Code: un marketplace di plugin da installare su ogn
 
 | Plugin | Cosa fa |
 | :- | :- |
-| `core` | Convenzioni iniettate a inizio sessione, guardrail su segreti e comandi distruttivi, autoformattazione, agenti `code-reviewer` e `debugger`, skill `project-init`, `handoff`, `commit`, `db-push`, `harness-note` |
+| `core` | Convenzioni iniettate a inizio sessione, guardrail su segreti e comandi distruttivi, autoformattazione, agenti `code-reviewer` e `debugger`, skill `project-init`, `handoff`, `commit`, `ship`, `db-push`, `harness-note` |
 | `modeler` | Sviluppo model-based delle app Next.js + Supabase: metamodello di dominio `domain.ecore.yaml` (notazione Ecore) dal prompt o ricavato dal database, modellatore web che diventa parte dell'app (`/admin/model`, proposte, CLI `tools/modeler/` con gli script `npm run model:*`), controllo di allineamento metamodello ↔ database, export Ecore/Emfatic/Mermaid. Dettagli in `plugins/modeler/README.md` |
 
 In arrivo: `research`, `mde`.
@@ -72,6 +72,7 @@ Differenze rispetto alla strada A:
 | :- | :- |
 | `/core:project-init` | Primo lavoro serio su un repository senza CLAUDE.md |
 | `/core:commit` | Commit con Conventional Commits, test e lint prima, mai push |
+| `/core:ship` | Push del branch, PR, attesa della CI, merge su `main` solo dopo conferma |
 | `/core:handoff` | Fine sessione o cambio computer: aggiorna HANDOFF.md |
 | `/core:db-push` | Porta in produzione (Supabase cloud) le migrazioni nuove: controlli, anteprima, conferma, verifica |
 | `/core:harness-note <lezione>` | Qualcosa da migliorare nell'harness: finisce in `NOTES.md` |
@@ -128,7 +129,7 @@ plugins/core/
   hooks/hooks.json
   scripts/hook.py
   agents/{code-reviewer,debugger}.md
-  skills/{project-init,handoff,commit,db-push,harness-note}/SKILL.md
+  skills/{project-init,handoff,commit,ship,db-push,harness-note}/SKILL.md
 plugins/modeler/                ← metamodello e modellatore web delle app (README proprio)
 settings/recommended-settings.json, merge_settings.py
 scripts/release.py              ← versioni dei plugin a ogni rilascio
