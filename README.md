@@ -7,7 +7,7 @@ Harness personale per Claude Code: un marketplace di plugin da installare su ogn
 | Plugin | Cosa fa |
 | :- | :- |
 | `core` | Convenzioni iniettate a inizio sessione, guardrail su segreti e comandi distruttivi, autoformattazione, agenti `code-reviewer` e `debugger`, skill `project-init`, `handoff`, `commit`, `harness-note` |
-| `appforge` | Sviluppo model-based dello stack Supabase + Next.js event-driven: metamodello `domain.ecore.yaml` (notazione Ecore) dal prompt, comportamento in `app.yaml` (workflow, eventi, webhook n8n, UI), generazione, modellatore web nell'admin di ogni app, adozione di app esistenti, controlli di allineamento. Dettagli in `plugins/appforge/README.md` |
+| `modeler` | Sviluppo model-based delle app Next.js + Supabase: metamodello di dominio `domain.ecore.yaml` (notazione Ecore) dal prompt o ricavato dal database, modellatore web che diventa parte dell'app (`/admin/model`, proposte, CLI `tools/modeler/` con gli script `npm run model:*`), controllo di allineamento metamodello ↔ database, export Ecore/Emfatic/Mermaid. Dettagli in `plugins/modeler/README.md` |
 
 In arrivo: `research`, `mde`.
 
@@ -24,15 +24,15 @@ cd ~/code/iovino-harness
 Lo script:
 
 1. registra la cartella come marketplace `iovino-harness` (caricato in place: un `git pull` aggiorna subito i plugin);
-2. installa `core` (con `harness_repo` su questa cartella) e `appforge` (`PLUGINS=core ./install.sh` per sceglierne alcuni);
+2. installa `core` (con `harness_repo` su questa cartella) e `modeler` (`PLUGINS=core ./install.sh` per sceglierne alcuni);
 3. aggiunge i permessi di `settings/recommended-settings.json` a `~/.claude/settings.json` (unione delle liste, backup automatico). Usa `--no-settings` per saltare questo passo.
 
 Senza clone locale si può usare direttamente GitHub: `claude plugin marketplace add <tuo-utente>/iovino-harness` e poi `claude plugin install core@iovino-harness`; in questo caso `harness_repo` va impostato a mano con `/config`.
 
 In una sessione già aperta: `/reload-plugins`.
 
-Se avevi installato appforge dal vecchio marketplace separato, disinstallalo prima (`/plugin` → appforge del vecchio
-marketplace → Uninstall, poi rimuovi quel marketplace) per non avere due plugin con lo stesso nome.
+appforge (generatore di app da `app.yaml`) è dismesso: se è installato, lo script lo segnala; rimuovilo con
+`claude plugin uninstall appforge@appforge-marketplace` e `claude plugin marketplace remove appforge-marketplace`.
 
 ## Uso quotidiano
 
@@ -42,9 +42,9 @@ marketplace → Uninstall, poi rimuovi quel marketplace) per non avere due plugi
 | `/core:commit` | Commit con Conventional Commits, test e lint prima, mai push |
 | `/core:handoff` | Fine sessione o cambio computer: aggiorna HANDOFF.md |
 | `/core:harness-note <lezione>` | Qualcosa da migliorare nell'harness: finisce in `NOTES.md` |
-| `/appforge:metamodel <descrizione>` | Metamodello del dominio dal prompt (o applica le proposte del modellatore web) |
-| `/appforge:new-app` · `/appforge:model` · `/appforge:ui` | Nuova app; comportamento (workflow, eventi, webhook); mappatura UI |
-| `/appforge:adopt` | Porta un'app esistente sotto il metamodello (reverse dal DB, modellatore, drift) |
+| `/modeler:install` | Mette il modellatore in un'app (o lo aggiorna): metamodello dal database se manca, `/admin/model`, `npm run model:*` |
+| `/modeler:metamodel <descrizione>` | Metamodello dal prompt, poi migrazione, codice e `model:drift` |
+| `/modeler:apply` | Applica le proposte salvate dal modellatore web (sviluppo o produzione) |
 
 Gli agenti `core:code-reviewer` e `core:debugger` vengono usati da Claude quando servono, o su richiesta ("fai rivedere il diff al code-reviewer").
 
@@ -59,16 +59,15 @@ Gli hook sono Python solo libreria standard: nessuna dipendenza da installare.
 
 ## Ciclo di miglioramento
 
-1. Durante il lavoro, quando Claude sbaglia qualcosa di ricorrente: `/core:harness-note …`.
+1. Durante il lavoro in qualunque progetto, quando Claude sbaglia qualcosa di ricorrente o manca una regola: `/core:harness-note …`. La nota finisce nel `NOTES.md` di questo clone (opzione `harness_repo` del plugin core, impostata da `install.sh`; senza clone va in `~/.claude/plugins/data/core-iovino-harness/NOTES.md`).
 2. Ogni tanto, apri una sessione in questo repository, rivedi `NOTES.md` e trasforma le note in modifiche a `conventions.md`, agli hook o alle skill.
-3. `python3 -m unittest discover -s tests` e `claude plugin validate plugins/core`, poi commit e push.
+3. `python3 -m unittest discover -s tests`, `python3 -m unittest discover -s plugins/modeler/tests` e `claude plugin validate .`, poi commit e push.
 4. Sugli altri computer: `git pull` (marketplace locale) oppure `claude plugin marketplace update iovino-harness`.
 
 ## Struttura
 
 ```
 .claude-plugin/marketplace.json
-plugins/appforge/                 ← generatore e modellatore (README e HANDOFF propri)
 plugins/core/
   .claude-plugin/plugin.json
   context/conventions.md        ← le tue convenzioni: modificale qui
@@ -76,6 +75,7 @@ plugins/core/
   scripts/hook.py
   agents/{code-reviewer,debugger}.md
   skills/{project-init,handoff,commit,harness-note}/SKILL.md
+plugins/modeler/                ← metamodello e modellatore web delle app (README proprio)
 settings/recommended-settings.json, merge_settings.py
 tests/
 install.sh
