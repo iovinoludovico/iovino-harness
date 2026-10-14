@@ -15,10 +15,25 @@ from . import ecore as E
 from . import core as M
 
 # tables never described by the metamodel: the users (the built-in User) and the modeler's own proposals;
-# the app's other infrastructure tables are excluded with --exclude
+# the app's other infrastructure tables are excluded with --exclude (`table.column` excludes one technical column)
 INTERNAL_TABLES = {"profiles", "model_change_requests", "schema_migrations"}
 STANDARD_COLUMNS = E.STANDARD_COLUMNS
 USER_TABLES = {("public", "profiles"), ("auth", "users")}
+
+
+def split_exclude(exclude: set[str] | None) -> tuple[set[str], set[tuple[str, str]]]:
+    """Entries of --exclude / MODELER_EXCLUDE: whole tables, and `table.column` for single technical columns."""
+    tables: set[str] = set()
+    columns: set[tuple[str, str]] = set()
+    for x in exclude or set():
+        if "." in x:
+            t, c = x.split(".", 1)
+            columns.add((t, c))
+        else:
+            tables.add(x)
+    return tables, columns
+
+
 ON_DELETE = {"c": "cascade", "n": "set_null", "r": "restrict", "a": "restrict", "d": "set_null"}
 
 CATALOG_SQL = """
@@ -143,11 +158,13 @@ def reverse(cat: dict[str, Any], package: str = "domain", exclude: set[str] | No
             include: set[str] | None = None) -> tuple[dict[str, Any], list[str]]:
     """Metamodel describing the tables of a database, plus notes for the developer."""
     notes: list[str] = []
-    exclude = set(exclude or set()) | INTERNAL_TABLES
+    exclude, excluded_columns = split_exclude(exclude)
+    exclude |= INTERNAL_TABLES
     tables = [t for t in cat["tables"] if t not in exclude and (not include or t in include)]
     cols: dict[str, list[dict[str, Any]]] = {}
     for c in cat["columns"]:
-        cols.setdefault(c["table"], []).append(c)
+        if (c["table"], c["name"]) not in excluded_columns:
+            cols.setdefault(c["table"], []).append(c)
     cons: dict[str, list[dict[str, Any]]] = {}
     for c in cat["constraints"]:
         cons.setdefault(c["table"], []).append(c)
@@ -287,10 +304,12 @@ def drift(meta: dict[str, Any], cat: dict[str, Any], exclude: set[str] | None = 
     m = E.storage(meta)
     e = E.expand(meta)
     out: list[str] = []
+    exclude, excluded_columns = split_exclude(exclude)
     tables = set(cat["tables"])
     cols: dict[str, dict[str, dict[str, Any]]] = {}
     for c in cat["columns"]:
-        cols.setdefault(c["table"], {})[c["name"]] = c
+        if (c["table"], c["name"]) not in excluded_columns:
+            cols.setdefault(c["table"], {})[c["name"]] = c
     fk_of: dict[tuple[str, str], dict[str, Any]] = {}
     for c in cat["constraints"]:
         if c["type"] == "f" and len(c["columns"] or []) == 1:
@@ -333,7 +352,7 @@ def drift(meta: dict[str, Any], cat: dict[str, Any], exclude: set[str] | None = 
         extra = sorted(set(cols[t]) - seen - STANDARD_COLUMNS)
         if extra:
             out.append(f"NOT IN METAMODEL {t}: columns {', '.join(extra)}")
-    ignored = INTERNAL_TABLES | set(exclude or set()) | described | {j for j in join_tables if j}
+    ignored = INTERNAL_TABLES | exclude | described | {j for j in join_tables if j}
     for name, ent in m["entities"].items():
         for f in ent["fields"].values():
             if f["many"]:

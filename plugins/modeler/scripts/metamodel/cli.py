@@ -426,7 +426,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--db", help="DSN (default: MODELER_DB or the local Supabase of the app)")
     s.add_argument("--schema", default="public")
     s.add_argument("--package", default="domain")
-    s.add_argument("--exclude", help="comma separated tables to skip")
+    s.add_argument("--exclude", help="comma separated tables (or table.column) to skip")
     s.add_argument("--include", help="comma separated tables to describe (default: all)")
     s.add_argument("-o", "--output")
     s.add_argument("--force", action="store_true")
@@ -436,7 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("path", nargs="?")
     s.add_argument("--db", help="DSN (default: MODELER_DB or the local Supabase of the app)")
     s.add_argument("--schema", default="public")
-    s.add_argument("--exclude", help="comma separated tables to ignore (default: MODELER_EXCLUDE)")
+    s.add_argument("--exclude", help="comma separated tables (or table.column) to ignore (default: MODELER_EXCLUDE)")
     s.set_defaults(fn=cmd_drift)
 
     s = sub.add_parser("sync", help=f"refresh {METAMODEL_JSON} from the metamodel")

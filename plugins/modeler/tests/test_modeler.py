@@ -259,6 +259,14 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn("MISSING COLUMN rooms.floor (Room.floor)", found)
         self.assertTrue(any(x.startswith("NULLABLE rooms.seats") for x in found), found)
 
+    def test_exclude_columns(self):
+        cat = D.catalog(self.dsn)
+        meta, _ = D.reverse(cat, package="aule", exclude={"rooms.seats"})
+        self.assertNotIn("seats", E.expand(meta)["classes"]["Room"]["attributes"])
+        self.assertIn("NOT IN METAMODEL rooms: columns seats", D.drift(meta, cat))
+        self.assertEqual(D.drift(meta, cat, {"rooms.seats"}), [])
+        self.assertEqual(D.split_exclude({"events", "rooms.seats"}), ({"events"}, {("rooms", "seats")}))
+
 
 if __name__ == "__main__":
     unittest.main()

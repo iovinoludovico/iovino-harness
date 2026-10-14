@@ -45,7 +45,8 @@ python3 scripts/modeler.py install ~/code/my-app
 npm run model:validate && npm run model:sync && npm run model:drift
 ```
 `drift`/`reverse` use `--db`, else `MODELER_DB`, else the local Supabase port in `supabase/config.toml`;
-`MODELER_EXCLUDE` lists the app's infrastructure tables to ignore. `export`/`import` exchange `.ecore` XMI with
+`MODELER_EXCLUDE` lists the app's infrastructure tables to ignore, and `table.column` for a single technical
+column (e.g. a foreign key to an excluded table). `export`/`import` exchange `.ecore` XMI with
 Eclipse EMF and Epsilon.
 
 ## What lands in the app

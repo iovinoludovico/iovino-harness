@@ -26,7 +26,8 @@ rivedilo **con l'utente**:
 - nomi di classi e feature (rinomina liberamente: `column:` mantiene il legame con la colonna);
 - containment dedotti da `on delete cascade`, molti-a-molti dalle join table, enum dai `check (… in …)`;
 - `language: it` se i nomi sono italiani; `doc`/`label` per le classi principali;
-- tabelle tecniche dell'app da escludere (`--exclude`, e `MODELER_EXCLUDE` per `model:drift`).
+- tabelle tecniche dell'app da escludere (`--exclude`, e `MODELER_EXCLUDE` per `model:drift`); una singola
+  colonna tecnica (es. FK verso una tabella esclusa) si esclude con `tabella.colonna`.
 `validate` e `drift` devono dare "OK" e "aligned".
 
 ## 3. Installazione
