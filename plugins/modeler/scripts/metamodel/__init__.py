@@ -1,3 +1,3 @@
 """Domain metamodel (Ecore notation in YAML) and the web modeler embedded in applications."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
