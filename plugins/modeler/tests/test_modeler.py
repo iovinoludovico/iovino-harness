@@ -216,6 +216,18 @@ class AppTests(unittest.TestCase):
         self.assertIn("Persona", doc["classes"])
         self.assertNotIn("appforge", (self.app / "src/lib/modeler/metamodel-actions.ts").read_text())
 
+    def test_install_ignores_python_bytecode(self):
+        (self.app / ".gitignore").write_text("node_modules/\n.env*")
+        cli.install(self.app)
+        text = (self.app / ".gitignore").read_text()
+        self.assertTrue(text.startswith("node_modules/\n.env*\n"))
+        self.assertEqual(text.count("__pycache__/"), 1)
+        cli.install(self.app)                                   # idempotent
+        self.assertEqual((self.app / ".gitignore").read_text(), text)
+        (self.app / ".gitignore").unlink()
+        cli.install(self.app)                                   # created when missing
+        self.assertIn("__pycache__/", (self.app / ".gitignore").read_text())
+
     def test_reinstall_upgrades_owned_files_and_keeps_adapted_ones(self):
         cli.install(self.app)
         (self.app / "src/lib/modeler/access.ts").write_text("// adapted to the app\n")

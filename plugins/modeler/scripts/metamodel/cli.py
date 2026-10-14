@@ -415,8 +415,22 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
         scripts.update(NPM_SCRIPTS)
         pkg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         written.append("package.json (model:* scripts)")
+    if ensure_gitignore(target):
+        written.append(".gitignore (__pycache__/)")
     written += sync(target)
     return written
+
+
+def ensure_gitignore(target: Path) -> bool:
+    """The vendored CLI leaves Python bytecode in the app when it runs: keep it out of git."""
+    gi = target / ".gitignore"
+    text = gi.read_text(encoding="utf-8") if gi.exists() else ""
+    entries = {line.strip() for line in text.splitlines()}
+    if entries & {"__pycache__/", "__pycache__", "**/__pycache__/", "**/__pycache__"}:
+        return False
+    gi.write_text(text + ("" if not text or text.endswith("\n") else "\n")
+                  + "\n# Python bytecode of the vendored modeler CLI (tools/modeler)\n__pycache__/\n", encoding="utf-8")
+    return True
 
 
 def installed_version(root: Path) -> str | None:

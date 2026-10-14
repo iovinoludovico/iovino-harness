@@ -49,7 +49,8 @@ rivedilo **con l'utente**:
   `src/app/(admin)/admin/model/page.tsx`), con layout, titolo e traduzioni dell'app; aggiungi il link nella
   navigazione admin. `lang` segue la lingua dell'utente.
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`).
-- `.gitignore`: non ignorare `.modeler/proposals/` (le proposte si rivedono nel repository).
+- `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`); non ignorare
+  `.modeler/proposals/` (le proposte si rivedono nel repository).
 - In `CLAUDE.md` dell'app: "Il metamodello del dominio è `domain.ecore.yaml`: ogni modifica di schema parte da
   lì (/modeler:metamodel) insieme alla migrazione; `npm run model:sync` aggiorna il modellatore,
   `npm run model:drift` deve dare 'aligned'. Le proposte del modellatore si applicano con /modeler:apply."
