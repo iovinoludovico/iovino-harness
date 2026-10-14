@@ -38,6 +38,11 @@ Struttura suggerita, omettendo le sezioni vuote:
 ## Architettura
 <5–10 righe: cartelle chiave e responsabilità, flusso principale dei dati.>
 
+## Modello e personalizzazioni
+- Fonte di verità: <domain.ecore.yaml + app.yaml | altro modello del progetto | "nessun modello ancora: proporre /appforge:adopt">
+- Ogni modifica parte dal modello; il codice si rigenera o si allinea (<comando: /appforge:generate, metamodel drift…>).
+- Personalizzazioni: solo se il modello non le esprime, registrate in `docs/customizations.md` e marcate `CUSTOM(<id>)` nel codice.
+
 ## Regole specifiche del progetto
 - <vincoli non deducibili dal codice: file generati, migrazioni, servizi esterni, dati sensibili>
 
@@ -45,6 +50,12 @@ Struttura suggerita, omettendo le sezioni vuote:
 - Variabili richieste (vedi .env.example): `…`
 - Deploy: <come e dove>
 ```
+
+La sezione "Modello e personalizzazioni" è obbligatoria: individua il modello del progetto (`domain.ecore.yaml`,
+`app.yaml`, metamodelli `.ecore`/Emfatic nei progetti MDE). Se il progetto non ha ancora un modello, scrivilo
+nella sezione e proponi all'utente di crearlo (`/appforge:adopt` per le app Supabase + Next.js). Se esiste codice
+scritto a mano che il modello non esprime e manca `docs/customizations.md`, crealo elencando le personalizzazioni
+trovate (identificativo, motivo, elementi del modello coinvolti, file, verifica) e chiedi conferma all'utente.
 
 Regole di scrittura: frasi imperative e concrete, comandi copiabili, nessuna ovvietà ("scrivi codice pulito"), nessun segreto.
 

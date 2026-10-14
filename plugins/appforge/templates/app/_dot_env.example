@@ -1,0 +1,17 @@
+# --- Next.js app -------------------------------------------------------------
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon / publishable key from `supabase status`>
+# Comma-separated; must match app_settings.allowed_email_domains in the DB.
+NEXT_PUBLIC_ALLOWED_EMAIL_DOMAINS={{ALLOWED_DOMAINS}}
+# Magic-link login (emails land in Mailpit, http://127.0.0.1:54324). Always on when the model enables `email`.
+NEXT_PUBLIC_DEV_EMAIL_LOGIN=true
+
+# --- Webhook dispatcher worker ------------------------------------------------
+# Postgres connection in session mode (LISTEN/NOTIFY needs a persistent connection).
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+APP_BASE_URL=http://localhost:3000
+DISPATCHER_POLL_INTERVAL_MS=30000
+
+# --- Supabase CLI (local auth provider, read by supabase/config.toml) ---------
+SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=
+SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=

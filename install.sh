@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Installa (o aggiorna) il marketplace iovino-harness e il plugin core su questo computer.
+# Installa (o aggiorna) il marketplace iovino-harness e i suoi plugin (core, appforge) su questo computer.
 #
 #   ./install.sh                     usa questa cartella (clone locale) come marketplace
 #   ./install.sh owner/repo          usa il repository GitHub come marketplace
 #   ./install.sh --no-settings       non tocca ~/.claude/settings.json
+#   PLUGINS=core ./install.sh        installa solo alcuni plugin (default: core appforge)
 #
 # Idempotente: si può rilanciare dopo ogni git pull.
 set -euo pipefail
@@ -31,23 +32,29 @@ else
   claude plugin marketplace add "$SOURCE"
 fi
 
-echo "==> Plugin core"
-CONFIG=()
-if [ "$SOURCE" = "$HERE" ]; then
-  # clone locale: le note dell'harness finiscono direttamente in questo repository
-  CONFIG=(--config "harness_repo=$HERE")
-fi
-if claude plugin list 2>/dev/null | grep -q "core@$MARKETPLACE"; then
-  claude plugin update "core@$MARKETPLACE" || true
-else
-  claude plugin install "core@$MARKETPLACE" ${CONFIG[@]+"${CONFIG[@]}"}
-fi
+PLUGINS="${PLUGINS:-core appforge}"
+for plugin in $PLUGINS; do
+  echo "==> Plugin $plugin"
+  CONFIG=()
+  if [ "$plugin" = "core" ] && [ "$SOURCE" = "$HERE" ]; then
+    # clone locale: le note dell'harness finiscono direttamente in questo repository
+    CONFIG=(--config "harness_repo=$HERE")
+  fi
+  if claude plugin list 2>/dev/null | grep -q "$plugin@$MARKETPLACE"; then
+    claude plugin update "$plugin@$MARKETPLACE" || true
+  else
+    claude plugin install "$plugin@$MARKETPLACE" ${CONFIG[@]+"${CONFIG[@]}"}
+  fi
+done
 
 if [ "$APPLY_SETTINGS" = 1 ]; then
   echo "==> Permessi consigliati in ~/.claude/settings.json"
   # le note dell'harness si scrivono senza conferma: NOTES.md del clone e cartella dati del plugin
   python3 "$HERE/settings/merge_settings.py" "$HERE/settings/recommended-settings.json" "$HOME/.claude/settings.json" \
-    --allow "Edit(/$HERE/NOTES.md)" --allow "Edit(~/.claude/plugins/data/core-$MARKETPLACE/**)"
+    --allow "Edit(/$HERE/NOTES.md)" --allow "Edit(~/.claude/plugins/data/core-$MARKETPLACE/**)" \
+    --allow "Read(/$HERE/plugins/**)" \
+    --allow "Bash(python3 $HERE/plugins/appforge/scripts/appforge.py:*)" \
+    --allow "Bash(python3 \"$HERE/plugins/appforge/scripts/appforge.py\":*)"
 fi
 
 echo

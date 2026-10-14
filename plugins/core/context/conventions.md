@@ -11,6 +11,16 @@
 - Commit piccoli, in Conventional Commits (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`), con il perché nel corpo quando non è ovvio.
 - Prima di committare: test e lint del progetto verdi.
 
+## Sviluppo guidato dai modelli
+- I modelli guidano sempre lo sviluppo: struttura del dominio nel metamodello (`domain.ecore.yaml`), comportamento (workflow, permessi, eventi, webhook, UI) nel modello di comportamento (`app.yaml`). Ogni modifica parte dal modello, poi si rigenera o si allinea il codice; mai il contrario.
+- Prima di scrivere codice a mano verifica se il modello (o la mappatura UI) può esprimere la richiesta; se può, cambia il modello.
+- Le personalizzazioni (ciò che il modello non esprime) sono ammesse solo se chiarite in modo esplicito:
+  - registrate in `docs/customizations.md` con: identificativo, motivo per cui il modello non basta, elementi del modello coinvolti, file in cui vivono, come si verificano;
+  - nel codice marcate con un commento `CUSTOM(<id>)` all'inizio del blocco;
+  - fuori dai file generati (codice, migrazioni manuali, pagine in cartelle dedicate);
+  - se una personalizzazione diventa ricorrente, proponi di portarla nel modello o nel generatore (`core:harness-note`).
+- Se una richiesta è ambigua tra modello e personalizzazione, chiedi prima di procedere.
+
 ## Lavoro sul codice
 - Leggi `CLAUDE.md` e la documentazione del progetto prima di modificare; segui i pattern esistenti invece di introdurne di nuovi.
 - Non dichiarare finito un lavoro senza averlo verificato: test, typecheck, build o un'esecuzione reale.
@@ -20,6 +30,7 @@
 
 ## Stack ricorrente
 - Web: Next.js + Supabase (RLS, logica nel database), Docker, GitHub Actions → GHCR, deploy su VPS (Hostinger) con docker compose e Watchtower.
+- App model-based (plugin appforge): metamodello `domain.ecore.yaml` (notazione Ecore) + `app.yaml` (comportamento: workflow, eventi, webhook n8n, UI). Il modello resta sempre allineato all'app: ogni modifica di schema passa dal metamodello (`/appforge:metamodel`).
 - Ricerca MDE: Eclipse/EMF, Epsilon (ETL, EOL, EVL), Java/Spring Boot, metamodelli Ecore/Emfatic.
 
 ## Fine sessione

@@ -7,8 +7,9 @@ Harness personale per Claude Code: un marketplace di plugin da installare su ogn
 | Plugin | Cosa fa |
 | :- | :- |
 | `core` | Convenzioni iniettate a inizio sessione, guardrail su segreti e comandi distruttivi, autoformattazione, agenti `code-reviewer` e `debugger`, skill `project-init`, `handoff`, `commit`, `harness-note` |
+| `appforge` | Sviluppo model-based dello stack Supabase + Next.js event-driven: metamodello `domain.ecore.yaml` (notazione Ecore) dal prompt, comportamento in `app.yaml` (workflow, eventi, webhook n8n, UI), generazione, modellatore web nell'admin di ogni app, adozione di app esistenti, controlli di allineamento. Dettagli in `plugins/appforge/README.md` |
 
-In arrivo: `appforge`, `research`, `mde`.
+In arrivo: `research`, `mde`.
 
 ## Installazione su un nuovo computer
 
@@ -23,12 +24,15 @@ cd ~/code/iovino-harness
 Lo script:
 
 1. registra la cartella come marketplace `iovino-harness` (caricato in place: un `git pull` aggiorna subito i plugin);
-2. installa `core` impostando `harness_repo` su questa cartella;
+2. installa `core` (con `harness_repo` su questa cartella) e `appforge` (`PLUGINS=core ./install.sh` per sceglierne alcuni);
 3. aggiunge i permessi di `settings/recommended-settings.json` a `~/.claude/settings.json` (unione delle liste, backup automatico). Usa `--no-settings` per saltare questo passo.
 
 Senza clone locale si può usare direttamente GitHub: `claude plugin marketplace add <tuo-utente>/iovino-harness` e poi `claude plugin install core@iovino-harness`; in questo caso `harness_repo` va impostato a mano con `/config`.
 
 In una sessione già aperta: `/reload-plugins`.
+
+Se avevi installato appforge dal vecchio marketplace separato, disinstallalo prima (`/plugin` → appforge del vecchio
+marketplace → Uninstall, poi rimuovi quel marketplace) per non avere due plugin con lo stesso nome.
 
 ## Uso quotidiano
 
@@ -38,6 +42,9 @@ In una sessione già aperta: `/reload-plugins`.
 | `/core:commit` | Commit con Conventional Commits, test e lint prima, mai push |
 | `/core:handoff` | Fine sessione o cambio computer: aggiorna HANDOFF.md |
 | `/core:harness-note <lezione>` | Qualcosa da migliorare nell'harness: finisce in `NOTES.md` |
+| `/appforge:metamodel <descrizione>` | Metamodello del dominio dal prompt (o applica le proposte del modellatore web) |
+| `/appforge:new-app` · `/appforge:model` · `/appforge:ui` | Nuova app; comportamento (workflow, eventi, webhook); mappatura UI |
+| `/appforge:adopt` | Porta un'app esistente sotto il metamodello (reverse dal DB, modellatore, drift) |
 
 Gli agenti `core:code-reviewer` e `core:debugger` vengono usati da Claude quando servono, o su richiesta ("fai rivedere il diff al code-reviewer").
 
@@ -61,6 +68,7 @@ Gli hook sono Python solo libreria standard: nessuna dipendenza da installare.
 
 ```
 .claude-plugin/marketplace.json
+plugins/appforge/                 ← generatore e modellatore (README e HANDOFF propri)
 plugins/core/
   .claude-plugin/plugin.json
   context/conventions.md        ← le tue convenzioni: modificale qui

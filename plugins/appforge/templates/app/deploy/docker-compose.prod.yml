@@ -1,0 +1,58 @@
+# {{APP_NAME}} in production from prebuilt images ({{IMAGE}}-web, -dispatcher), built by
+# .github/workflows/deploy.yml on every push to main. Database and auth live on Supabase (cloud).
+# No checkout of the repository is needed on the host, only `docker login ghcr.io`.
+# Variables: deploy/.env.production.example. Public entry: a reverse proxy (e.g. Nginx Proxy Manager)
+# on the external network ${PROXY_NETWORK}: proxy host → http://{{APP_SLUG}}-web:3000 with TLS.
+# Roll back with APP_TAG=sha-<commit> (and stop watchtower, which would chase `latest` again).
+
+name: {{APP_SLUG}}
+
+services:
+  web:
+    image: {{IMAGE}}-web:${APP_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      NEXT_PUBLIC_ALLOWED_EMAIL_DOMAINS: ${NEXT_PUBLIC_ALLOWED_EMAIL_DOMAINS:-{{ALLOWED_DOMAINS}}}
+      APP_BASE_URL: ${APP_BASE_URL:-{{BASE_URL}}}
+    expose:
+      - '3000'
+    networks:
+      default: {}
+      proxy:
+        aliases:
+          - {{APP_SLUG}}-web
+    labels:
+      com.centurylinklabs.watchtower.scope: {{APP_SLUG}}
+
+  # Webhook delivery (LISTEN/NOTIFY on the session pooler) towards n8n and other subscribers
+  dispatcher:
+    image: {{IMAGE}}-dispatcher:${APP_TAG:-latest}
+    restart: unless-stopped
+    init: true
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      APP_BASE_URL: ${APP_BASE_URL:-{{BASE_URL}}}
+      DISPATCHER_POLL_INTERVAL_MS: ${DISPATCHER_POLL_INTERVAL_MS:-30000}
+    labels:
+      com.centurylinklabs.watchtower.scope: {{APP_SLUG}}
+
+  # Continuous deployment: recreates web/dispatcher when a new `latest` is published.
+  watchtower:
+    image: containrrr/watchtower@sha256:6dd50763bbd632a83cb154d5451700530d1e44200b268a4e9488fefdfcf2b038
+    restart: unless-stopped
+    command: ['--scope', '{{APP_SLUG}}', '--interval', '120', '--cleanup']
+    environment:
+      DOCKER_API_VERSION: '1.44'
+      TZ: {{TIMEZONE}}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_CONFIG_DIR:-/root/.docker}/config.json:/config.json:ro
+    labels:
+      com.centurylinklabs.watchtower.scope: {{APP_SLUG}}
+
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-nginx-proxy}

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>appforge Studio</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/metamodel-editor.js"></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="rail" aria-label="Applicazioni">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <span>appforge <em>studio</em></span>
+    </div>
+    <p class="rail-title">Applicazioni</p>
+    <ul id="apps" class="apps"></ul>
+    <div class="rail-actions">
+      <button id="btn-new-app" class="ghost">Nuova applicazione</button>
+      <button id="btn-register" class="ghost">Aggiungi esistente</button>
+    </div>
+    <p id="registry-path" class="rail-foot"></p>
+  </aside>
+
+  <main class="work">
+    <header class="bar">
+      <div class="title">
+        <h1 id="app-name">Nessuna applicazione aperta</h1>
+        <p id="app-path"></p>
+      </div>
+      <div class="bar-actions">
+        <span id="dirty" class="dirty" hidden>modifiche non salvate</span>
+        <button id="btn-undo" class="ghost" title="Annulla (Ctrl+Z)" disabled>Annulla</button>
+        <button id="btn-save" class="primary" title="Salva il modello (Ctrl+S)" disabled>Salva modello</button>
+      </div>
+    </header>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-view="metamodel" aria-selected="true">Metamodello</button>
+      <button role="tab" data-view="domain">Dominio (app.yaml)</button>
+      <button role="tab" data-view="workflow">Workflow</button>
+      <button role="tab" data-view="events">Eventi e reazioni</button>
+      <button role="tab" data-view="settings">Ruoli e impostazioni</button>
+      <button role="tab" data-view="yaml">YAML</button>
+      <button role="tab" data-view="generate">Genera</button>
+      <span class="spacer"></span>
+      <button id="btn-problems" class="problems-btn" aria-expanded="false"><span id="problems-count">0 problemi</span></button>
+    </nav>
+    <section id="view" class="view"></section>
+    <section id="problems" class="problems" hidden aria-label="Problemi del modello"></section>
+  </main>
+
+  <aside class="inspector" aria-label="Proprietà">
+    <div id="inspector"><p class="hint">Seleziona un elemento per modificarne le proprietà.</p></div>
+  </aside>
+</div>
+
+<dialog id="dlg">
+  <form method="dialog" id="dlg-form">
+    <h2 id="dlg-title"></h2>
+    <div id="dlg-body"></div>
+    <menu>
+      <button value="cancel" class="ghost">Annulla</button>
+      <button value="ok" class="primary" id="dlg-ok">Conferma</button>
+    </menu>
+  </form>
+</dialog>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,355 @@
+# yaml-language-server: $schema=.appforge/app.schema.json
+# Domain model (appforge). Edit here, in the Studio (/appforge:studio) or with /appforge:model.
+version: 1
+app:
+  name: Inviti ospiti
+  slug: guest-invitations
+  description: Gestione degli inviti di ospiti, dalla richiesta al pagamento.
+  locales:
+  - it
+  - en
+  auth:
+    providers:
+    - google
+    allowed_domains:
+    - gssi.it
+    approval: manual
+    admins:
+    - ludovico.iovino@gssi.it
+  events:
+    source: /invitations
+    type_prefix: it.gssi.invitations.
+  deploy:
+    image: ghcr.io/gssi/guest-invitations
+    base_url: https://invitations.iovino-systems.cloud
+roles:
+  office:
+    label:
+      it: Uffici amministrativi
+      en: Administrative offices
+  issuer:
+    label:
+      it: Emittente
+      en: Issuer
+    scoped: true
+  director:
+    label:
+      it: Direttore
+      en: Director
+    scoped: true
+scope:
+  entity: Department
+events:
+  invitation.visit_ended:
+    description: Transizione automatica alla data di fine visita.
+    category: workflow
+  invitation.starts_soon:
+    description: La visita inizia tra tre giorni.
+reactions:
+- name: notify_director
+  when:
+    transition: submit
+  do: notify
+  to:
+  - director
+  template: invitation_to_approve
+  'on': invitation.transitioned
+- name: notify_approved
+  when:
+    transition:
+    - approve
+    - approve_with_bookings
+  do: notify
+  to:
+  - field:issuer
+  - office
+  template: invitation_approved
+  'on': invitation.transitioned
+- name: notify_guest_bookings
+  when:
+    transition: bookings_done
+  do: notify
+  to:
+  - field:guest
+  template: bookings_confirmed
+  'on': invitation.transitioned
+- name: notify_sent_back
+  when:
+    transition: send_back
+  do: notify
+  to:
+  - field:issuer
+  template: invitation_sent_back
+  'on': invitation.transitioned
+- name: stamp_visit_confirmation
+  when:
+    transition: confirm_visit
+  do: set
+  set:
+    visit_confirmed_at: =now
+  'on': invitation.transitioned
+- name: remind_start
+  when:
+    to: in_management
+  do: schedule
+  event: invitation.starts_soon
+  at: start_date - 3d
+  'on': invitation.transitioned
+- name: notify_starts_soon
+  do: notify
+  to:
+  - field:issuer
+  - field:guest
+  template: visit_starts_soon
+  'on': invitation.starts_soon
+- name: dashboard_feed
+  do: broadcast
+  channel: dashboard
+  'on': invitation.completed
+- name: archive_documents
+  do: custom
+  handler: archive_invitation_documents
+  'on': invitation.completed
+subscriptions:
+- name: n8n
+  url_env: N8N_WEBHOOK_URL
+  events:
+  - invitation.*
+  - user.*
+entities:
+  Department:
+    icon: building
+    display: name
+    permissions:
+      read:
+      - all
+      create:
+      - admin
+      update:
+      - admin
+      delete:
+      - admin
+  Position:
+    icon: badge
+    permissions:
+      read:
+      - all
+      create:
+      - admin
+      update:
+      - admin
+  Guest:
+    icon: user
+    display: last_name
+    permissions:
+      read:
+      - all
+      create:
+      - issuer
+      - office
+      update:
+      - creator
+      - office
+    ui:
+      views:
+      - table
+      - cards
+      related:
+      - Invitation.guest
+  Fund:
+    icon: wallet
+    permissions:
+      read:
+      - all
+      create:
+      - office
+      update:
+      - office
+  Invitation:
+    kind: process
+    code_prefix: INV
+    icon: mail
+    scope_field: department
+    indexes:
+    - - department
+      - state
+    permissions:
+      read:
+      - field:issuer
+      - creator
+      - director
+      - office
+      create:
+      - issuer
+      - office
+      update:
+      - office
+      delete:
+      - admin
+    workflow:
+      states:
+        draft:
+          kind: initial
+          label:
+            it: Bozza
+            en: Draft
+          owner:
+          - field:issuer
+          editable_by:
+          - field:issuer
+          - creator
+        pending_director:
+          label:
+            it: In attesa del direttore
+            en: Awaiting director
+          owner:
+          - director
+          reminder:
+            after_days: 7
+            template: director_reminder
+        bookings:
+          label:
+            it: Prenotazioni agenzia
+            en: Agency bookings
+          owner:
+          - office
+          editable_by:
+          - office
+        in_management:
+          label:
+            it: In gestione uffici
+            en: Office handling
+          owner:
+          - office
+          editable_by:
+          - office
+        visit_ended:
+          label:
+            it: In attesa di conferma visita
+            en: Awaiting visit confirmation
+          owner:
+          - field:issuer
+          reminder: 7
+        payments:
+          label:
+            it: Pagamenti in corso
+            en: Payments in progress
+          owner:
+          - office
+        closed:
+          kind: final
+          label:
+            it: Chiuso
+            en: Closed
+          color: '#16a34a'
+        cancelled:
+          kind: final
+          label:
+            it: Annullato
+            en: Cancelled
+          color: '#dc2626'
+      transitions:
+        submit:
+          label:
+            it: Emetti
+            en: Issue
+          from: draft
+          to: pending_director
+          by:
+          - field:issuer
+          - creator
+          guard:
+          - field: guest
+            op: is_set
+          - field: end_date
+            op: is_set
+        approve_with_bookings:
+          label:
+            it: Approva
+            en: Approve
+          from: pending_director
+          to: bookings
+          by:
+          - director
+          condition:
+          - field: accommodation
+            op: eq
+            value: agency
+        approve:
+          label:
+            it: Approva
+            en: Approve
+          from: pending_director
+          to: in_management
+          by:
+          - director
+          condition:
+          - field: accommodation
+            op: neq
+            value: agency
+        send_back:
+          label:
+            it: Rimanda all'emittente
+            en: Send back
+          from: pending_director
+          to: draft
+          by:
+          - director
+          comment: required
+        bookings_done:
+          label:
+            it: Conferma prenotazioni
+            en: Confirm bookings
+          from: bookings
+          to: in_management
+          by:
+          - office
+        end_visit:
+          label:
+            it: Fine visita
+            en: Visit ended
+          from: in_management
+          to: visit_ended
+          trigger:
+            at: end_date
+            offset: +1d
+          emits:
+          - invitation.visit_ended
+        confirm_visit:
+          label:
+            it: Conferma visita
+            en: Confirm visit
+          from: visit_ended
+          to: payments
+          by:
+          - field:issuer
+        close:
+          label:
+            it: Chiudi
+            en: Close
+          from: payments
+          to: closed
+          by:
+          - office
+        cancel:
+          label:
+            it: Annulla
+            en: Cancel
+          from:
+          - draft
+          - pending_director
+          - bookings
+          - in_management
+          to: cancelled
+          by:
+          - field:issuer
+          - office
+          comment: required
+    ui:
+      views:
+      - kanban
+      - table
+      - calendar
+      calendar:
+        start: start_date
+        end: end_date

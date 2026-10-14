@@ -1,0 +1,139 @@
+# yaml-language-server: $schema=../../schema/app.schema.json
+# ACS-GSSI (office access control) expressed as an appforge model.
+# The edge device (Raspberry Pi + Tinkerforge) stays a separate process: it reads
+# the tags through the API and records the taps; the monitor page reacts to the
+# `monitor` broadcast channel.
+version: 1
+
+app:
+  name: Accesso uffici
+  slug: acs-gssi
+  description: Controllo accessi degli uffici di dipartimento con badge NFC.
+  locales: [it, en]
+  auth:
+    providers: [email]
+    allowed_domains: [gssi.it]
+    approval: manual
+    admins: [ludovico.iovino@gssi.it]
+  events:
+    source: /acs
+    type_prefix: it.gssi.acs.
+  deploy:
+    image: ghcr.io/gssi/acs-gssi
+    platforms: [linux/arm64]
+
+roles:
+  manager: { label: { it: Responsabile ufficio, en: Office manager }, scoped: true }
+
+scope: Office
+
+enums:
+  OfficeStatus:
+    values:
+      - { key: open,    label: { it: Aperto, en: Open } }
+      - { key: busy,    label: { it: Occupato, en: Busy } }
+      - { key: away,    label: { it: Assente, en: Away } }
+      - { key: closed,  label: { it: Chiuso, en: Closed } }
+  AccessResult:
+    values:
+      - { key: granted, label: { it: Consentito, en: Granted } }
+      - { key: denied,  label: { it: Negato, en: Denied } }
+  HardwareMode:
+    values: [auto, real, mock]
+
+entities:
+  Office:
+    label: { it: Ufficio, en: Office }
+    plural: { it: Uffici, en: Offices }
+    fields:
+      name:      { type: string, required: true, label: { it: Nome, en: Name } }
+      location:  { type: string, label: { it: Posizione, en: Location } }
+      status:    { type: enum, enum: OfficeStatus, default: open, label: { it: Stato, en: Status } }
+      status_label: { type: string, label: { it: Messaggio, en: Message } }
+      auto_status:  { type: bool, default: true, label: { it: Stato automatico dagli accessi, en: Status from taps } }
+    permissions: { read: [all], create: [admin], update: [manager], delete: [admin] }
+
+  Occupant:
+    label: { it: Occupante, en: Occupant }
+    plural: { it: Occupanti, en: Occupants }
+    scope_field: office
+    fields:
+      office:    { type: ref, to: Office, required: true, on_delete: cascade, label: { it: Ufficio, en: Office } }
+      name:      { type: string, required: true, label: { it: Nome, en: Name } }
+      photo_url: { type: url, label: { it: Foto, en: Photo } }
+      present:   { type: bool, readonly: true, label: { it: Presente, en: Present } }
+    display: name
+    permissions: { read: [all], create: [manager], update: [manager], delete: [manager] }
+
+  NfcTag:
+    label: { it: Badge, en: Badge }
+    plural: { it: Badge, en: Badges }
+    scope_field: office
+    fields:
+      office:      { type: ref, to: Office, required: true, on_delete: cascade, label: { it: Ufficio, en: Office } }
+      uid:         { type: string, required: true, unique: true, max_length: 32, label: UID }
+      holder_name: { type: string, label: { it: Intestatario, en: Holder } }
+      occupant:    { type: ref, to: Occupant, label: { it: Occupante, en: Occupant } }
+      active:      { type: bool, default: true, label: { it: Attivo, en: Active } }
+      valid_from:  { type: date, label: { it: Valido dal, en: Valid from } }
+      valid_until: { type: date, label: { it: Valido fino al, en: Valid until } }
+    display: uid
+    permissions: { read: [manager], create: [manager], update: [manager], delete: [manager] }
+
+  Device:
+    label: { it: Dispositivo, en: Device }
+    plural: { it: Dispositivi, en: Devices }
+    scope_field: office
+    fields:
+      office:  { type: ref, to: Office, required: true, label: { it: Ufficio, en: Office } }
+      name:    { type: string, required: true, label: { it: Nome, en: Name } }
+      api_url: { type: url, label: { it: URL API, en: API URL } }
+      hardware_mode: { type: enum, enum: HardwareMode, default: auto, label: { it: Modalità hardware, en: Hardware mode } }
+      door_relay_channel: { type: int, min: 0, max: 3, default: 0, label: { it: Canale relè porta, en: Door relay channel }, list: false }
+      door_open_ms: { type: int, min: 500, max: 20000, default: 3000, label: { it: Apertura porta (ms), en: Door open (ms) }, list: false }
+      config:  { type: json, label: { it: Configurazione, en: Configuration }, list: false }
+    permissions: { read: [manager], create: [admin], update: [manager], delete: [admin] }
+
+  AccessLog:
+    label: { it: Accesso, en: Access }
+    plural: { it: Registro accessi, en: Access log }
+    scope_field: office
+    fields:
+      office:   { type: ref, to: Office, required: true, label: { it: Ufficio, en: Office } }
+      device:   { type: ref, to: Device, label: { it: Dispositivo, en: Device } }
+      tag:      { type: ref, to: NfcTag, label: Badge }
+      uid:      { type: string, required: true, label: UID }
+      result:   { type: enum, enum: AccessResult, required: true, label: { it: Esito, en: Result } }
+      reason:   { type: string, label: { it: Motivo, en: Reason } }
+    display: uid
+    indexes: [[office, created_at]]
+    # Rows are written by the device through a server-side RPC (service role): users only read.
+    permissions: { read: [manager], create: [admin], update: [admin], delete: [admin] }
+
+reactions:
+  - name: monitor_feed
+    on: access_log.created
+    do: broadcast
+    channel: monitor
+  - name: status_feed
+    on: office.updated
+    do: broadcast
+    channel: monitor
+  - name: notify_denied
+    on: access_log.created
+    when:
+      clauses: [ { field: result, op: eq, value: denied } ]
+    do: notify
+    to: [manager]
+    template: access_denied
+  - name: update_presence
+    on: access_log.created
+    when:
+      clauses: [ { field: result, op: eq, value: granted } ]
+    do: custom
+    handler: update_presence
+
+subscriptions:
+  - name: n8n
+    url_env: N8N_WEBHOOK_URL
+    events: ["access_log.*", "office.updated"]

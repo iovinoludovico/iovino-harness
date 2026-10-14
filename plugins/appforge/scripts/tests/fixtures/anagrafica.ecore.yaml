@@ -1,0 +1,42 @@
+package: anagrafica
+doc: Anagrafica di prova con tutti i costrutti
+language: it
+classes:
+  Soggetto:
+    abstract: true
+    attributes:
+      nome: {type: EString, lower: 1, max_length: 120}
+  Persona:
+    supertypes: [Soggetto]
+    doc: Una persona fisica
+    attributes:
+      codiceFiscale: {type: EString, lower: 1, id: true}
+      dataNascita: Date
+      ruolo: {type: Ruolo, default: STAFF}
+      attivo: {type: EBoolean, default: true}
+    references:
+      account: {type: Account, lower: 1, opposite: persona}
+      indirizzi: {type: Indirizzo, upper: -1, containment: true, opposite: persona}
+      gruppi: {type: Gruppo, upper: -1, opposite: membri}
+      utente: User
+  Account:
+    attributes:
+      email: {type: Email, lower: 1, unique: true}
+    references:
+      persona: {type: Persona, opposite: account}
+  Indirizzo:
+    attributes: {via: EString, citta: EString}
+    references:
+      persona: {type: Persona, lower: 1, opposite: indirizzi}
+  Gruppo:
+    attributes: {nome: EString}
+    references:
+      membri: {type: Persona, upper: -1, opposite: gruppi}
+      allegati: {type: Allegato, upper: "*", containment: true}
+  Allegato:
+    attributes: {file: URL}
+enums:
+  Ruolo:
+    - ADMIN
+    - STAFF
+    - {name: OSPITE, label: {it: Ospite esterno, en: External guest}}
