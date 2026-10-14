@@ -1,5 +1,5 @@
 # Handoff — sviluppo dell'harness iovino-harness
-_Aggiornato: 2026-10-14 · branch `feat/db-push-skill`_
+_Aggiornato: 2026-10-14 · branch `feat/commit-message-suggestion`_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code, installabile su ogni computer con `./install.sh`:
@@ -12,6 +12,7 @@ Si raffina un pezzo alla volta; poi arriveranno i plugin `research` e `mde`.
   hook Python (`scripts/hook.py`: session, guard-file, guard-bash, format), agenti `code-reviewer` e `debugger`,
   skill `project-init`, `handoff`, `commit`, `db-push` (migrazioni sul Supabase cloud con anteprima e conferma),
   `harness-note` (note in `NOTES.md` di questo clone).
+  Quando Claude propone commit o push mostra il messaggio di commit in un blocco copiabile (convenzione Git).
 - `plugins/modeler` (v0.1.0): metamodello Ecore in YAML (`scripts/metamodel/`: notazione, mappatura su tabelle,
   reverse e drift via psql, export Ecore/Emfatic/Mermaid), kit del modellatore web (`kit/`) che `install` copia
   nell'app insieme alla CLI (`tools/modeler/`, script `npm run model:*`): l'app resta allineata senza il plugin.

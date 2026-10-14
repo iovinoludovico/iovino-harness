@@ -33,7 +33,9 @@ Formato Conventional Commits, in inglese:
 
 Tipi: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`. Usa `!` e `BREAKING CHANGE:` solo per rotture reali. Se il repository ha istruzioni proprie sulle righe finali del messaggio (attribuzione, ticket), seguile.
 
-Crea il commit con `git commit -F -` passando il messaggio via heredoc, così le virgolette non creano problemi.
+Mostra all'utente il messaggio in un blocco ```text copiabile (stesso formato, un blocco per commit). Crea il commit
+con `git commit -F -` passando esattamente quel messaggio via heredoc, così le virgolette non creano problemi; se
+l'utente lo ha modificato, usa il suo.
 
 ## 4. Non fare
 
