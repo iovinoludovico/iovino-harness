@@ -1,0 +1,12 @@
+{
+  "name": "iovino-harness",
+  "description": "Harness personale di Ludovico Iovino per Claude Code: convenzioni, guardrail, agenti e skill comuni a tutti i progetti",
+  "owner": { "name": "Ludovico Iovino" },
+  "plugins": [
+    {
+      "name": "core",
+      "source": "./plugins/core",
+      "description": "Convenzioni di lavoro, guardrail su segreti e git, formattazione, agenti di revisione e debug, skill di base"
+    }
+  ]
+}
