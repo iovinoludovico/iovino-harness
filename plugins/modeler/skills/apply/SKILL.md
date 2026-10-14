@@ -19,5 +19,6 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    `.modeler/proposals/applied/`, `metamodel.json` aggiornato).
 5. Prosegui come la skill `metamodel`, sezione "Allineare l'applicazione": migrazione, codice, migrazione
    applicata in locale, `npm run model:drift` → "aligned", typecheck, lint e test.
+   In produzione la migrazione va applicata con `/core:db-push` prima del push del codice.
 6. Per le proposte arrivate da produzione: dopo il deploy, segna la riga come `applied` (o `rejected`) solo su
    richiesta dell'utente.

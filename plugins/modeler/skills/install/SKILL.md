@@ -62,4 +62,5 @@ rivedilo **con l'utente**:
 ## 5. Verifica
 `npm run model:validate`, `npm run model:drift` (con il database locale avviato e la migrazione applicata),
 typecheck, lint, test e build dell'app; poi apri `/admin/model` in sviluppo, fai una modifica e salva:
-deve comparire un file in `.modeler/proposals/`.
+deve comparire un file in `.modeler/proposals/`. Prima del deploy, la migrazione `model_change_requests` va
+applicata al cloud con `/core:db-push`.

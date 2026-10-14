@@ -1,5 +1,5 @@
 # Handoff — sviluppo dell'harness iovino-harness
-_Aggiornato: 2026-10-14 · branch `feat/release-versioning`_
+_Aggiornato: 2026-10-14 · branch `feat/db-push-skill`_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code, installabile su ogni computer con `./install.sh`:
@@ -10,7 +10,8 @@ Si raffina un pezzo alla volta; poi arriveranno i plugin `research` e `mde`.
 - `plugins/core`: convenzioni iniettate a inizio sessione (`context/conventions.md`: il metamodello
   `domain.ecore.yaml` guida lo schema, personalizzazioni in `docs/customizations.md` con `CUSTOM(<id>)`),
   hook Python (`scripts/hook.py`: session, guard-file, guard-bash, format), agenti `code-reviewer` e `debugger`,
-  skill `project-init`, `handoff`, `commit`, `harness-note` (note in `NOTES.md` di questo clone).
+  skill `project-init`, `handoff`, `commit`, `db-push` (migrazioni sul Supabase cloud con anteprima e conferma),
+  `harness-note` (note in `NOTES.md` di questo clone).
 - `plugins/modeler` (v0.1.0): metamodello Ecore in YAML (`scripts/metamodel/`: notazione, mappatura su tabelle,
   reverse e drift via psql, export Ecore/Emfatic/Mermaid), kit del modellatore web (`kit/`) che `install` copia
   nell'app insieme alla CLI (`tools/modeler/`, script `npm run model:*`): l'app resta allineata senza il plugin.
@@ -40,7 +41,7 @@ Si raffina un pezzo alla volta; poi arriveranno i plugin `research` e `mde`.
   appforge: da migrare con `/modeler:install` quando serve (metamodello dal database).
 
 ## Prossimi passi
-1. Merge di `feat/release-versioning` e push (rilascio core 0.1.1, modeler 0.1.1).
+1. Provare `/core:db-push` per davvero alla prima migrazione da portare in produzione.
 2. `/modeler:install` su un'app reale con `supabase start` (prova completa di `/admin/model` e proposte).
 3. Pubblicare il repo su GitHub (privato) e installarlo sugli altri computer.
 4. Rivedere `NOTES.md` e applicare le lezioni a convenzioni, hook e skill.
