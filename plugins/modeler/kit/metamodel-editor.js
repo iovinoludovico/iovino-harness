@@ -23,11 +23,15 @@
   const FEATURE_RE = /^[a-z][A-Za-z0-9_]{0,39}$/;
   const LITERAL_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
   const RESERVED = ["id", "createdAt", "updatedAt", "created_at", "updated_at"];
-  const BOX_W = 210, HEAD_H = 30, ROW_H = 18, PAD = 8;
+  const BOX_W = 210, HEAD_H = 32, ROW_H = 19, PAD = 8, CHAR_W = 7.4;
+  const MAX_ROWS = 12;                     // attributes shown in a box before "+N" (all of them with "Tutti")
+  const GAP_X = 70, GAP_Y = 50, MARGIN = 24, K_MIN = 0.25, K_MAX = 2;
 
   const T = {
     it: {
       addClass: "Classe", addEnum: "Enum", layout: "Riordina", fit: "Adatta", save: "Salva", note: "Nota sulla modifica",
+      panel: "Pannello", fullscreen: "Schermo intero", exitFullscreen: "Esci", allAttrs: "Tutti gli attributi",
+      compact: "Compatto", more: "altri",
       issues: "problemi", ok: "Metamodello valido", name: "Nome", abstract: "Astratta", supertypes: "Supertipi",
       doc: "Descrizione", label: "Etichetta", attributes: "Attributi", references: "Riferimenti", literals: "Letterali",
       add: "Aggiungi", del: "Elimina", type: "Tipo", mult: "Molt.", id: "ID", target: "Classe", containment: "Contiene",
@@ -42,6 +46,8 @@
     },
     en: {
       addClass: "Class", addEnum: "Enum", layout: "Layout", fit: "Fit", save: "Save", note: "Change note",
+      panel: "Panel", fullscreen: "Full screen", exitFullscreen: "Exit", allAttrs: "All attributes",
+      compact: "Compact", more: "more",
       issues: "issues", ok: "Valid metamodel", name: "Name", abstract: "Abstract", supertypes: "Supertypes",
       doc: "Description", label: "Label", attributes: "Attributes", references: "References", literals: "Literals",
       add: "Add", del: "Delete", type: "Type", mult: "Mult.", id: "ID", target: "Class", containment: "Contains",
@@ -62,6 +68,7 @@
 @media (prefers-color-scheme: dark) { :host { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151;
   --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --accent:#60a5fa; } }
 :host([theme="light"]) { --bg:#fff; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --panel:#f9fafb; --head:#eef2ff; --enum:#fef3c7; --accent:#2563eb; }
+:host(:fullscreen) { height:100vh; background:var(--bg); }
 :host([theme="dark"]) { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151; --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --accent:#60a5fa; }
 * { box-sizing:border-box; }
 .wrap { display:grid; grid-template-rows:auto 1fr; height:100%; min-height:520px; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--bg); }
@@ -77,6 +84,9 @@ input[type=checkbox] { padding:0; }
 .status { font-size:12px; color:var(--muted); cursor:pointer; }
 .status.bad { color:var(--err); } .status.good { color:var(--ok); }
 .main { display:grid; grid-template-columns:1fr 340px; min-height:0; }
+.main.nopanel { grid-template-columns:1fr; }
+.main.nopanel .side { display:none; }
+button.on { border-color:var(--accent); color:var(--accent); }
 .canvas { position:relative; overflow:hidden; min-height:0; cursor:grab; }
 .canvas svg { width:100%; height:100%; display:block; user-select:none; }
 .side { border-left:1px solid var(--line); background:var(--panel); overflow:auto; padding:10px; }
@@ -97,14 +107,14 @@ input[type=checkbox] { padding:0; }
 .box.sel rect.body { stroke:var(--accent); stroke-width:2; }
 .box rect.head { fill:var(--head); }
 .box.enum rect.head { fill:var(--enum); }
-.box text { fill:var(--fg); font-size:12px; }
-.box text.title { font-weight:600; }
+.box text { fill:var(--fg); font-size:13px; }
+.box text.title { font-weight:600; font-size:14px; }
 .box text.abstract { font-style:italic; }
-.box text.stereo, .box text.muted { fill:var(--muted); font-size:11px; }
+.box text.stereo, .box text.muted { fill:var(--muted); font-size:11.5px; }
 .box { cursor:move; }
-.edge { stroke:var(--muted); fill:none; stroke-width:1.3; }
+.edge { stroke:var(--muted); fill:none; stroke-width:1.6; }
 .edge.inherit { stroke-dasharray:none; }
-.elabel { fill:var(--muted); font-size:11px; }
+.elabel { fill:var(--muted); font-size:12px; paint-order:stroke; stroke:var(--bg); stroke-width:4px; stroke-linejoin:round; }
 .mk-open { fill:var(--bg); stroke:var(--muted); }
 .status.warn { color:#d97706; }
 .issues div.w { color:#b45309; }
@@ -141,6 +151,9 @@ input[type=checkbox] { padding:0; }
       this._orig = null;
       this._sel = null;
       this._view = { x: 0, y: 0, k: 1 };
+      this._autoFit = true;        // refit when the canvas is resized, until the user zooms or pans
+      this._panel = false;         // side panel open (it opens on selection)
+      this._allAttrs = false;      // boxes show every attribute instead of the first MAX_ROWS
       this._showIssues = false;
       this.attachShadow({ mode: "open" });
     }
@@ -173,6 +186,8 @@ input[type=checkbox] { padding:0; }
       this._mm = m;
       this._orig = clone(m);
       this._sel = null;
+      this._panel = false;
+      this._autoFit = true;
       this._autoLayout(false);
       this._render();
       requestAnimationFrame(() => this._fit());
@@ -199,6 +214,7 @@ input[type=checkbox] { padding:0; }
       this._mm.classes[name] = { abstract: false, supertypes: [], attributes: { name: { type: "EString", lower: 1, upper: 1 } }, references: {} };
       this._mm.diagram[name] = this._freeSpot();
       this._sel = { kind: "class", name };
+      this._panel = true;
       this._changed();
     }
     _addEnum() {
@@ -206,6 +222,7 @@ input[type=checkbox] { padding:0; }
       this._mm.enums[name] = { literals: [{ name: "first" }, { name: "second" }] };
       this._mm.diagram[name] = this._freeSpot();
       this._sel = { kind: "enum", name };
+      this._panel = true;
       this._changed();
     }
     _freeSpot() {
@@ -354,19 +371,30 @@ input[type=checkbox] { padding:0; }
     }
 
     /* ------------------------------------------------------------------ layout */
+    _rows(c) {
+      // attribute lines of a class box: all of them, or the first ones plus "+N more"
+      const lines = Object.entries(c.attributes).map(([an, a]) => {
+        const m = a.lower === 0 && a.upper === 1 ? "" : ` [${multText(a.lower, a.upper)}]`;
+        return `${a.id ? "🔑 " : ""}${an}: ${a.type}${m}`;
+      });
+      if (this._allAttrs || lines.length <= MAX_ROWS) return lines;
+      return [...lines.slice(0, MAX_ROWS - 1), `… +${lines.length - MAX_ROWS + 1} ${this.t.more}`];
+    }
     _boxSize(name) {
       const c = this._mm.classes[name];
-      const width = (texts, min) => Math.round(Math.max(min, Math.min(340, Math.max(...texts.map((x) => x.length)) * 6.9 + 22)));
+      const width = (texts, min) => Math.round(Math.max(min, Math.min(380, Math.max(...texts.map((x) => x.length)) * CHAR_W + 24)));
       if (c) {
-        const lines = [name, ...Object.entries(c.attributes).map(([an, a]) => `${a.id ? "🔑 " : ""}${an}: ${a.type} [${multText(a.lower, a.upper)}]`)];
-        return { w: width(lines, 150), h: HEAD_H + Math.max(1, Object.keys(c.attributes).length) * ROW_H + PAD };
+        const rows = this._rows(c);
+        return { w: width([name, ...rows], 160), h: HEAD_H + Math.max(1, rows.length) * ROW_H + PAD };
       }
       const e = this._mm.enums[name];
       return { w: width([name, ...e.literals.map((l) => l.name)], 120), h: HEAD_H + 12 + Math.max(1, e.literals.length) * ROW_H + PAD };
     }
     _autoLayout(force) {
-      // Hub layout: the most connected class in the middle, its neighbours around it (BFS on
-      // references and inheritance), subclasses below their supertype; enums on the top row.
+      // Order: BFS from the most connected class (neighbours stay close), subclasses after their supertype,
+      // enums last. Placement: masonry columns (each box goes to the
+      // shortest column), with the number of columns chosen to match the canvas aspect ratio, so that the
+      // diagram can be shown as large as possible once fitted.
       const mm = this._mm;
       const classes = Object.keys(mm.classes);
       const enums = Object.keys(mm.enums);
@@ -389,65 +417,98 @@ input[type=checkbox] { padding:0; }
           [...adj[n]].sort((x, y) => adj[y].size - adj[x].size).forEach((x) => { if (!order.includes(x)) queue.push(x); });
         }
       }
-      const ring = [[0, 0]];
-      for (let r = 1; ring.length < order.length + 8 * r; r++) {
-        for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) if (Math.max(Math.abs(dx), Math.abs(dy)) === r) ring.push([dx, dy]);
-        ring.sort((p1, p2) => Math.hypot(p1[0] * 1.6, p1[1]) - Math.hypot(p2[0] * 1.6, p2[1]));
-      }
-      const taken = new Map();
-      const cellOf = {};
+      // classes first (their references are the drawn lines), then the enums, each near the column of the
+      // first class that uses it
+      const nodes = [...order];
       for (const n of order) {
-        const sup = mm.classes[n].supertypes.find((st) => cellOf[st]);
-        let cell = null;
-        if (sup) {
-          const [sx, sy] = cellOf[sup];
-          cell = [[sx, sy + 1], [sx + 1, sy + 1], [sx - 1, sy + 1]].find(([x, y]) => !taken.has(`${x},${y}`)) || null;
+        for (const a of Object.values(mm.classes[n].attributes)) {
+          if (mm.enums[a.type] && !nodes.includes(a.type)) nodes.push(a.type);
         }
-        if (!cell) {
-          const near = [...adj[n]].filter((x) => cellOf[x]).map((x) => cellOf[x]);
-          const free = ring.filter(([x, y]) => !taken.has(`${x},${y}`));
-          const score = ([x, y]) => near.reduce((acc, [nx, ny]) => acc + Math.hypot((x - nx) * 1.6, y - ny), 0) + Math.hypot(x * 1.6, y) * 0.3;
-          cell = near.length ? free.sort((p1, p2) => score(p1) - score(p2))[0] : free[0];
+      }
+      for (const e of enums) if (!nodes.includes(e)) nodes.push(e);
+      const place = force ? nodes : nodes.filter((n) => !mm.diagram[n]);
+      const sizes = Object.fromEntries(place.map((n) => [n, this._boxSize(n)]));
+      const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
+      const W = r && r.width > 50 ? r.width - 2 * MARGIN : 960, H = r && r.height > 50 ? r.height - 2 * MARGIN : 600;
+      // neighbours of every node (references, inheritance, enum attributes), to keep connected boxes close
+      const near = Object.fromEntries(nodes.map((n) => [n, new Set(adj[n] || [])]));
+      for (const [cn, c] of Object.entries(mm.classes)) {
+        for (const a of Object.values(c.attributes)) if (near[a.type] && mm.enums[a.type]) { near[cn].add(a.type); near[a.type].add(cn); }
+      }
+      const avgH = place.reduce((a, n) => a + sizes[n].h, 0) / Math.max(1, place.length);
+      const masonry = (cols) => {
+        const colH = new Array(cols).fill(0), colW = new Array(cols).fill(0), at = {};
+        for (const n of place) {
+          // the shortest column, unless a column nearer to the placed neighbours is not much taller
+          const placed = [...near[n]].filter((x) => at[x]).map((x) => at[x][0]);
+          const target = placed.length ? placed.reduce((a, b) => a + b, 0) / placed.length : null;
+          let c = 0, best = Infinity;
+          for (let i = 0; i < cols; i++) {
+            const score = colH[i] + (target === null ? 0 : Math.abs(i - target) * avgH * 0.9);
+            if (score < best - 1e-6) { best = score; c = i; }
+          }
+          at[n] = [c, colH[c]];
+          colH[c] += sizes[n].h + GAP_Y;
+          colW[c] = Math.max(colW[c], sizes[n].w);
         }
-        taken.set(`${cell[0]},${cell[1]}`, n);
-        cellOf[n] = cell;
+        const width = colW.reduce((a, b) => a + b, 0) + GAP_X * (cols - 1);
+        const height = Math.max(...colH) - GAP_Y;
+        return { at, colW, width, height, k: Math.min(W / width, H / height) };
+      };
+      let best = null;
+      for (let cols = 1; cols <= Math.max(1, place.length); cols++) {
+        const m = masonry(cols);
+        if (!best || m.k > best.k + 1e-6) best = m;
       }
-      const sizes = Object.fromEntries([...classes, ...enums].map((n) => [n, this._boxSize(n)]));
-      const cw = Math.max(200, ...classes.map((n) => sizes[n].w)) + 90;
-      const xs = Object.values(cellOf).map((c) => c[0]);
-      const ys = Object.values(cellOf).map((c) => c[1]);
-      const minX = Math.min(0, ...xs), minY = Math.min(0, ...ys);
-      const enumH = enums.length ? Math.max(...enums.map((n) => sizes[n].h)) + 60 : 0;
-      const rowTop = {};
-      let acc = 20 + enumH;
-      for (let y = minY; y <= Math.max(0, ...ys); y++) {
-        rowTop[y] = acc;
-        const hs = order.filter((n) => cellOf[n][1] === y).map((n) => sizes[n].h);
-        acc += (hs.length ? Math.max(...hs) : 0) + 70;
-      }
-      for (const n of order) {
-        if (!force && mm.diagram[n]) continue;
-        const [x, y] = cellOf[n];
-        mm.diagram[n] = { x: 20 + (x - minX) * cw, y: rowTop[y] };
-      }
-      let ex = 20;
-      for (const n of enums) {
-        if (force || !mm.diagram[n]) mm.diagram[n] = { x: ex, y: 20 };
-        ex += sizes[n].w + 40;
+      if (!best) return;
+      // new nodes next to the existing diagram (on its right), all nodes from the origin when forced
+      const used = Object.entries(mm.diagram).filter(([n]) => !place.includes(n) && (mm.classes[n] || mm.enums[n]));
+      const ox = used.length ? Math.max(...used.map(([n, p]) => p.x + this._boxSize(n).w)) + GAP_X : 0;
+      const colX = [];
+      best.colW.reduce((x, w, i) => { colX[i] = x; return x + w + GAP_X; }, ox);
+      for (const n of place) {
+        const [c, y] = best.at[n];
+        mm.diagram[n] = { x: Math.round(colX[c] + (best.colW[c] - sizes[n].w) / 2), y: Math.round(y) };
       }
     }
     _fit() {
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
       const pos = Object.entries(this._mm.diagram).filter(([n]) => this._mm.classes[n] || this._mm.enums[n]);
-      if (!r || !pos.length) return;
+      if (!r || r.width < 50 || r.height < 50 || !pos.length) return;
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (const [n, p] of pos) {
         const s = this._boxSize(n);
         x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x + s.w); y1 = Math.max(y1, p.y + s.h);
       }
-      const k = Math.min(1.2, Math.max(0.3, Math.min((r.width - 40) / (x1 - x0), (r.height - 40) / (y1 - y0))));
-      this._view = { k, x: (r.width - (x1 - x0) * k) / 2 - x0 * k, y: 20 - y0 * k };
+      const k = Math.min(K_MAX, Math.max(K_MIN, Math.min((r.width - 2 * MARGIN) / (x1 - x0), (r.height - 2 * MARGIN) / (y1 - y0))));
+      this._view = { k, x: (r.width - (x1 - x0) * k) / 2 - x0 * k, y: (r.height - (y1 - y0) * k) / 2 - y0 * k };
       this._renderDiagram();
+    }
+    _refit() { this._autoFit = true; this._fit(); }
+    _separate() {
+      // boxes grew (all attributes shown): push down the ones that now overlap, keeping columns and order
+      const mm = this._mm;
+      const names = Object.keys(mm.diagram).filter((n) => mm.classes[n] || mm.enums[n]).sort((a, b) => mm.diagram[a].y - mm.diagram[b].y);
+      const done = [];
+      for (const n of names) {
+        const p = mm.diagram[n], s = this._boxSize(n);
+        let moved = true;
+        while (moved) {
+          moved = false;
+          for (const o of done) {
+            const q = mm.diagram[o], t = this._boxSize(o);
+            if (p.x < q.x + t.w && q.x < p.x + s.w && p.y < q.y + t.h + GAP_Y / 2 && q.y < p.y + s.h) {
+              p.y = q.y + t.h + GAP_Y;
+              moved = true;
+            }
+          }
+        }
+        done.push(n);
+      }
+    }
+    _toggleFullscreen() {
+      if (document.fullscreenElement === this) document.exitFullscreen?.();
+      else this.requestFullscreen?.().catch(() => {});
     }
 
     /* ------------------------------------------------------------------ rendering */
@@ -461,9 +522,19 @@ input[type=checkbox] { padding:0; }
           el("div", { class: "bar" }),
           el("div", { class: "main" }, el("div", { class: "canvas" }), el("div", { class: "side" })));
         root.append(wrap);
-        this._bindCanvas(root.querySelector(".canvas"));
+        const canvas = root.querySelector(".canvas");
+        this._bindCanvas(canvas);
+        // keep the diagram fitted to the canvas (window resized, panel opened, full screen) until the user zooms
+        let pending = false;
+        new ResizeObserver(() => {
+          if (!this._autoFit || pending) return;
+          pending = true;
+          requestAnimationFrame(() => { pending = false; this._fit(); });
+        }).observe(canvas);
+        document.addEventListener("fullscreenchange", () => { this._render(); this._refit(); });
         requestAnimationFrame(() => this._fit());
       }
+      root.querySelector(".main").classList.toggle("nopanel", !this._panel);
       const bar = root.querySelector(".bar");
       const issues = this._issues();
       const warns = this._warnings();
@@ -472,8 +543,12 @@ input[type=checkbox] { padding:0; }
         this.readonly ? el("span", { class: "hint" }, `· ${t.readonly}`) : null,
         this.readonly ? null : el("button", { onclick: () => this._addClass(), title: t.addClass }, `+ ${t.addClass}`),
         this.readonly ? null : el("button", { onclick: () => this._addEnum(), title: t.addEnum }, `+ ${t.addEnum}`),
-        el("button", { onclick: () => { this._autoLayout(true); this._fit(); this._changed(); }, disabled: this.readonly }, t.layout),
-        el("button", { onclick: () => this._fit() }, t.fit),
+        el("button", { onclick: () => { this._autoLayout(true); this._refit(); this._changed(); }, disabled: this.readonly }, t.layout),
+        el("button", { onclick: () => this._refit() }, t.fit),
+        el("button", { class: this._allAttrs ? "on" : "", onclick: () => { this._allAttrs = !this._allAttrs; this._separate(); this._render(); this._refit(); } },
+          this._allAttrs ? t.compact : t.allAttrs),
+        el("button", { class: this._panel ? "on" : "", onclick: () => { this._panel = !this._panel; this._render(); } }, t.panel),
+        el("button", { onclick: () => this._toggleFullscreen() }, document.fullscreenElement === this ? t.exitFullscreen : t.fullscreen),
         el("span", {
           class: `status ${issues.length ? "bad" : "good"}`,
           onclick: () => { this._showIssues = !this._showIssues; this._schedule(); },
@@ -503,11 +578,12 @@ input[type=checkbox] { padding:0; }
         if (box) {
           const name = box.dataset.name;
           this._sel = { kind: this._mm.classes[name] ? "class" : "enum", name };
+          this._panel = true;
           const start = { ...(this._mm.diagram[name] || { x: 0, y: 0 }) };
           drag = { kind: "box", name, p, start, moved: false };
           this._schedule();
         } else {
-          drag = { kind: "pan", p, start: { ...this._view } };
+          drag = { kind: "pan", p, start: { ...this._view }, moved: false };
         }
         canvas.setPointerCapture(ev.pointerId);
       });
@@ -515,6 +591,8 @@ input[type=checkbox] { padding:0; }
         if (!drag) return;
         const dx = ev.clientX - drag.p.x, dy = ev.clientY - drag.p.y;
         if (drag.kind === "pan") {
+          drag.moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 2;
+          if (drag.moved) this._autoFit = false;
           this._view = { ...drag.start, x: drag.start.x + dx, y: drag.start.y + dy };
         } else if (!this.readonly) {
           drag.moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 2;
@@ -524,14 +602,21 @@ input[type=checkbox] { padding:0; }
       });
       const end = () => {
         if (drag?.kind === "box" && drag.moved) this._changed();
+        if (drag?.kind === "pan" && !drag.moved && this._sel) {   // a click on the background: deselect
+          this._sel = null;
+          this._panel = false;
+          this._schedule();
+        }
         drag = null;
       };
+      canvas.addEventListener("dblclick", (ev) => { if (!ev.target.closest?.(".box")) this._refit(); });
       canvas.addEventListener("pointerup", end);
       canvas.addEventListener("pointercancel", end);
       canvas.addEventListener("wheel", (ev) => {
         ev.preventDefault();
+        this._autoFit = false;
         const r = canvas.getBoundingClientRect();
-        const k = Math.min(2, Math.max(0.25, this._view.k * (ev.deltaY < 0 ? 1.1 : 0.9)));
+        const k = Math.min(K_MAX, Math.max(K_MIN, this._view.k * (ev.deltaY < 0 ? 1.1 : 0.9)));
         const mx = ev.clientX - r.left, my = ev.clientY - r.top;
         this._view = { k, x: mx - ((mx - this._view.x) * k) / this._view.k, y: my - ((my - this._view.y) * k) / this._view.k };
         this._renderDiagram();
@@ -608,8 +693,15 @@ input[type=checkbox] { padding:0; }
           else if (!o) attrs["marker-end"] = "url(#arrow)";
           edges.append(svg("path", attrs));
           const lab = (pt, from, text) => {
+            // a little way along the line from its end, extending away from the box it touches
             const ux = from.x - pt.x, uy = from.y - pt.y, len = Math.hypot(ux, uy) || 1;
-            labels.append(svg("text", { x: pt.x + (ux / len) * 18 + 4, y: pt.y + (uy / len) * 18 - 4, class: "elabel" }, text));
+            const x = pt.x + (ux / len) * 14, y = pt.y + (uy / len) * 14;
+            const horizontal = Math.abs(ux) >= Math.abs(uy);
+            const anchor = horizontal ? (ux < 0 ? "end" : "start") : "start";
+            labels.append(svg("text", {
+              x: horizontal ? x : x + 6, y: horizontal ? y - 5 : y + (uy < 0 ? -2 : 12),
+              "text-anchor": anchor, class: "elabel",
+            }, text));
           };
           lab(p2, p1, `${rn} ${multText(r.lower, r.upper)}`);
           if (o) lab(p1, p2, `${r.opposite} ${multText(o.lower, o.upper)}`);
@@ -625,15 +717,15 @@ input[type=checkbox] { padding:0; }
         const b = svg("g", { class: `box${sel ? " sel" : ""}`, "data-name": cn, transform: `translate(${p.x},${p.y})` },
           svg("rect", { class: "body", width: s.w, height: s.h, rx: 6 }),
           svg("rect", { class: "head", width: s.w - 2, x: 1, y: 1, height: hh - 2, rx: 5 }),
-          svg("text", { x: s.w / 2, y: 19, "text-anchor": "middle", class: `title${c.abstract ? " abstract" : ""}` }, cn));
+          svg("text", { x: s.w / 2, y: 21, "text-anchor": "middle", class: `title${c.abstract ? " abstract" : ""}` }, cn));
         let y = hh + 14;
-        const attrs = Object.entries(c.attributes);
-        if (!attrs.length) b.append(svg("text", { x: 8, y, class: "muted" }, "—"));
-        for (const [an, a] of attrs) {
-          const m = a.lower === 0 && a.upper === 1 ? "" : ` [${multText(a.lower, a.upper)}]`;
-          b.append(svg("text", { x: 8, y }, `${a.id ? "🔑 " : ""}${an}: ${a.type}${m}`));
+        const rows = this._rows(c);
+        if (!rows.length) b.append(svg("text", { x: 8, y, class: "muted" }, "—"));
+        rows.forEach((line, i) => {
+          const more = !this._allAttrs && i === MAX_ROWS - 1 && line.startsWith("…");
+          b.append(svg("text", { x: 8, y, class: more ? "muted" : null }, line));
           y += ROW_H;
-        }
+        });
         boxes.append(b);
       }
       for (const [en, e] of Object.entries(mm.enums)) {
@@ -650,7 +742,7 @@ input[type=checkbox] { padding:0; }
         for (const l of e.literals) { b.append(svg("text", { x: 8, y }, l.name)); y += ROW_H; }
         boxes.append(b);
       }
-      g.append(boxes, edges, labels);
+      g.append(edges, boxes, labels);   // lines under the boxes, labels on top
       const root = svg("svg", { role: "img", "aria-label": "metamodel diagram" }, defs, g);
       const old = canvas.querySelector("svg");
       if (old) old.replaceWith(root); else canvas.prepend(root);

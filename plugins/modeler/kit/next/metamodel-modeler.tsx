@@ -89,7 +89,7 @@ export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, d
         lang={lang}
         save-label={saveLabel}
         readonly={canEdit ? undefined : ""}
-        style={{ display: "block", height: "72vh" }}
+        style={{ display: "block", height: "calc(100dvh - 12rem)", minHeight: 560 }}
       />
       {result && (
         <div className={`flex flex-wrap items-center gap-3 text-sm ${result.ok ? "text-green-700 dark:text-green-400" : "text-destructive"}`}>
