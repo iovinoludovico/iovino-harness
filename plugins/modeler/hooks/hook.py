@@ -1,0 +1,109 @@
+"""Claude Code hooks of the modeler plugin (Python standard library only; never break a session).
+
+post    (PostToolUse on Edit|Write|MultiEdit): domain.ecore.yaml changed -> validate it (exit 2 sends the
+        errors back to Claude); a migration changed in an app with a metamodel -> remind to keep them aligned.
+session (SessionStart): inside an app with a metamodel, describe how it is kept aligned, report a vendored
+        modeler older than the plugin and, with MODELER_DRIFT_DB set, the drift from the database.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+METAMODEL_FILE = "domain.ecore.yaml"
+
+
+def _input() -> dict:
+    try:
+        return json.load(sys.stdin)
+    except Exception:
+        return {}
+
+
+def _path(fp: str, data: dict) -> Path:
+    p = Path(fp)
+    return (p if p.is_absolute() else Path(data.get("cwd") or ".") / p).resolve()
+
+
+def _app_root(start: Path) -> Path | None:
+    for d in [start, *start.parents]:
+        if (d / METAMODEL_FILE).exists():
+            return d
+    return None
+
+
+def _context(event: str, text: str) -> None:
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}))
+
+
+def post(data: dict) -> int:
+    fp = (data.get("tool_input") or {}).get("file_path")
+    if not fp:
+        return 0
+    path = _path(fp, data)
+    norm = str(path).replace("\\", "/")
+    if "/supabase/migrations/" in norm and norm.endswith(".sql") and not norm.endswith("_model_change_requests.sql"):
+        root = _app_root(path.parent)
+        if root:
+            _context("PostToolUse", f"modeler: this migration changes the database of an app described by "
+                                    f"{root / METAMODEL_FILE}. Update the metamodel in the same change, then "
+                                    "`npm run model:sync` and, after applying the migration locally, `npm run model:drift`.")
+        return 0
+    if path.name != METAMODEL_FILE:
+        return 0
+    sys.path.insert(0, str(SCRIPTS))
+    from metamodel import core as M, ecore as E  # noqa: E402
+
+    try:
+        rep = E.validate(E.load(path))
+    except M.ModelError as exc:
+        print(f"modeler: {exc}", file=sys.stderr)
+        return 2
+    if not rep.ok:
+        print(f"modeler: {METAMODEL_FILE} is not valid — fix it:\n" + rep.render(), file=sys.stderr)
+        return 2
+    _context("PostToolUse", "modeler: metamodel valid. Next, in the same change: the migration, `npm run model:sync` "
+                            "(refreshes the admin modeler), the code that uses the new structure, `npm run model:drift`.")
+    return 0
+
+
+def session(data: dict) -> int:
+    root = _app_root(Path(data.get("cwd") or ".").resolve())
+    if not root:
+        return 0
+    lines = [f"App with a domain metamodel: {root / METAMODEL_FILE} (source of truth of the domain structure). "
+             "Every schema change starts from the metamodel (/modeler:metamodel) and goes with its migration in the "
+             "same change; `npm run model:drift` must report 'aligned'. Proposals from the admin modeler: /modeler:apply."]
+    try:
+        sys.path.insert(0, str(SCRIPTS))
+        from metamodel import __version__, cli  # noqa: E402
+
+        installed = cli.installed_version(root)
+        if installed is None:
+            lines.append("The web modeler is not installed in this app yet: /modeler:install.")
+        elif installed != __version__:
+            lines.append(f"The app ships modeler {installed}, the plugin is {__version__}: "
+                         "upgrade it with /modeler:install.")
+        dsn = os.environ.get("MODELER_DRIFT_DB")
+        if dsn:
+            from metamodel import dbschema as D, ecore as E  # noqa: E402
+            found = D.drift(E.load(root / METAMODEL_FILE), D.catalog(dsn))
+            lines.append("Metamodel and database aligned." if not found else
+                         "DRIFT between metamodel and database:\n" + "\n".join(f"- {x}" for x in found[:30]))
+    except Exception as exc:  # never break a session
+        lines.append(f"(modeler check skipped: {exc})")
+    print("\n".join(lines))
+    return 0
+
+
+def main() -> int:
+    mode = sys.argv[1] if len(sys.argv) > 1 else "post"
+    return {"post": post, "session": session}[mode](_input())
+
+
+if __name__ == "__main__":
+    sys.exit(main())

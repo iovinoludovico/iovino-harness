@@ -1,0 +1,19 @@
+-- Domain modeler of this app: proposals of metamodel changes made from the admin area in production.
+-- They never change the running application: the developer copies them into the repository
+-- (`python3 tools/modeler/modeler.py pull --db <DSN>`), reviews them and implements them
+-- (domain.ecore.yaml + migration + code).
+create table if not exists public.model_change_requests (
+  id           uuid primary key default gen_random_uuid(),
+  metamodel    jsonb not null,
+  note         text,
+  author_email text,
+  status       text not null default 'open' check (status in ('open', 'pulled', 'applied', 'rejected')),
+  created_at   timestamptz not null default now()
+);
+
+alter table public.model_change_requests enable row level security;
+
+-- Admins only: replace public.is_admin() with the app's own admin predicate if it has another name.
+drop policy if exists model_change_requests_admin on public.model_change_requests;
+create policy model_change_requests_admin on public.model_change_requests
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());

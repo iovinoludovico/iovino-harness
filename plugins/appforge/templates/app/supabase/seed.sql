@@ -1,3 +1,0 @@
--- Local development data (supabase db reset). Not generated: edit freely.
--- Users sign in with Google or the magic link; the emails listed in app.yaml
--- (app.auth.admins) become administrators at their first sign-in.

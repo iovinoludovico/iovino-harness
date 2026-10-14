@@ -1,0 +1,20 @@
+{
+  "description": "modeler: validates domain.ecore.yaml when it changes, reminds to align metamodel and migrations, reports the state of the app at session start",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.py\" post", "timeout": 30 }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.py\" session", "timeout": 20 }
+        ]
+      }
+    ]
+  }
+}

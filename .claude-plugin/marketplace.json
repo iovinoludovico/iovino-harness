@@ -7,6 +7,11 @@
       "name": "core",
       "source": "./plugins/core",
       "description": "Convenzioni di lavoro, guardrail su segreti e git, formattazione, agenti di revisione e debug, skill di base"
+    },
+    {
+      "name": "modeler",
+      "source": "./plugins/modeler",
+      "description": "Metamodello di dominio (domain.ecore.yaml) e modellatore web incorporato nelle app Next.js + Supabase, con controllo di allineamento al database"
     }
   ]
 }

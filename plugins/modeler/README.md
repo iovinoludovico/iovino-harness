@@ -1,0 +1,71 @@
+# modeler
+
+Model-based development of Next.js + Supabase apps driven by a **domain metamodel** in Ecore notation
+(`domain.ecore.yaml`), with a **web modeler that becomes part of the application**.
+
+- The metamodel is the source of truth of the domain structure: classes, attributes, references
+  (multiplicity, containment, opposite), enums, inheritance. It is written from the prompt
+  (`/modeler:metamodel`) or derived from the app's database (`reverse`).
+- `/modeler:install` puts the modeler in the app's repository: editor (`public/modeler/`), React wrapper,
+  server action that saves proposals, admin page `/admin/model`, table `model_change_requests`, and the CLI
+  itself in `tools/modeler/` with `npm run model:*` scripts. After that the app does not need the plugin:
+  `model:validate`, `model:sync`, `model:drift`, `model:proposals`, `model:apply` run from the repository and in CI.
+- A save in the modeler never changes the running app: it is a **proposal** (a file in `.modeler/proposals/` in
+  development, a `model_change_requests` row in production) applied with `/modeler:apply`, which goes on with
+  the migration and the code in the same change.
+- `drift` compares the metamodel with a live database (local Supabase by default): "aligned" is the invariant.
+- Behaviour (workflows, permissions, pages) is code; what the metamodel cannot express is a customization
+  listed in `docs/customizations.md` and marked `CUSTOM(<id>)`.
+
+## Install
+From the harness clone: `./install.sh` (installs `core` and `modeler`). From GitHub:
+
+    /plugin install modeler --marketplace iovinoludovico/iovino-harness
+
+## Commands (skills)
+| Command | What it does |
+|---|---|
+| `/modeler:install [app] [DSN]` | metamodel from the database if missing, modeler and CLI in the app (re-run to upgrade) |
+| `/modeler:metamodel <description> \| show` | metamodel from natural language, then migration, code, drift |
+| `/modeler:apply [proposal] \| pull <DSN>` | applies the proposals saved by the modeler |
+
+Knowledge skill loaded automatically: `notation` (syntax, storage mapping, ambiguities to settle).
+
+Hooks: validate `domain.ecore.yaml` after every edit (PostToolUse, errors go back to Claude); remind to update
+the metamodel when a migration changes; at session start describe the app's metamodel, report a vendored
+modeler older than the plugin and, with `MODELER_DRIFT_DB`, the drift from the database.
+
+## CLI
+```bash
+python3 scripts/modeler.py validate tests/fixtures/anagrafica.ecore.yaml
+python3 scripts/modeler.py show tests/fixtures/anagrafica.ecore.yaml --format storage   # emfatic|mermaid|json|yaml
+python3 scripts/modeler.py reverse --db postgresql://postgres:postgres@127.0.0.1:54322/postgres -o domain.ecore.yaml
+python3 scripts/modeler.py install ~/code/my-app
+# inside the app
+npm run model:validate && npm run model:sync && npm run model:drift
+```
+`drift`/`reverse` use `--db`, else `MODELER_DB`, else the local Supabase port in `supabase/config.toml`;
+`MODELER_EXCLUDE` lists the app's infrastructure tables to ignore. `export`/`import` exchange `.ecore` XMI with
+Eclipse EMF and Epsilon.
+
+## What lands in the app
+| Path | Owner | On re-install |
+|---|---|---|
+| `public/modeler/metamodel-editor.js` | modeler | replaced |
+| `src/components/modeler/metamodel-modeler.tsx` | modeler | replaced |
+| `src/lib/modeler/metamodel-actions.ts` | modeler | replaced |
+| `tools/modeler/` (+ `VERSION`), `model:*` scripts | modeler | replaced |
+| `src/lib/modeler/metamodel.json` | generated from `domain.ecore.yaml` | refreshed (`model:sync`) |
+| `src/lib/modeler/access.ts` | app (admin check, Supabase client) | kept |
+| admin page (from `kit/next/page.tsx`) | app | kept |
+| `supabase/migrations/<ts>_model_change_requests.sql` | app | written once |
+
+## Requirements
+Python 3.10+ (PyYAML if installed, else the vendored pure-Python copy in `scripts/vendor`); `psql` for
+`reverse`, `drift` and `pull`.
+
+## Tests
+```bash
+python3 -m unittest discover -s plugins/modeler/tests
+MODELER_PG=postgresql://postgres:postgres@127.0.0.1:5432/postgres python3 -m unittest discover -s plugins/modeler/tests
+```
