@@ -21,6 +21,7 @@ from metamodel import __version__  # noqa: E402
 from metamodel import cli  # noqa: E402
 from metamodel import dbschema as D  # noqa: E402
 from metamodel import ecore as E  # noqa: E402
+from metamodel import sqlgen as G  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "anagrafica.ecore.yaml"
 
@@ -106,6 +107,84 @@ class NotationTests(unittest.TestCase):
         self.assertEqual(E.expand(E.import_ecore(text))["enums"], E.expand(E.load(FIXTURE))["enums"])
 
 
+def _evolved(meta):
+    """The fixture after a typical change: a column, a rename, a join table, a literal, a new class, a drop."""
+    new = copy.deepcopy(meta)
+    p = new["classes"]["Persona"]
+    p["attributes"]["telefono"] = {"type": "EString", "max_length": 30}
+    p["attributes"]["nascita"] = {"type": "Date", "renamed_from": "dataNascita"}
+    del p["attributes"]["dataNascita"]
+    p["attributes"]["matricola"] = {"type": "EString", "lower": 1}
+    new["classes"]["Account"]["references"] = {
+        "persona": {"type": "Persona", "opposite": "account"},
+        "etichette": {"type": "Etichetta", "upper": -1}}
+    new["classes"]["Etichetta"] = {"attributes": {"nome": {"type": "EString", "lower": 1}}}
+    new["enums"]["Ruolo"].append("REVISORE")
+    del new["classes"]["Gruppo"]["attributes"]["nome"]
+    return new
+
+
+class MigrationTests(unittest.TestCase):
+    def test_no_change_no_migration(self):
+        meta = E.load(FIXTURE)
+        self.assertEqual(G.migration(meta, meta)[0], "")
+
+    def test_whole_schema_from_empty(self):
+        sql, _ = G.migration({"package": "t", "classes": {}}, E.load(FIXTURE))
+        self.assertIn("create table public.persone (", sql)
+        self.assertIn("nome varchar(120) not null", sql)
+        self.assertIn("ruolo text default 'staff' check (ruolo in ('admin', 'staff', 'ospite'))", sql)
+        self.assertIn("add column account uuid not null unique references public.account (id) on delete restrict", sql)
+        self.assertIn("add column utente uuid references public.profiles (id) on delete set null", sql)
+        self.assertIn("add column gruppo uuid not null references public.gruppi (id) on delete cascade", sql)
+        self.assertIn("create table public.persone_gruppi (", sql)
+        self.assertIn("persona_id uuid not null references public.persone (id) on delete cascade", sql)
+        self.assertIn("TODO(modeler): row level security is on for persone", sql)
+
+    def test_evolution(self):
+        meta = E.load(FIXTURE)
+        sql, notes = G.migration(meta, _evolved(meta))
+        self.assertIn("alter table public.persone add column telefono varchar(30);", sql)
+        self.assertIn("alter table public.persone rename column data_nascita to nascita;", sql)
+        self.assertNotIn("drop column data_nascita", sql)                       # a rename, not a drop
+        self.assertIn("alter table public.persone add column matricola text;", sql)   # required: nullable first
+        self.assertIn("-- alter table public.persone alter column matricola set not null;", sql)
+        self.assertIn("create table public.etichette (", sql)
+        self.assertIn("create table public.account_etichette (", sql)
+        self.assertIn("alter type public.ruolo add value if not exists 'revisore';", sql)
+        self.assertIn("check (ruolo in ('admin', 'staff', 'ospite', 'revisore'))", sql)
+        self.assertIn("-- alter table public.gruppi drop column nome;", sql)      # destructive: commented
+        self.assertTrue(any("backfill" in n for n in notes))
+
+    def test_type_change_is_left_to_review(self):
+        meta = E.load(FIXTURE)
+        new = copy.deepcopy(meta)
+        new["classes"]["Indirizzo"]["attributes"]["via"] = "EInt"
+        sql, _ = G.migration(meta, new)
+        self.assertIn("-- alter table public.indirizzi alter column via type integer using via::integer;", sql)
+
+    def test_cli_from_git_head(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = Path(d)
+            git = lambda *a: subprocess.run(["git", *a], cwd=app, check=True, capture_output=True)  # noqa: E731
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "t@e.org")
+            git("config", "user.name", "T")
+            meta = E.load(FIXTURE)
+            E.dump(meta, app / "domain.ecore.yaml")
+            git("add", "-A")
+            git("commit", "-q", "-m", "init")
+            ns = argparse.Namespace(path=str(app), from_="HEAD", name=None, write=True)
+            self.assertEqual(cli.cmd_migrate(ns), 0)                            # unchanged: nothing written
+            self.assertFalse((app / "supabase").exists())
+            E.dump(_evolved(meta), app / "domain.ecore.yaml")
+            self.assertEqual(cli.cmd_migrate(argparse.Namespace(path=str(app), from_="HEAD", name="Telefono e tag!",
+                                                                write=True)), 0)
+            files = list((app / "supabase" / "migrations").glob("*_telefono_e_tag.sql"))
+            self.assertEqual(len(files), 1)
+            self.assertIn("rename column data_nascita to nascita", files[0].read_text())
+
+
 class AppTests(unittest.TestCase):
     """The modeler as part of an application."""
 
@@ -132,6 +211,7 @@ class AppTests(unittest.TestCase):
         scripts = json.loads((self.app / "package.json").read_text())["scripts"]
         self.assertEqual(scripts["dev"], "next dev")
         self.assertEqual(scripts["model:drift"], cli.NPM_SCRIPTS["model:drift"])
+        self.assertEqual(scripts["model:migrate"], cli.NPM_SCRIPTS["model:migrate"])
         doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
         self.assertIn("Persona", doc["classes"])
         self.assertNotIn("appforge", (self.app / "src/lib/modeler/metamodel-actions.ts").read_text())
@@ -266,6 +346,38 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn("NOT IN METAMODEL rooms: columns seats", D.drift(meta, cat))
         self.assertEqual(D.drift(meta, cat, {"rooms.seats"}), [])
         self.assertEqual(D.split_exclude({"events", "rooms.seats"}), ({"events"}, {("rooms", "seats")}))
+
+    def psql(self, sql):
+        out = subprocess.run(["psql", self.dsn, "-q", "-v", "ON_ERROR_STOP=1"], input=sql, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_generated_migrations_apply_and_align(self):
+        meta = E.load(FIXTURE)
+        sql, _ = G.migration({"package": "t", "classes": {}}, meta)
+        self.psql(sql)
+        other = {"rooms", "bookings", "booking_items", "tags", "bookings_tags"}   # the schema of setUp
+        self.assertEqual(D.drift(meta, D.catalog(self.dsn), other), [])
+        self.psql("insert into gruppi (id, nome) values (gen_random_uuid(), 'g');")   # data survives the evolution
+        new = _evolved(meta)
+        step, _ = G.migration(meta, new)
+        self.psql(step)
+        found = D.drift(new, D.catalog(self.dsn), other)
+        # only the reviewed parts remain: the required column still nullable, the dropped column still there
+        self.assertEqual(sorted(x.split(":")[0] for x in found),
+                         ["NOT IN METAMODEL gruppi", "NULLABLE persone.matricola"], found)
+        # a Postgres enum type gets the new literal too
+        self.psql("create type public.stato as enum ('bozza');")
+        with_type = {"package": "t", "classes": {"Pratica": {"attributes": {"x": "EString"}}}, "enums": {"Stato": ["BOZZA"]}}
+        later = copy.deepcopy(with_type)
+        later["classes"]["Pratica"]["attributes"]["stato"] = "Stato"
+        prev = copy.deepcopy(later)
+        later["enums"]["Stato"] = ["BOZZA", "CHIUSA"]
+        self.psql("create table pratiche (id uuid primary key, x text, stato public.stato);")
+        self.psql(G.migration(prev, later)[0])
+        out = subprocess.run(["psql", self.dsn, "-At", "-c", "select string_agg(enumlabel, ',' order by enumsortorder) "
+                              "from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'stato'"],
+                             capture_output=True, text=True)
+        self.assertEqual(out.stdout.strip(), "bozza,chiusa")
 
 
 if __name__ == "__main__":

@@ -551,11 +551,12 @@ def reference_columns(e: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _attribute_field(e: dict[str, Any], key: str, a: dict[str, Any]) -> dict[str, Any]:
+def _attribute_field(e: dict[str, Any], key: str, name: str, a: dict[str, Any]) -> dict[str, Any]:
     t = str(a["type"])
     f: dict[str, Any] = {"key": key, "type": DATATYPES.get(t, "string"), "enum": None, "to": None, "many": False,
                          "required": a["lower"] >= 1, "unique": bool(a.get("id") or a.get("unique")),
-                         "on_delete": None, "default": a.get("default")}
+                         "on_delete": None, "default": a.get("default"), "max_length": a.get("max_length"),
+                         "feature": name, "renamed_from": a.get("renamed_from")}
     if a["upper"] != 1:
         f["type"] = "json"
     elif t in e["enums"]:
@@ -569,7 +570,8 @@ def storage(meta: dict[str, Any], rep: M.Report | None = None) -> dict[str, Any]
     """Tables and columns described by the metamodel:
     {"enums": {name: [stored values]}, "entities": {class: {"table", "display", "fields": {column: {...}}}}}.
     Abstract classes have no table (their features are flattened into the concrete subclasses);
-    many-valued references (`many: True`) are join tables `<table>_<column>` unless `join_table` is given."""
+    many-valued references (`many: True`) are join tables `<table>_<column>` unless `join_table` is given.
+    `feature` is the feature stored in the column (None for the link of a contained class to its container)."""
     rep = rep if rep is not None else M.Report()
     e = expand(meta)
     enums = {en: [literal_key(lit["name"]) for lit in spec["literals"]] for en, spec in e["enums"].items()}
@@ -582,7 +584,7 @@ def storage(meta: dict[str, Any], rep: M.Report | None = None) -> dict[str, Any]
         attrs, _ = features(e, cname)
         for an, a in attrs.items():
             key = field_key(an, a)
-            fields[key] = _attribute_field(e, key, a)
+            fields[key] = _attribute_field(e, key, an, a)
         for col in columns:
             if col["holder"] != cname:
                 continue
@@ -593,7 +595,10 @@ def storage(meta: dict[str, Any], rep: M.Report | None = None) -> dict[str, Any]
             fields[key] = {"key": key, "type": "ref", "enum": None, "to": col["target"], "many": col["many"],
                            "required": col["required"], "unique": bool(col["unique"] and not col["many"]),
                            "on_delete": col["on_delete"] or (None if col["many"] else ("restrict" if col["required"] else "set_null")),
-                           "default": None, "join_table": col["spec"].get("join_table") if col["many"] else None}
+                           "default": None, "join_table": col["spec"].get("join_table") if col["many"] else None,
+                           "max_length": None,
+                           "feature": col["from"][1] if col["from"][0] == cname else None,
+                           "renamed_from": col["spec"].get("renamed_from") if col["from"][0] == cname else None}
         entities[cname] = {
             "table": c.get("table") or default_table(cname, e["language"]),
             "display": next((field_key(n, a) for n, a in attrs.items() if a.get("id")), None),

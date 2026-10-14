@@ -9,7 +9,11 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
 - `/modeler:install` puts the modeler in the app's repository: editor (`public/modeler/`), React wrapper,
   server action that saves proposals, admin page `/admin/model`, table `model_change_requests`, and the CLI
   itself in `tools/modeler/` with `npm run model:*` scripts. After that the app does not need the plugin:
-  `model:validate`, `model:sync`, `model:drift`, `model:proposals`, `model:apply` run from the repository and in CI.
+  `model:validate`, `model:sync`, `model:migrate`, `model:drift`, `model:proposals`, `model:apply` run from the
+  repository and in CI.
+- `migrate` drafts the SQL migration from the previous metamodel (committed `HEAD` by default) to the current one:
+  tables, columns, foreign keys, join tables, enum literals and renames are written; RLS policies, backfills and
+  anything that loses data are left as commented `TODO(modeler)` lines to resolve.
 - A save in the modeler never changes the running app: it is a **proposal** (a file in `.modeler/proposals/` in
   development, a `model_change_requests` row in production) applied with `/modeler:apply`, which goes on with
   the migration and the code in the same change.
@@ -42,7 +46,10 @@ python3 scripts/modeler.py show tests/fixtures/anagrafica.ecore.yaml --format st
 python3 scripts/modeler.py reverse --db postgresql://postgres:postgres@127.0.0.1:54322/postgres -o domain.ecore.yaml
 python3 scripts/modeler.py install ~/code/my-app
 # inside the app
-npm run model:validate && npm run model:sync && npm run model:drift
+npm run model:validate && npm run model:sync
+npm run model:migrate                                # preview the migration draft (from HEAD)
+npm run model:migrate -- --name add_phone --write    # save it in supabase/migrations/, then resolve TODO(modeler)
+npm run model:drift
 ```
 `drift`/`reverse` use `--db`, else `MODELER_DB`, else the local Supabase port in `supabase/config.toml`;
 `MODELER_EXCLUDE` lists the app's infrastructure tables to ignore, and `table.column` for a single technical

@@ -82,7 +82,12 @@ Enum attributes: a Postgres enum or a `text` column with `check (… in …)`; l
 Every table also has `id`, `created_at`, `updated_at` (not described). `User` is the table `profiles`
 (or `auth.users`).
 
-Check with `modeler show --format storage` (in the app: `npm run model:show -- --format storage`).
+Column types written by `migrate`: string/Email/URL → `text` (`varchar(n)` with `max_length`), Text → `text`,
+EInt/ELong/… → `integer`, EDouble/EBigDecimal/… → `numeric`, Money → `numeric(12,2)`, EBoolean → `boolean`,
+Date → `date`, EDate/DateTime → `timestamptz`, JSON and multi-valued attributes → `jsonb`, references → `uuid`.
+
+Check with `modeler show --format storage` (in the app: `npm run model:show -- --format storage`); draft the
+migration with `modeler migrate` (`npm run model:migrate`).
 
 ### Names
 Classes and enums PascalCase; features camelCase (stored snake_case: `dataNascita` → `data_nascita`);

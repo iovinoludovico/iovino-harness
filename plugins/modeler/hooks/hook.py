@@ -66,7 +66,9 @@ def post(data: dict) -> int:
     if not rep.ok:
         print(f"modeler: {METAMODEL_FILE} is not valid — fix it:\n" + rep.render(), file=sys.stderr)
         return 2
-    _context("PostToolUse", "modeler: metamodel valid. Next, in the same change: the migration, `npm run model:sync` "
+    _context("PostToolUse", "modeler: metamodel valid. Next, in the same change: the migration "
+                            "(`npm run model:migrate -- --name <name> --write`, then resolve its TODO(modeler) lines), "
+                            "`npm run model:sync` "
                             "(refreshes the admin modeler), the code that uses the new structure, `npm run model:drift`.")
     return 0
 

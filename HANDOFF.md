@@ -1,5 +1,5 @@
 # Handoff — sviluppo dell'harness iovino-harness
-_Aggiornato: 2026-10-14 · branch `feat/commit-message-suggestion`_
+_Aggiornato: 2026-10-14 · branch `feat/modeler-migrate`_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code, installabile su ogni computer con `./install.sh`:
@@ -16,6 +16,7 @@ Si raffina un pezzo alla volta; poi arriveranno i plugin `research` e `mde`.
 - `plugins/modeler` (v0.1.0): metamodello Ecore in YAML (`scripts/metamodel/`: notazione, mappatura su tabelle,
   reverse e drift via psql, export Ecore/Emfatic/Mermaid), kit del modellatore web (`kit/`) che `install` copia
   nell'app insieme alla CLI (`tools/modeler/`, script `npm run model:*`): l'app resta allineata senza il plugin.
+  `migrate` scrive la bozza di migrazione SQL dal diff del metamodello (TODO(modeler) per RLS, backfill e drop).
   Skill `install`, `metamodel`, `apply`, `notation`; hook di validazione, promemoria sulle migrazioni, stato a
   inizio sessione (versione del modellatore vendorizzato, drift con `MODELER_DRIFT_DB`).
 - appforge (generatore di app da `app.yaml`, Studio, registro) è **dismesso**: rimosso dall'harness; del suo

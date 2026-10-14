@@ -38,11 +38,14 @@ il client lo supporta); `--format storage` mostra tabelle e colonne.
 4. Mostra il risultato in Emfatic e come diagramma, più `show --format storage` quando conta il database.
 
 ## 4. Allineare l'applicazione (nella stessa modifica, su un branch)
-1. **Migrazione** nuova in `supabase/migrations/` che porta il database alla struttura di `show --format
-   storage`: tabelle, colonne, vincoli, FK con il loro `on delete`, join table. Le rinomine
-   (`renamed_from`) diventano `rename column` (i dati restano); rimozioni e nuovi campi obbligatori su tabelle
-   piene chiedono un backfill o una conferma esplicita all'utente prima di perdere dati. Mai modificare una
-   migrazione già applicata. RLS e policy seguono le convenzioni dell'app.
+1. **Migrazione**: `npm run model:migrate` mostra la bozza generata dal confronto tra il metamodello committato
+   (`HEAD`) e quello nuovo (`--from HEAD~1` se l'hai già committato, `--from empty` per lo schema intero); poi
+   `npm run model:migrate -- --name <nome> --write` la salva in `supabase/migrations/`. Tabelle, colonne, FK con
+   `on delete`, join table, letterali di enum e rinomine (`renamed_from` → `rename column`, i dati restano) sono
+   già scritti. Risolvi **ogni** riga `TODO(modeler)`: policy RLS e grant secondo le convenzioni dell'app (le
+   tabelle nuove nascono con RLS attivo e nessuna policy), backfill dei campi diventati obbligatori, conferma
+   esplicita dell'utente prima di scommentare drop o cambi di tipo (perdita di dati). Rinomine di classe: rinomina
+   la tabella invece di drop + create. Mai modificare una migrazione già applicata.
 2. `npm run model:sync` (aggiorna il modellatore in `/admin/model`).
 3. Codice: tipi (`supabase gen types` o lo script dell'app), query, form e pagine che usano la struttura nuova.
 4. Applica la migrazione al database locale (`supabase db reset` o `supabase migration up`) e

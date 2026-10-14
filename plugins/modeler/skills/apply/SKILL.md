@@ -17,7 +17,8 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    ciò che comporta perdita di dati (classi, feature o letterali rimossi) e chiedi conferma.
 4. Con conferma: `npm run model:apply -- [file] --write` (backup in `.modeler/backups/`, proposta spostata in
    `.modeler/proposals/applied/`, `metamodel.json` aggiornato).
-5. Prosegui come la skill `metamodel`, sezione "Allineare l'applicazione": migrazione, codice, migrazione
+5. Prosegui come la skill `metamodel`, sezione "Allineare l'applicazione": `npm run model:migrate -- --name <nome>
+   --write` (bozza dal metamodello committato a quello appena scritto), TODO risolti, codice, migrazione
    applicata in locale, `npm run model:drift` → "aligned", typecheck, lint e test.
    In produzione la migrazione va applicata con `/core:db-push` prima del push del codice.
 6. Per le proposte arrivate da produzione: dopo il deploy, segna la riga come `applied` (o `rejected`) solo su

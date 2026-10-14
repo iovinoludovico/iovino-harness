@@ -20,6 +20,7 @@ from . import __version__
 from . import core as M
 from . import dbschema as D
 from . import ecore as E
+from . import sqlgen as G
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]            # modeler.py, metamodel/, vendor/
 KIT_DIR = SCRIPTS_DIR.parent / "kit"                          # only in the plugin, not in the vendored copy
@@ -36,6 +37,7 @@ NPM_SCRIPTS = {
     "model:drift": "python3 tools/modeler/modeler.py drift",
     "model:proposals": "python3 tools/modeler/modeler.py proposals",
     "model:apply": "python3 tools/modeler/modeler.py apply",
+    "model:migrate": "python3 tools/modeler/modeler.py migrate",
 }
 
 
@@ -217,7 +219,8 @@ def cmd_apply(a) -> int:
         src.rename(done / src.name)
     sync(meta_path.parent)
     print(f"\nwrote {meta_path}")
-    print("next: write the migration for these changes, apply it locally, then `npm run model:drift`")
+    print("next: `npm run model:migrate -- --write` drafts the migration; resolve its TODO(modeler) lines, "
+          "apply it locally, then `npm run model:drift`")
     return 0
 
 
@@ -248,6 +251,68 @@ def cmd_pull(a) -> int:
                                "created_at": r["created_at"], "metamodel": r["metamodel"]})
         print(f"  + {d / name}")
     print(f"{len(rows)} proposal(s) pulled" + ("; review them with `proposals`" if rows else ""))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# Migration draft
+# --------------------------------------------------------------------------- #
+EMPTY = {"package": "domain", "classes": {}}
+
+
+def _previous(meta_path: Path, ref: str) -> tuple[dict[str, Any], str]:
+    """The metamodel to compare with: `empty`, a file, or `<git ref>` (the metamodel as committed there)."""
+    import subprocess
+    if ref == "empty":
+        return EMPTY, "empty database"
+    p = Path(ref)
+    if p.exists():
+        return _load_any(p), str(p)
+    root = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=meta_path.parent, capture_output=True, text=True)
+    if root.returncode != 0:
+        raise M.ModelError("not a git repository: pass --from <file> or --from empty")
+    rel = meta_path.resolve().relative_to(Path(root.stdout.strip()).resolve()).as_posix()
+    out = subprocess.run(["git", "show", f"{ref}:{rel}"], cwd=meta_path.parent, capture_output=True, text=True)
+    if out.returncode != 0:
+        if ref == "HEAD":   # never committed: the whole schema is new
+            return EMPTY, "empty database (metamodel not committed yet)"
+        raise M.ModelError(f"cannot read {rel} at {ref}: {out.stderr.strip()}")
+    return E.loads(out.stdout), f"{ref}:{rel}"
+
+
+def cmd_migrate(a) -> int:
+    meta_path = find_metamodel(a.path)
+    new = E.load(meta_path)
+    rep = E.validate(new)
+    if not rep.ok:
+        print(rep.render(), file=sys.stderr)
+        return 1
+    old, origin = _previous(meta_path, a.from_)
+    sql, notes = G.migration(old, new, origin)
+    if not sql:
+        print(f"no structural change between {origin} and {E.METAMODEL_FILE}"
+              + (" (already committed? use --from HEAD~1)" if a.from_ == "HEAD" else ""))
+        return 0
+    todos = sql.count(f"-- {G.TODO}")
+    if not a.write:
+        print(sql, end="")
+        for n in notes:
+            print(f"note: {n}", file=sys.stderr)
+        print(f"(dry run: --write saves it in supabase/migrations/; {todos} TODO(modeler) to resolve)", file=sys.stderr)
+        return 0
+    name = re.sub(r"[^a-z0-9_]+", "_", (a.name or "model_change").lower()).strip("_") or "model_change"
+    mig = meta_path.parent / "supabase" / "migrations"
+    mig.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
+    latest = max((f.name[:14] for f in mig.glob("*.sql") if f.name[:14].isdigit()), default="")
+    if latest >= stamp:   # keep the order of the existing migrations
+        stamp = str(int(latest) + 1)
+    out = mig / f"{stamp}_{name}.sql"
+    out.write_text(sql, encoding="utf-8")
+    print(f"wrote {out}")
+    for n in notes:
+        print(f"note: {n}")
+    print(f"{todos} TODO(modeler) to resolve; then apply it locally (supabase db reset) and `npm run model:drift`")
     return 0
 
 
@@ -416,6 +481,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--path", help="metamodel file or app directory")
     s.add_argument("--write", action="store_true", help="update the metamodel (otherwise dry run)")
     s.set_defaults(fn=cmd_apply)
+
+    s = sub.add_parser("migrate", help="draft the migration from the previous metamodel to the current one")
+    s.add_argument("path", nargs="?")
+    s.add_argument("--from", dest="from_", default="HEAD",
+                   help="previous metamodel: git ref (default HEAD), file, or `empty` for the whole schema")
+    s.add_argument("--name", help="migration name (default model_change)")
+    s.add_argument("--write", action="store_true", help="save it in supabase/migrations/ (otherwise print it)")
+    s.set_defaults(fn=cmd_migrate)
 
     s = sub.add_parser("pull", help="copy the proposals saved in production (model_change_requests)")
     s.add_argument("path", nargs="?")
