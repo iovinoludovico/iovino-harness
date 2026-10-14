@@ -13,7 +13,8 @@
 - Quando proponi di committare o di fare push, includi il messaggio di commit proposto in un blocco ```text copiabile: Conventional Commits in inglese, titolo di circa 72 caratteri al massimo, riga vuota, corpo con il perché, righe di attribuzione se il repository le prevede. Un blocco per commit; se i commit sono già fatti e proponi solo il push, mostra in un blocco l'elenco `git log --oneline` di ciò che verrebbe pubblicato.
 
 ## Sviluppo guidato dai modelli
-- I modelli guidano sempre lo sviluppo: la struttura del dominio sta nel metamodello `domain.ecore.yaml` (notazione Ecore). Ogni modifica di schema parte dal metamodello e va, nella stessa modifica, con la migrazione e il codice che la usa; mai il contrario.
+- Queste regole valgono nei progetti che hanno un modello: `domain.ecore.yaml` o un altro modello dichiarato nel loro `CLAUDE.md`. Se il `CLAUDE.md` dice "Nessun modello", si sviluppa direttamente sul codice: non proporre il modellatore né il metamodello, salvo richiesta. In un progetto senza modello e senza questa indicazione, proponilo una sola volta (`/core:project-init` registra la scelta).
+- Nei progetti con modello, il modello guida lo sviluppo: la struttura del dominio sta nel metamodello `domain.ecore.yaml` (notazione Ecore). Ogni modifica di schema parte dal metamodello e va, nella stessa modifica, con la migrazione e il codice che la usa; mai il contrario.
 - Il metamodello resta allineato al database: `npm run model:drift` deve rispondere "aligned" (plugin `modeler`, che installa nell'app il modellatore web `/admin/model` e la CLI `tools/modeler/`).
 - Prima di scrivere codice a mano verifica se il metamodello può esprimere la richiesta; se può, cambia il metamodello.
 - Le personalizzazioni (ciò che il modello non esprime) sono ammesse solo se chiarite in modo esplicito:

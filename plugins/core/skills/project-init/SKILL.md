@@ -39,7 +39,7 @@ Struttura suggerita, omettendo le sezioni vuote:
 <5–10 righe: cartelle chiave e responsabilità, flusso principale dei dati.>
 
 ## Modello e personalizzazioni
-- Fonte di verità: <domain.ecore.yaml | altro modello del progetto | "nessun modello ancora: proporre /modeler:install">
+- Fonte di verità: <domain.ecore.yaml | altro modello del progetto | "Nessun modello: sviluppo diretto sul codice">
 - Ogni modifica parte dal modello; il codice si rigenera o si allinea (<comando: npm run model:sync / model:drift, …>).
 - Personalizzazioni: solo se il modello non le esprime, registrate in `docs/customizations.md` e marcate `CUSTOM(<id>)` nel codice.
 
@@ -52,9 +52,11 @@ Struttura suggerita, omettendo le sezioni vuote:
 ```
 
 La sezione "Modello e personalizzazioni" è obbligatoria: individua il modello del progetto (`domain.ecore.yaml`,
-metamodelli `.ecore`/Emfatic nei progetti MDE). Se il progetto non ha ancora un modello, scrivilo nella sezione e
-proponi all'utente di crearlo (`/modeler:install` per le app Next.js + Supabase: ricava il metamodello dal
-database e installa il modellatore). Se esiste codice
+metamodelli `.ecore`/Emfatic nei progetti MDE). Se il progetto non ha un modello, chiedi **una volta** con
+AskUserQuestion se adottarlo (`/modeler:install` per le app Next.js + Supabase: ricava il metamodello dal database e
+installa il modellatore; opzione "No, sviluppo diretto sul codice"). Con il no, la sezione contiene solo
+"Nessun modello: sviluppo diretto sul codice" (niente righe sul modello o sui comandi `model:*`): le sessioni
+successive non lo ripropongono. Personalizzazioni e `CUSTOM(<id>)` servono solo nei progetti con modello. Se esiste codice
 scritto a mano che il modello non esprime e manca `docs/customizations.md`, crealo elencando le personalizzazioni
 trovate (identificativo, motivo, elementi del modello coinvolti, file, verifica) e chiedi conferma all'utente.
 
