@@ -1,6 +1,6 @@
 ---
 name: notation
-description: Riferimento della notazione del metamodello di dominio domain.ecore.yaml (Ecore in YAML) - classi, attributi, riferimenti con molteplicità, containment, opposite, enum, ereditarietà - e di come si traduce in tabelle e colonne. Va usata ogni volta che si legge o scrive un domain.ecore.yaml, quando l'utente descrive concetti del dominio e relazioni ("un ordine contiene più righe", "una persona ha un account") o chiede come modellare qualcosa nel metamodello.
+description: Riferimento della notazione del metamodello di dominio domain.ecore.yaml (Ecore in YAML) - classi, attributi, riferimenti con molteplicità, containment, opposite, enum, ereditarietà, unicità su più colonne - e di come si traduce in tabelle e colonne. Va usata ogni volta che si legge o scrive un domain.ecore.yaml, quando l'utente descrive concetti del dominio e relazioni ("un ordine contiene più righe", "una persona ha un account") o chiede come modellare qualcosa nel metamodello.
 ---
 
 # Il metamodello di dominio: `domain.ecore.yaml`

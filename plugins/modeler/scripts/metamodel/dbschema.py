@@ -53,6 +53,14 @@ select json_build_object(
             join pg_namespace ns on ns.oid = cl.relnamespace
             left join pg_class fcl on fcl.oid = con.confrelid left join pg_namespace fns on fns.oid = fcl.relnamespace
             where ns.nspname = '{s}' and con.contype in ('f', 'u', 'p', 'c')),
+ 'unique_indexes', (select coalesce(json_agg(json_build_object('table', cl.relname, 'name', ic.relname,
+            'columns', (select array_agg(a.attname order by k.ord) from unnest(ix.indkey::int2[]) with ordinality k(n, ord)
+                        join pg_attribute a on a.attrelid = ix.indrelid and a.attnum = k.n),
+            'expressions', ix.indexprs is not null, 'def', pg_get_indexdef(ix.indexrelid))), '[]')
+            from pg_index ix join pg_class cl on cl.oid = ix.indrelid join pg_class ic on ic.oid = ix.indexrelid
+            join pg_namespace ns on ns.oid = cl.relnamespace
+            where ns.nspname = '{s}' and ix.indisunique and not ix.indisprimary
+            and not exists (select 1 from pg_constraint c where c.conindid = ix.indexrelid)),
  'enums', (select coalesce(json_agg(json_build_object('name', t.typname, 'values',
             (select array_agg(e.enumlabel order by e.enumsortorder) from pg_enum e where e.enumtypid = t.oid))), '[]')
             from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.typtype = 'e' and n.nspname = '{s}')
@@ -62,6 +70,17 @@ select json_build_object(
 
 class DbError(Exception):
     pass
+
+
+def composite_uniques(cat: dict[str, Any], table: str) -> list[dict[str, Any]]:
+    """Unique constraints and unique indexes of a table on two or more plain columns:
+    [{"columns", "nulls_not_distinct", "partial"}]. Indexes on expressions are not comparable: skipped."""
+    items = [(c["columns"], c.get("def") or "") for c in cat["constraints"] if c["table"] == table and c["type"] == "u"]
+    items += [(i["columns"], i.get("def") or "") for i in cat.get("unique_indexes", [])
+              if i["table"] == table and not i.get("expressions")]
+    return [{"columns": list(cols), "nulls_not_distinct": "NULLS NOT DISTINCT" in defn.upper(),
+             "partial": " WHERE " in defn.upper()}
+            for cols, defn in items if len(cols or []) >= 2]
 
 
 def catalog(dsn: str, schema: str = "public") -> dict[str, Any]:
@@ -203,6 +222,7 @@ def reverse(cat: dict[str, Any], package: str = "domain", exclude: set[str] | No
                 if ce:
                     checks[ce[0]] = ce[1]
         skipped = []
+        feature_of: dict[str, str] = {}   # column -> feature, for the unique groups
         for col in cols.get(t, []):
             name = col["name"]
             if name in STANDARD_COLUMNS:
@@ -236,6 +256,7 @@ def reverse(cat: dict[str, Any], package: str = "domain", exclude: set[str] | No
                 if name in uniques and "opposite" not in r:
                     r["unique"] = True
                 refs[rname] = r
+                feature_of[name] = rname
                 continue
             dtype, many = _datatype(col, pg_enums)
             if name in checks and dtype == "EString":
@@ -259,6 +280,20 @@ def reverse(cat: dict[str, Any], package: str = "domain", exclude: set[str] | No
             if M.snake(fname) != name:
                 a["column"] = name
             attrs[fname] = a
+            feature_of[name] = fname
+        groups = []
+        nullable = {col["name"] for col in cols.get(t, []) if col["nullable"]}
+        for u in composite_uniques(cat, t):
+            names = ", ".join(u["columns"])
+            if u["partial"] or not all(col in feature_of for col in u["columns"]):
+                notes.append(f"{t}: unique ({names}) not described (partial, or on columns not in the metamodel)")
+                continue
+            groups.append([feature_of[col] for col in u["columns"]])
+            if not u["nulls_not_distinct"] and nullable & set(u["columns"]):
+                notes.append(f"{t}: unique ({names}) treats empty values as distinct: rows with an empty column can "
+                             "repeat; the metamodel means nulls not distinct (drift will report it)")
+        if groups:
+            c["unique"] = groups
         if attrs:
             c["attributes"] = attrs
         if refs:
@@ -349,6 +384,15 @@ def drift(meta: dict[str, Any], cat: dict[str, Any], exclude: set[str] | None = 
                     out.append(f"NO FOREIGN KEY {t}.{key} -> {target}")
                 elif fk["ftable"] != target and not (f["to"] == "User" and fk["ftable"] == "users"):
                     out.append(f"FOREIGN KEY {t}.{key}: database -> {fk['ftable']}, metamodel -> {target}")
+        # unique groups of the metamodel (a unique combination only in the database is not reported)
+        in_db = [u for u in composite_uniques(cat, t) if not u["partial"]]
+        for group in ent.get("unique", []):
+            match = next((u for u in in_db if set(u["columns"]) == set(group)), None)
+            if not match:
+                out.append(f"MISSING UNIQUE {t} ({', '.join(group)})")
+            elif not match["nulls_not_distinct"] and any(cols[t].get(k, {}).get("nullable") for k in group):
+                out.append(f"UNIQUE {t} ({', '.join(group)}): nulls are distinct in the database, "
+                           "so rows with an empty column can repeat (use nulls not distinct)")
         extra = sorted(set(cols[t]) - seen - STANDARD_COLUMNS)
         if extra:
             out.append(f"NOT IN METAMODEL {t}: columns {', '.join(extra)}")
