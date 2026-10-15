@@ -1,5 +1,5 @@
 # Handoff — sviluppo dell'harness iovino-harness
-_Aggiornato: 2026-10-15 · branch `feat/modeler-composite-unique`_
+_Aggiornato: 2026-10-15 · branch `main`_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code, installabile su ogni computer con `./install.sh`:
@@ -8,65 +8,55 @@ Si raffina un pezzo alla volta, applicando le note raccolte nei progetti (`NOTES
 poi arriveranno i plugin `research` e `mde`.
 
 ## Stato
-- `main` (`52b6ac2`, core 0.4.0, modeler 0.6.1) è l'ultima versione rilasciata. Tre branch da pubblicare, tutti
-  creati da `main`, da unire **in quest'ordine**:
-  1. `feat/core-harness-review` (`1cc8d6c`): skill `/core:harness-review` e promemoria a inizio sessione
-     (`note_states`, `is_harness_repo` in `cmd_session` di `plugins/core/scripts/hook.py`: "N note da valutare in
-     NOTES.md"); `harness-note` scrive `- **Stato**: da valutare`.
-  2. `feat/harness-review-ship-editor`:
-     - `8ea2f60` skill `/core:ship` (`plugins/core/skills/ship/SKILL.md`: push, PR, `gh pr checks --watch`, merge
-       su `main` solo dopo conferma) + riga in `conventions.md` sezione Git;
-     - `f9528cc` editor del metamodello: sezione `Layout` pura in `plugins/modeler/kit/metamodel-editor.js`
-       (`rowsOf`, `boxSize`, `normalize`, `autoLayout`, `routeEdges`, `edgesOf`, esportate con `module.exports`),
-       porte sfalsate e scorrevoli, variante a Z, etichette tra più candidate, hover; test
-       `plugins/modeler/tests/layout.test.mjs` (lanciato da `EditorLayoutTests` in `test_modeler.py`).
-  3. `feat/modeler-composite-unique` (corrente, `616733d`): chiave di classe `unique: [a, b, c]` nel metamodello
-     (`ecore.py`: `_check_unique_groups`, `storage()[…]["unique"]`, diff, export Ecore; `sqlgen.py`: `_add_unique`
-     → `unique nulls not distinct`; `dbschema.py`: `composite_uniques`, reverse e drift anche da indici unici;
-     catalogo con `unique_indexes`), documentata in `skills/notation/references/ecore-notation.md`; riga in
-     `conventions.md` sui lookup a più dimensioni come matrice; test `UniqueTogetherTests` e
-     `test_unique_together_applies_aligns_and_rejects_a_second_default`.
-- `NOTES.md`: tutte le note sono decise. Applicate: `__pycache__`, PR/merge, lookup a più dimensioni (vista
-  `matrix` scartata). In parte applicata: editor dei diagrammi (bus rinviato). Ogni branch aggiorna la propria
-  nota, quindi l'unione dei branch dà conflitti banali in fondo a `NOTES.md`.
-- Verificato (2026-10-15):
-  - `python3 -m unittest discover -s tests` → 20 OK;
-  - `python3 -m unittest discover -s plugins/modeler/tests` → 30 OK con `MODELER_PG` (Postgres 16 in un container
-    usa e getta), 26 + 4 skip senza; sul branch dell'editor anche `node --test plugins/modeler/tests/layout.test.mjs`
-    → 79 pass, 1 todo;
-  - `claude plugin validate .` → passed; editor in Chrome headless a 1280×720 e 760×900 senza errori.
-- Non committato: questo `HANDOFF.md`.
+- Rilasciato e pubblicato su GitHub: `0f588b7` `chore(release): core 0.5.0, modeler 0.7.0`. Plugin installati su
+  questo computer aggiornati (core 0.5.0, modeler 0.7.0). Nessun branch aperto oltre `main`.
+- Novità della 0.5.0 / 0.7.0:
+  - `/core:harness-review` e promemoria a inizio sessione (`note_states`, `is_harness_repo` in `cmd_session` di
+    `plugins/core/scripts/hook.py`): conta le note aperte, le rinviate a parte;
+  - `/core:ship` (`plugins/core/skills/ship/SKILL.md`): push, PR, CI, merge su `main` solo dopo conferma;
+  - editor del metamodello con layout puro e testato (sezione `Layout` di `plugins/modeler/kit/metamodel-editor.js`,
+    test `plugins/modeler/tests/layout.test.mjs`): porte sfalsate e scorrevoli, variante a Z, etichette tra più
+    candidate, hover;
+  - `unique` di classe nel metamodello (`unique: [a, b, c]` → `unique nulls not distinct`), letto da reverse e
+    controllato da drift, anche da indici unici;
+  - due righe nuove in `conventions.md`: merge su `main` sempre con conferma; lookup a più dimensioni come matrice
+    con combinazione unica.
+- `NOTES.md`: 3 note applicate, 1 rinviata (il bus dell'editor), **2 da valutare** (aggiunte il 2026-10-15 da
+  guest-invitations-af):
+  - `modeler apply --write` riscrive tutto `domain.ecore.yaml` (chiavi riordinate: diff di 187 righe per una
+    modifica);
+  - il modellatore non mostra le proposte salvate e non ancora applicate.
+- Verificato su `main` (2026-10-15): `python3 -m unittest discover -s tests` → 21 OK;
+  `python3 -m unittest discover -s plugins/modeler/tests` → 31 OK (4 skip senza `MODELER_PG`; con Postgres 16 in
+  Docker tutti verdi); `node --test plugins/modeler/tests/layout.test.mjs` → 79 pass, 1 todo;
+  `claude plugin validate .` → passed.
+- Non committato: nulla.
 
 ## Decisioni
-- Layout puro dentro `metamodel-editor.js` (non un file separato) — le app caricano ancora un solo script e
-  installer e `metamodel-modeler.tsx` non cambiano.
-- Bus per molte sorgenti rinviato — con 8 classi verso la stessa le corsie non bastano; si decide dopo la prova
-  del modellatore su un'app reale (`test.todo` con `hub(8)` in `layout.test.mjs`).
-- `unique` di classe usa `nulls not distinct` — nei lookup la colonna vuota è la riga di default e non deve
-  ripetersi. Il drift segnala solo i gruppi del metamodello mancanti nel database, non quelli presenti solo nel
-  database, per non rompere l'allineamento delle app esistenti.
-- Niente vista `matrix` generata dal modeler — il metamodello descrive solo la struttura; la pagina a matrice è
-  codice dell'app.
-- `/core:ship` ha `disable-model-invocation`: invocarla vale come richiesta di push e PR, non di merge.
-- Hook in Python con sola libreria standard; permessi via `install.sh`; il modellatore è vendorizzato nell'app e
-  salva proposte.
+- Layout puro dentro `metamodel-editor.js` (non un file separato) — le app caricano ancora un solo script.
+- Bus per molte sorgenti rinviato — si progetta su un metamodello reale (`test.todo` con `hub(8)`).
+- `unique` di classe con `nulls not distinct` — la colonna vuota è la riga di default e non deve ripetersi; il drift
+  segnala solo i gruppi del metamodello mancanti nel database, per non rompere le app già allineate.
+- Niente vista `matrix` generata dal modeler — il metamodello descrive la struttura, le pagine sono codice dell'app.
+- Rilascio unico dopo aver unito più branch in `main` (un solo `release.py --write`), invece di un rilascio per
+  branch.
 
 ## Problemi aperti
-- I tre branch alzano tutti `core` a 0.5.0 e `modeler` a 0.7.0: va rilasciato un branch alla volta (vedi
-  Prossimi passi), altrimenti il pre-push blocca o le versioni si sovrappongono.
-- Bus dell'editor non fatto.
-- Il modellatore non è ancora installato in nessuna app reale (`/admin/model` mai provato con Supabase reale);
-  guest-invitations-af può adottare `unique` di classe per le tariffe dopo `/modeler:install`.
+- Le 2 note da valutare (vedi Stato): la prima è un bug della CLI che tocca ogni app con il modellatore.
+- Il modellatore non è ancora installato in nessuna app reale con questa versione (`/admin/model` mai provato con
+  Supabase reale).
 - Le app nate con appforge (`guest-invitations-af`, `order-management`) citano ancora appforge.
-- Branch locale `feat/exclude-columns` senza commit oltre `main`: da cancellare se non serve.
+- Sugli altri computer i plugin sono alla versione precedente finché non si aggiornano.
 
 ## Prossimi passi
-1. Committare questo handoff (`docs: update handoff`), sul branch corrente.
-2. Rilascio in sequenza, per ogni branch nell'ordine 1 → 2 → 3:
-   `git switch <branch> && git merge main` (risolvere `NOTES.md` tenendo tutte le voci),
-   `python3 scripts/release.py --write`, test, poi `/core:ship` (merge su `main` solo con conferma).
+1. `/core:harness-review` sulle 2 note aperte; per `apply --write` partire da `E.dump`/`dumps` in
+   `plugins/modeler/scripts/metamodel/ecore.py` (ordine delle chiavi) e da `cmd_apply` in `cli.py`, con un test
+   "una modifica nella proposta → una riga di diff".
+2. Sugli altri computer: `git pull` nel clone e `./install.sh`, oppure `claude plugin update core@iovino-harness` e
+   `claude plugin update modeler@iovino-harness`.
 3. `/modeler:install` su guest-invitations-af con `supabase start`: prova di `/admin/model`, delle proposte, del
-   nuovo layout e di `unique` di classe sulle tariffe; poi decidere il bus.
+   nuovo layout e di `unique` di classe sulle tariffe; se il metamodello ha ≥4 classi verso la stessa, riprendere la
+   nota rinviata sul bus.
 4. Provare `/core:db-push` alla prima migrazione da portare in produzione.
 5. Plugin `mde` (Eclipse/EMF, Epsilon) e `research`.
 
