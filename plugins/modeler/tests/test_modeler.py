@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import uuid
 from pathlib import Path
 
@@ -365,6 +366,9 @@ class AppTests(unittest.TestCase):
         doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
         self.assertIn("Persona", doc["classes"])
         self.assertNotIn("appforge", (self.app / "src/lib/modeler/metamodel-actions.ts").read_text())
+        editor = (self.app / "public/modeler/metamodel-editor.js").read_text()
+        self.assertIn(f'const VERSION = "{__version__}";', editor)                # shown in the toolbar
+        self.assertNotIn(cli.VERSION_PLACEHOLDER, editor)
 
     def test_install_ignores_python_bytecode(self):
         (self.app / ".gitignore").write_text("node_modules/\n.env*")
@@ -402,6 +406,32 @@ class AppTests(unittest.TestCase):
 
     def test_local_dsn_from_supabase_config(self):
         self.assertEqual(cli.local_dsn(self.app), "postgresql://postgres:postgres@127.0.0.1:55122/postgres")
+
+    def test_remote_dsn_from_linked_project(self):
+        env = {k: v for k, v in os.environ.items() if k != "MODELER_PROD_DB"}
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            self.assertIsNone(cli.remote_dsn(self.app))                      # never the local database
+            temp = self.app / "supabase" / ".temp"
+            temp.mkdir(parents=True)
+            (temp / "project-ref").write_text("abcref\n")
+            self.assertEqual(cli.remote_dsn(self.app), "postgresql://postgres@db.abcref.supabase.co:5432/postgres")
+            pooler = "postgresql://postgres.abcref@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
+            (temp / "pooler-url").write_text(pooler + "\n")
+            self.assertEqual(cli.remote_dsn(self.app), pooler)
+            os.environ["MODELER_PROD_DB"] = "postgresql://u:p@host/db"
+            self.assertEqual(cli.remote_dsn(self.app), "postgresql://u:p@host/db")
+
+    def test_dsn_target_hides_the_password(self):
+        self.assertEqual(cli._dsn_target("postgresql://u:secret@h:5432/db"), "u@h:5432/db")
+        self.assertTrue(cli._has_password("postgresql://u:secret@h/db"))
+        self.assertFalse(cli._has_password("postgresql://postgres.ref@h:6543/postgres"))
+
+    def test_pull_without_a_linked_project(self):
+        env = {k: v for k, v in os.environ.items() if k != "MODELER_PROD_DB"}
+        err = io.StringIO()
+        with unittest.mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(err):
+            self.assertEqual(cli.cmd_pull(argparse.Namespace(path=str(self.app), db=None)), 2)
+        self.assertIn("supabase link", err.getvalue())
 
     def test_proposal_apply(self):
         cli.install(self.app)

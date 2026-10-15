@@ -15,6 +15,9 @@
  */
 (() => {
 
+  // Version of the modeler plugin that installed this file: written by `modeler install`, shown in the toolbar.
+  const VERSION = "__MODELER_VERSION__";
+
   const DATATYPES = ["EString", "Text", "Email", "URL", "EInt", "ELong", "EDouble", "EBigDecimal", "Money",
     "EBoolean", "Date", "EDate", "JSON"];
   const MULTS = [["0..1", 0, 1], ["1", 1, 1], ["0..*", 0, -1], ["1..*", 1, -1]];
@@ -408,7 +411,7 @@
       doc: "Descrizione", label: "Etichetta", attributes: "Attributi", references: "Riferimenti", literals: "Letterali",
       add: "Aggiungi", del: "Elimina", type: "Tipo", mult: "Molt.", id: "ID", target: "Classe", containment: "Contiene",
       opposite: "Opposto", none: "—", select: "Seleziona una classe o un'enum nel diagramma, oppure aggiungine una.",
-      confirmDelete: "Eliminare", package: "Package", readonly: "Sola lettura", users: "User = utenti dell'applicazione",
+      confirmDelete: "Eliminare", package: "Package", modeler: "Modellatore", readonly: "Sola lettura", users: "User = utenti dell'applicazione",
       dupName: "nome già usato", badName: "nome non valido", reserved: "colonna standard", noTarget: "classe di destinazione mancante",
       oppBroken: "opposto non coerente", bothCont: "entrambi i lati sono contenimenti", noLiterals: "nessun letterale",
       cycle: "ciclo di ereditarietà", newClass: "NuovaClasse", newEnum: "NuovaEnum", warnings: "avvisi",
@@ -424,7 +427,7 @@
       doc: "Description", label: "Label", attributes: "Attributes", references: "References", literals: "Literals",
       add: "Add", del: "Delete", type: "Type", mult: "Mult.", id: "ID", target: "Class", containment: "Contains",
       opposite: "Opposite", none: "—", select: "Select a class or an enum in the diagram, or add one.",
-      confirmDelete: "Delete", package: "Package", readonly: "Read only", users: "User = the application users",
+      confirmDelete: "Delete", package: "Package", modeler: "Modeler", readonly: "Read only", users: "User = the application users",
       dupName: "name already used", badName: "invalid name", reserved: "standard column", noTarget: "missing target class",
       oppBroken: "inconsistent opposite", bothCont: "both ends are containments", noLiterals: "no literals",
       cycle: "inheritance cycle", newClass: "NewClass", newEnum: "NewEnum", warnings: "warnings",
@@ -836,6 +839,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
           class: "primary", disabled: issues.length > 0,
           onclick: () => this.dispatchEvent(new CustomEvent("save", { detail: { metamodel: this.metamodel, note: this._note || "" } })),
         }, this.getAttribute("save-label") || t.save),
+        VERSION.startsWith("__") ? null : el("span", { class: "hint", title: `${t.modeler} ${VERSION}` }, `v${VERSION}`),
       ].filter(Boolean));
       this._renderDiagram();
       this._renderSide();

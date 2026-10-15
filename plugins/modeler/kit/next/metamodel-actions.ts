@@ -5,7 +5,7 @@
 //  - development (or MODELER_PROPOSALS=file): .modeler/proposals/<timestamp>.json in the repository,
 //    applied with `/modeler:apply` (Claude Code) or `npm run model:apply -- --write`;
 //  - production (or MODELER_PROPOSALS=db): a row of public.model_change_requests (admins only), copied into
-//    the repository with `python3 tools/modeler/modeler.py pull --db <DSN>`; the page also offers a download.
+//    the repository with `npm run model:pull` (linked Supabase project); the page also offers a download.
 // A proposal never alters the running app: the metamodel changes only through the repository
 // (domain.ecore.yaml + migration + code, then deploy). The page lists the proposals still waiting
 // (listMetamodelProposals) so that nobody wonders where a saved change went, and can reject one.

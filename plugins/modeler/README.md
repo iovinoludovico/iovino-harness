@@ -9,8 +9,8 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
 - `/modeler:install` puts the modeler in the app's repository: editor (`public/modeler/`), React wrapper,
   server action that saves proposals, admin page `/admin/model`, table `model_change_requests`, and the CLI
   itself in `tools/modeler/` with `npm run model:*` scripts. After that the app does not need the plugin:
-  `model:validate`, `model:sync`, `model:migrate`, `model:drift`, `model:proposals`, `model:apply` run from the
-  repository and in CI.
+  `model:validate`, `model:sync`, `model:migrate`, `model:drift`, `model:proposals`, `model:pull`, `model:apply`
+  run from the repository and in CI.
 - `migrate` drafts the SQL migration from the previous metamodel (committed `HEAD` by default) to the current one:
   tables, columns, foreign keys, join tables, enum literals and renames are written; RLS policies, backfills and
   anything that loses data are left as commented `TODO(modeler)` lines to resolve.
@@ -33,7 +33,7 @@ From the harness clone: `./install.sh` (installs `core` and `modeler`). From Git
 |---|---|
 | `/modeler:install [app] [DSN]` | metamodel from the database if missing, modeler and CLI in the app (re-run to upgrade) |
 | `/modeler:metamodel <description> \| show` | metamodel from natural language, then migration, code, drift |
-| `/modeler:apply [proposal] \| pull <DSN>` | applies the proposals saved by the modeler |
+| `/modeler:apply [proposal] \| pull [DSN]` | applies the proposals saved by the modeler |
 
 Knowledge skill loaded automatically: `notation` (syntax, storage mapping, ambiguities to settle).
 
@@ -72,7 +72,8 @@ Eclipse EMF and Epsilon.
 
 ## Requirements
 Python 3.10+ (PyYAML if installed, else the vendored pure-Python copy in `scripts/vendor`); `psql` for
-`reverse`, `drift` and `pull`.
+`reverse`, `drift` and `pull`. `pull` connects to the Supabase project linked with `supabase link` (or
+`MODELER_PROD_DB`, or `--db`); psql takes the password from `SUPABASE_DB_PASSWORD`, `~/.pgpass` or a prompt.
 
 ## Tests
 ```bash

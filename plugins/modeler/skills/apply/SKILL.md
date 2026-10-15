@@ -1,7 +1,7 @@
 ---
 name: apply
 description: Applica le proposte di modifica del metamodello salvate dal modellatore web di un'app (.modeler/proposals in sviluppo, tabella model_change_requests in produzione, o un file scaricato) e porta la modifica fino a migrazione, codice e verifica di allineamento. Va usata quando l'utente dice "applica la proposta del modellatore", "ho salvato una modifica in /admin/model", "ci sono proposte da produzione", o invoca /modeler:apply.
-argument-hint: "[file della proposta] | pull <DSN di produzione>"
+argument-hint: "[file della proposta] | pull [DSN di produzione]"
 ---
 
 # Applicare una proposta del modellatore
@@ -9,9 +9,14 @@ argument-hint: "[file della proposta] | pull <DSN di produzione>"
 Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:apply -- …`
 (oppure `python3 tools/modeler/modeler.py …`).
 
-1. **Proposte da produzione**: con `pull <DSN>` esegui `python3 tools/modeler/modeler.py pull --db <DSN>`
-   solo dopo conferma esplicita dell'utente (scrive sul database di produzione: segna le proposte come
-   `pulled`). Le copia in `.modeler/proposals/`.
+1. **Proposte da produzione**: con `pull` esegui `npm run model:pull` (con un DSN esplicito:
+   `npm run model:pull -- --db <DSN>`) solo dopo conferma esplicita dell'utente (scrive sul database di
+   produzione: segna le proposte come `pulled`). Le copia in `.modeler/proposals/`.
+   - Il DSN si ricava dal progetto collegato con `supabase link` (`supabase/.temp/`), o da `MODELER_PROD_DB`.
+     Non collegato: fai eseguire all'utente `! supabase link --project-ref <ref>`.
+   - La password viene da `SUPABASE_DB_PASSWORD`, `~/.pgpass` o dal prompt di `psql`: se non è nell'ambiente,
+     fai eseguire all'utente `! npm run model:pull`. Mai chiedere la password in chat né scriverla in file.
+   - Manca lo script `model:pull`: il modellatore installato è vecchio, aggiornalo con `/modeler:install`.
 2. `npm run model:proposals`: elenca le proposte con le differenze rispetto a `domain.ecore.yaml`.
 3. `npm run model:apply -- [file]` (prova a vuoto): mostra all'utente le modifiche e la validazione; segnala
    ciò che comporta perdita di dati (classi, feature o letterali rimossi) e chiedi conferma.
