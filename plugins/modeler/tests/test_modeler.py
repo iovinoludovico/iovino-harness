@@ -7,6 +7,7 @@ import argparse
 import copy
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -272,6 +273,15 @@ class AppTests(unittest.TestCase):
         ns = argparse.Namespace(path=str(self.app), proposal=str(self.app / "bad.json"), write=True)
         self.assertEqual(cli.cmd_apply(ns), 1)
         self.assertNotIn("Ghost", (self.app / "domain.ecore.yaml").read_text())
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class EditorLayoutTests(unittest.TestCase):
+    def test_layout_of_the_editor(self):
+        # the layout rules of core:diagrams, checked on the editor's pure layout functions (layout.test.mjs)
+        res = subprocess.run(["node", "--test", str(ROOT / "tests" / "layout.test.mjs")],
+                             capture_output=True, text=True, timeout=120)
+        self.assertEqual(res.returncode, 0, res.stdout[-3000:] + res.stderr[-2000:])
 
 
 class HookTests(unittest.TestCase):
