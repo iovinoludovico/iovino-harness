@@ -22,6 +22,7 @@ type Props = {
 
 type EditorElement = HTMLElement & { metamodel: unknown; changesTo: (mm: unknown) => string[] };
 type SaveDetail = { metamodel: unknown; note: string };
+type Pending = PendingProposal & { lines: string[] };
 
 const TEXT = {
   it: {
@@ -71,16 +72,26 @@ export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, d
   const [ready, setReady] = useState(false);
   const [result, setResult] = useState<ProposalResult | null>(null);
   const [last, setLast] = useState<SaveDetail | null>(null);
-  const [pending, setPending] = useState<PendingProposal[]>([]);
-  const [viewing, setViewing] = useState<PendingProposal | null>(null);
-  const pendingRef = useRef(0);
-  pendingRef.current = pending.length;
+  const [pending, setPending] = useState<Pending[]>([]);
+  // The proposal shown in the editor, tied to the running metamodel it was opened over: a new one closes it.
+  const [opened, setOpened] = useState<{ proposal: Pending; over: unknown } | null>(null);
+  const viewing = opened && opened.over === metamodel ? opened.proposal : null;
 
-  const refresh = useCallback(async () => {
+  // Pending proposals with their differences from the running model (computed by the editor, outside render).
+  const loadPending = useCallback(async (): Promise<Pending[]> => {
     try {
-      setPending(await listMetamodelProposals());
+      const list = await listMetamodelProposals();
+      return list.map((p) => {
+        let lines: string[] = [];
+        try {
+          lines = ref.current?.changesTo?.(p.metamodel) ?? [];
+        } catch {
+          // no differences shown
+        }
+        return { ...p, lines };
+      });
     } catch {
-      setPending([]);   // the list is a help: the editor works without it
+      return [];   // the list is a help: the editor works without it
     }
   }, []);
 
@@ -94,19 +105,24 @@ export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, d
 
   useEffect(() => {
     if (ready && ref.current) ref.current.metamodel = metamodel;
-    setViewing(null);
   }, [ready, metamodel]);
 
   useEffect(() => {
-    if (ready) refresh();
-  }, [ready, refresh]);
+    if (!ready) return;
+    let alive = true;
+    loadPending().then((list) => alive && setPending(list));
+    return () => {
+      alive = false;
+    };
+  }, [ready, metamodel, loadPending]);
 
+  const waiting = pending.length;
   useEffect(() => {
     const el = ref.current;
     if (!ready || !el) return;
     const handler = async (ev: Event) => {
       const detail = (ev as CustomEvent<SaveDetail>).detail;
-      if (pendingRef.current > 0 && !window.confirm(t.confirmSave(pendingRef.current))) return;
+      if (waiting > 0 && !window.confirm(t.confirmSave(waiting))) return;
       setLast(detail);
       setResult(null);
       try {
@@ -114,37 +130,31 @@ export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, d
       } catch (err) {
         setResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
       }
-      refresh();
+      setPending(await loadPending());
     };
     el.addEventListener("save", handler);
     return () => el.removeEventListener("save", handler);
-  }, [ready, onSave, refresh, t]);
+  }, [ready, onSave, loadPending, waiting, t]);
 
-  const changes = (p: PendingProposal): string[] => {
-    try {
-      return ref.current?.changesTo?.(p.metamodel) ?? [];
-    } catch {
-      return [];
-    }
-  };
-
-  const openProposal = (p: PendingProposal) => {
+  const openProposal = (p: Pending) => {
     if (!ref.current) return;
     ref.current.metamodel = p.metamodel;
-    setViewing(p);
+    setOpened({ proposal: p, over: metamodel });
   };
 
-  const backToRunning = () => {
+  // changesTo compares with the metamodel loaded in the editor: back on the running one, the differences are recomputed.
+  const backToRunning = async () => {
     if (ref.current) ref.current.metamodel = metamodel;
-    setViewing(null);
+    setOpened(null);
+    setPending(await loadPending());
   };
 
-  const reject = async (p: PendingProposal) => {
+  const reject = async (p: Pending) => {
     if (!window.confirm(t.confirmReject)) return;
     const res = await rejectMetamodelProposal(p.id);
     setResult(res);
-    if (viewing?.id === p.id) backToRunning();
-    refresh();
+    if (viewing?.id === p.id) await backToRunning();
+    else setPending(await loadPending());
   };
 
   const download = () => {
@@ -173,7 +183,7 @@ export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, d
           <p className="text-muted-foreground">{t.apply}</p>
           <ul className="mt-2 space-y-2">
             {pending.map((p) => {
-              const lines = changes(p);
+              const lines = p.lines;
               return (
                 <li key={p.id} className="rounded border bg-background p-2">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
