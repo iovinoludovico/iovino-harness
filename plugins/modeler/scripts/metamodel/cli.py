@@ -38,6 +38,7 @@ NPM_SCRIPTS = {
     "model:drift": "python3 tools/modeler/modeler.py drift",
     "model:proposals": "python3 tools/modeler/modeler.py proposals",
     "model:pull": "python3 tools/modeler/modeler.py pull",
+    "model:done": "python3 tools/modeler/modeler.py done",
     "model:apply": "python3 tools/modeler/modeler.py apply",
     "model:migrate": "python3 tools/modeler/modeler.py migrate",
 }
@@ -236,6 +237,14 @@ def cmd_apply(a) -> int:
     if not rep.ok:
         print("\nThe proposal is not a valid metamodel: nothing was written.")
         return 1
+    included, others = _other_proposals(meta_path, src, old, new)
+    if included:
+        print("\nIncluded in this proposal (archived with it):")
+        print("\n".join(f"  {f.name}" for f in included))
+    if others:
+        print("\nStill pending, with changes this proposal does not contain (review them one by one: "
+              "`model:apply -- <file>`, or reject them from the modeler):")
+        print("\n".join(f"  {f.name}" for f in others))
     if not a.write:
         print("\n(dry run: pass --write to update the metamodel)")
         return 0
@@ -256,15 +265,61 @@ def cmd_apply(a) -> int:
             E.dump(new, meta_path)
     else:
         E.dump(new, meta_path)
-    if src.parent == proposals_dir(meta_path):
-        done = src.parent / "applied"
-        done.mkdir(exist_ok=True)
-        src.rename(done / src.name)
+    moved = []
+    pending = src.resolve().parent == proposals_dir(meta_path).resolve()   # not a downloaded file elsewhere
+    for f in ([src] if pending else []) + included:
+        (f.parent / "applied").mkdir(exist_ok=True)
+        dst = f.parent / "applied" / f.name
+        while dst.exists():                                          # never overwrite an archived proposal
+            dst = dst.with_name(f"{dst.stem}-1{dst.suffix}")
+        moved.append(f.rename(dst))
     sync(meta_path.parent)
     print(f"\nwrote {meta_path}")
     print("next: `npm run model:migrate -- --write` drafts the migration; resolve its TODO(modeler) lines, "
           "apply it locally, then `npm run model:drift`")
+    if any(_proposal_id(f) for f in moved):
+        print("from production: after the deploy, `npm run model:done` marks them applied in model_change_requests")
     return 0
+
+
+_MISSING = object()
+
+
+def _contained(old: Any, prop: Any, new: Any) -> bool:
+    """True when every value in which `prop` differs from `old` has the same value in `new` (expanded models)."""
+    if old == prop:
+        return True
+    if isinstance(old, dict) and isinstance(prop, dict):
+        sub = new if isinstance(new, dict) else {}
+        return all(_contained(old.get(k, _MISSING), prop.get(k, _MISSING), sub.get(k, _MISSING))
+                   for k in old.keys() | prop.keys())
+    return prop == new
+
+
+def _other_proposals(meta_path: Path, src: Path, old: dict[str, Any],
+                     new: dict[str, Any]) -> tuple[list[Path], list[Path]]:
+    """The other pending proposals, split into those whose changes are all in the applied one and the rest.
+
+    Every proposal is a whole metamodel, so the latest one usually contains the earlier ones. The comparison is
+    on the expanded models (every feature property, not only what diff() prints); diagram positions are ignored."""
+    def model(m: dict[str, Any]) -> dict[str, Any]:
+        out = E.expand(m)
+        out.pop("diagram", None)
+        return out
+
+    d = proposals_dir(meta_path)
+    base, applied = model(old), model(new)
+    included, others = [], []
+    for f in sorted(d.glob("*.json")) if d.exists() else []:
+        if f.resolve() == src.resolve():
+            continue
+        try:
+            prop = model(_load_any(f))
+        except (ValueError, KeyError, TypeError, AttributeError, OSError, M.ModelError):
+            others.append(f)
+            continue
+        (included if _contained(base, prop, applied) else others).append(f)
+    return included, others
 
 
 PULL_SQL = """
@@ -275,35 +330,137 @@ select coalesce(json_agg(picked order by created_at), '[]') from picked
 """
 
 
-def cmd_pull(a) -> int:
-    """Copies the open proposals stored by the production modeler into .modeler/proposals/."""
+class NoProductionDb(Exception):
+    pass
+
+
+def _prod_query(dsn: str | None, sql: str, verb: str) -> Any:
+    """Runs one statement returning JSON on the production database (see remote_dsn for the DSN and password)."""
     import subprocess
-    meta_path = find_metamodel(a.path)
-    dsn = a.db or remote_dsn(meta_path.parent)
     if not dsn:
-        print("no production database: link the app with `supabase link --project-ref <ref>`, "
-              "or set MODELER_PROD_DB, or pass --db <DSN>", file=sys.stderr)
-        return 2
+        raise NoProductionDb()
     env = dict(os.environ)
     if not _has_password(dsn) and os.environ.get("SUPABASE_DB_PASSWORD") and not os.environ.get("PGPASSWORD"):
         env["PGPASSWORD"] = os.environ["SUPABASE_DB_PASSWORD"]
-    print(f"pulling from {_dsn_target(dsn)}", file=sys.stderr)
+    print(f"{verb} {_dsn_target(dsn)}", file=sys.stderr)
     try:
         # psql asks a missing password on the terminal, so the prompt works with the captured output
-        out = subprocess.run(["psql", dsn, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", PULL_SQL],
+        out = subprocess.run(["psql", dsn, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", sql],
                              capture_output=True, text=True, timeout=120, env=env)
     except FileNotFoundError as exc:
         raise D.DbError("psql not found: install the PostgreSQL client") from exc
     if out.returncode != 0:
         raise D.DbError(out.stderr.strip())
-    rows = json.loads(out.stdout.strip() or "[]")
+    return json.loads(out.stdout.strip() or "null")
+
+
+NO_PROD_DB = ("no production database: link the app with `supabase link --project-ref <ref>`, "
+              "or set MODELER_PROD_DB, or pass --db <DSN>")
+
+
+def cmd_pull(a) -> int:
+    """Copies the open proposals stored by the production modeler into .modeler/proposals/."""
+    meta_path = find_metamodel(a.path)
+    try:
+        rows = _prod_query(a.db or remote_dsn(meta_path.parent), PULL_SQL, "pulling from") or []
+    except NoProductionDb:
+        print(NO_PROD_DB, file=sys.stderr)
+        return 2
     d = proposals_dir(meta_path)
     for r in rows:
         name = str(r["created_at"]).replace(":", "-").replace(" ", "T")[:19] + f"-{str(r['id'])[:8]}.json"
-        _write_json(d / name, {"author": r.get("author_email"), "note": r.get("note"),
+        _write_json(d / name, {"id": r["id"], "author": r.get("author_email"), "note": r.get("note"),
                                "created_at": r["created_at"], "metamodel": r["metamodel"]})
         print(f"  + {d / name}")
     print(f"{len(rows)} proposal(s) pulled" + ("; review them with `proposals`" if rows else ""))
+    return 0
+
+
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+PULLED_NAME_RE = re.compile(r"-([0-9a-f]{8})\.json$")
+
+
+def _proposal_id(f: Path) -> str | None:
+    """Row id of a proposal pulled from production: the `id` field, or the 8-char prefix in the file name
+    (files pulled before the id was stored). None for a proposal saved in development."""
+    try:
+        doc = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(doc, dict) and "closed" in doc:
+        return None
+    if isinstance(doc, dict) and isinstance(doc.get("id"), str) and UUID_RE.fullmatch(doc["id"]):
+        return doc["id"]
+    if isinstance(doc, dict) and "created_at" in doc and "metamodel" in doc:
+        m = PULLED_NAME_RE.search(f.name)
+        return m.group(1) if m else None
+    return None
+
+
+def _done_sql(applied: list[str], rejected: list[str]) -> str:
+    """Marks the rows applied/rejected (only if still open or pulled); returns id and status of the rows found.
+    The ids are validated hex (full uuid, or the 8-char prefix of older pulls), so they are safe to inline."""
+    def match(ids: list[str]) -> str:
+        full = [i for i in ids if UUID_RE.fullmatch(i)]
+        short = [i for i in ids if not UUID_RE.fullmatch(i)]
+        conds = [f"id = any(array[{','.join(repr(i) for i in full)}]::uuid[])"] if full else []
+        conds += [f"id::text like any(array[{','.join(repr(i + '%') for i in short)}])"] if short else []
+        return "(" + " or ".join(conds) + ")" if conds else "false"
+    return f"""
+with a as (update public.model_change_requests set status = 'applied'
+            where {match(applied)} and status in ('open', 'pulled') returning id),
+     r as (update public.model_change_requests set status = 'rejected'
+            where {match(rejected)} and status in ('open', 'pulled') returning id)
+select json_build_object(
+  'applied', (select coalesce(json_agg(id), '[]') from a),
+  'rejected', (select coalesce(json_agg(id), '[]') from r),
+  'found', (select coalesce(json_object_agg(id, status), '{{}}') from public.model_change_requests
+             where {match(applied + rejected)}))
+"""
+
+
+def cmd_done(a) -> int:
+    """Closes in production (model_change_requests) the pulled proposals applied or rejected in the repository."""
+    meta_path = find_metamodel(a.path)
+    d = proposals_dir(meta_path)
+    todo: dict[str, list[tuple[Path, str]]] = {"applied": [], "rejected": []}
+    for status in todo:
+        for f in sorted((d / status).glob("*.json")) if (d / status).exists() else []:
+            pid = _proposal_id(f)
+            if pid:
+                todo[status].append((f, pid))
+    if not any(todo.values()):
+        print("nothing to close: no proposal pulled from production is applied or rejected and still open")
+        return 0
+    for status, items in todo.items():
+        for f, _ in items:
+            print(f"  {status}: {f.name}")
+    if not a.write:
+        print("\n(dry run: pass --write to mark them in production, after the deploy of the change)")
+        return 0
+    try:
+        res = _prod_query(a.db or remote_dsn(meta_path.parent),
+                          _done_sql([p for _, p in todo["applied"]], [p for _, p in todo["rejected"]]), "closing on")
+    except NoProductionDb:
+        print(NO_PROD_DB, file=sys.stderr)
+        return 2
+    updated = {str(i) for i in res.get("applied", []) + res.get("rejected", [])}
+    found: dict[str, str] = {str(k): v for k, v in (res.get("found") or {}).items()}
+    for status, items in todo.items():
+        for f, pid in items:
+            rows = [i for i in found if i.startswith(pid)]
+            if len(rows) != 1:
+                print(f"  {'not' if not rows else 'ambiguous'} in model_change_requests (left as is): {f.name}",
+                      file=sys.stderr)
+                continue
+            # a row closed earlier (e.g. rejected from the production modeler) keeps its status: say so
+            final = status if rows[0] in updated else found[rows[0]]
+            if final != status:
+                print(f"  {f.name}: already '{final}' in production, not '{status}'", file=sys.stderr)
+            doc = json.loads(f.read_text(encoding="utf-8"))
+            doc["closed"] = final
+            _write_json(f, doc)
+    print(f"marked {len(res.get('applied', []))} applied, {len(res.get('rejected', []))} rejected in production")
     return 0
 
 
@@ -563,6 +720,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("path", nargs="?")
     s.add_argument("--db", help="DSN (default: MODELER_PROD_DB or the Supabase project linked with `supabase link`)")
     s.set_defaults(fn=cmd_pull)
+
+    s = sub.add_parser("done", help="mark in production the pulled proposals applied or rejected in the repository")
+    s.add_argument("path", nargs="?")
+    s.add_argument("--db", help="DSN (default: MODELER_PROD_DB or the Supabase project linked with `supabase link`)")
+    s.add_argument("--write", action="store_true", help="update model_change_requests (otherwise dry run)")
+    s.set_defaults(fn=cmd_done)
 
     s = sub.add_parser("reverse", help="derive a metamodel from an existing PostgreSQL schema")
     s.add_argument("--db", help="DSN (default: MODELER_DB or the local Supabase of the app)")

@@ -433,6 +433,81 @@ class AppTests(unittest.TestCase):
             self.assertEqual(cli.cmd_pull(argparse.Namespace(path=str(self.app), db=None)), 2)
         self.assertIn("supabase link", err.getvalue())
 
+    def _proposal(self, name, edit, **extra):
+        doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
+        edit(doc["classes"])
+        d = self.app / ".modeler" / "proposals"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text(json.dumps({"created_at": name, "metamodel": doc, **extra}))
+        return d / name
+
+    def test_apply_archives_the_proposals_it_contains(self):
+        cli.install(self.app)
+        phone = {"type": "EString", "lower": 0, "upper": 1}
+        old = self._proposal("2026-01-01T10-00-00-000Z.json",
+                             lambda c: c["Persona"]["attributes"].update(telefono=phone))
+        other = self._proposal("2026-01-02T10-00-00-000Z.json",
+                               lambda c: c["Persona"]["attributes"].update(fax=phone))
+        latest = self._proposal("2026-01-03T10-00-00-000Z.json",
+                                lambda c: c["Persona"]["attributes"].update(telefono=phone, email2=phone))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_apply(argparse.Namespace(path=str(self.app), proposal=None, write=True)), 0)
+        applied = self.app / ".modeler" / "proposals" / "applied"
+        self.assertTrue((applied / latest.name).exists())
+        self.assertTrue((applied / old.name).exists())                       # contained in the latest
+        self.assertTrue(other.exists())                                     # fax is not in the latest
+        self.assertIn(other.name, out.getvalue().split("Still pending")[1])
+        self.assertNotIn("model:done", out.getvalue())                      # saved in development
+
+    def test_a_proposal_with_changes_diff_does_not_print_stays_pending(self):
+        cli.install(self.app)
+        unique = self._proposal("2026-01-01T10-00-00-000Z.json",
+                                lambda c: c["Persona"]["attributes"]["dataNascita"].update(unique=True, label="Nato il"))
+        moved = self._proposal("2026-01-02T10-00-00-000Z.json", lambda c: c["Persona"].update(abstract=False))
+        self._proposal("2026-01-03T10-00-00-000Z.json", lambda c: c["Persona"]["attributes"].update(
+            fax={"type": "EString", "lower": 0, "upper": 1}))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(argparse.Namespace(path=str(self.app), proposal=None, write=True)), 0)
+        self.assertTrue(unique.exists())                                    # unique/label not in the applied one
+        self.assertFalse(moved.exists())                                    # no change of its own
+
+    def test_contained(self):
+        old, new = {"a": 1, "b": {"c": 1}}, {"a": 2, "b": {"c": 1, "d": 1}}
+        self.assertTrue(cli._contained(old, {"a": 2, "b": {"c": 1}}, new))
+        self.assertTrue(cli._contained(old, old, new))
+        self.assertFalse(cli._contained(old, {"a": 1, "b": {"c": 2}}, new))
+        self.assertFalse(cli._contained(old, {"b": {"c": 1}}, new))         # removal of `a` not applied
+        self.assertTrue(cli._contained({"a": 1}, {}, {}))
+
+    def test_proposal_id_of_pulled_files(self):
+        uid = "0f8e2c4a-1111-4222-8333-944445555666"
+        d = self.app / "p"
+        d.mkdir()
+        (d / "a.json").write_text(json.dumps({"id": uid, "created_at": "x", "metamodel": {}}))
+        (d / "2026-01-01T10-00-00-0f8e2c4a.json").write_text(json.dumps({"created_at": "x", "metamodel": {}}))
+        (d / "2026-01-01T10-00-00-000Z.json").write_text(json.dumps({"created_at": "x", "metamodel": {}}))
+        (d / "closed.json").write_text(json.dumps({"id": uid, "closed": "applied", "created_at": "x", "metamodel": {}}))
+        (d / "bad.json").write_text(json.dumps({"id": "x'; drop table t; --", "created_at": "x", "metamodel": {}}))
+        self.assertEqual(cli._proposal_id(d / "a.json"), uid)
+        self.assertEqual(cli._proposal_id(d / "2026-01-01T10-00-00-0f8e2c4a.json"), "0f8e2c4a")   # older pulls
+        self.assertIsNone(cli._proposal_id(d / "2026-01-01T10-00-00-000Z.json"))                 # development
+        self.assertIsNone(cli._proposal_id(d / "closed.json"))
+        self.assertIsNone(cli._proposal_id(d / "bad.json"))
+
+    def test_done_dry_run_and_nothing_to_close(self):
+        out = io.StringIO()
+        ns = argparse.Namespace(path=str(self.app), db=None, write=False)
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_done(ns), 0)
+        self.assertIn("nothing to close", out.getvalue())
+        applied = self.app / ".modeler" / "proposals" / "applied"
+        applied.mkdir(parents=True)
+        (applied / "2026-01-01T10-00-00-0f8e2c4a.json").write_text(json.dumps({"created_at": "x", "metamodel": {}}))
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_done(ns), 0)                            # no database touched
+        self.assertIn("applied: 2026-01-01T10-00-00-0f8e2c4a.json", out.getvalue())
+
     def test_proposal_apply(self):
         cli.install(self.app)
         doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
@@ -557,6 +632,50 @@ class DatabaseTests(unittest.TestCase):
 
     def tearDown(self):
         subprocess.run(["psql", self.base, "-qc", f"drop database {self.db} with (force)"], capture_output=True)
+
+    def test_pull_apply_done(self):
+        sql = (Path(__file__).resolve().parents[1] / "kit" / "model_change_requests.sql").read_text()
+        sql = sql[:sql.index("alter table")]                                # no is_admin() outside Supabase
+        subprocess.run(["psql", self.dsn, "-q", "-v", "ON_ERROR_STOP=1", "-c", sql], check=True, capture_output=True)
+        with tempfile.TemporaryDirectory() as d:
+            app = Path(d)
+            (app / "domain.ecore.yaml").write_text(FIXTURE.read_text())
+            meta = E.runtime_json(E.load(app / "domain.ecore.yaml"))
+            meta["classes"]["Persona"]["attributes"]["telefono"] = {"type": "EString", "lower": 0, "upper": 1}
+            subprocess.run(["psql", self.dsn, "-q", "-v", "ON_ERROR_STOP=1", "-c",
+                            "insert into model_change_requests (metamodel, note) values "
+                            f"('{json.dumps(meta)}'::jsonb, 'telefono'), ('{{}}'::jsonb, 'no'), "
+                            f"('{json.dumps(meta)}'::jsonb, 'zz')"],
+                           check=True, capture_output=True)
+            status = lambda: subprocess.run(["psql", self.dsn, "-At", "-c", "select note || '=' || status from "  # noqa: E731
+                                             "model_change_requests order by note"],
+                                            capture_output=True, text=True).stdout.split()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(cli.cmd_pull(argparse.Namespace(path=str(app), db=self.dsn)), 0)
+                self.assertEqual(status(), ["no=pulled", "telefono=pulled", "zz=pulled"])
+                subprocess.run(["psql", self.dsn, "-qc", "update model_change_requests set status = 'rejected' "
+                                "where note = 'zz'"], check=True)               # rejected from the production modeler
+                props = sorted((app / ".modeler" / "proposals").glob("*.json"))
+                tel = next(f for f in props if json.loads(f.read_text())["note"] == "telefono")
+                zz = next(f for f in props if json.loads(f.read_text())["note"] == "zz")
+                rej = next(f for f in props if json.loads(f.read_text())["note"] == "no")
+                ns = argparse.Namespace(path=str(app), proposal=str(tel), write=True)
+                self.assertEqual(cli.cmd_apply(ns), 0)
+                (rej.parent / "rejected").mkdir()
+                rej.rename(rej.parent / "rejected" / rej.name)               # rejected from the local modeler
+                self.assertEqual(cli.cmd_done(argparse.Namespace(path=str(app), db=self.dsn, write=False)), 0)
+                self.assertEqual(status(), ["no=pulled", "telefono=pulled", "zz=rejected"])   # dry run
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(cli.cmd_done(argparse.Namespace(path=str(app), db=self.dsn, write=True)), 0)
+            self.assertEqual(status(), ["no=rejected", "telefono=applied", "zz=rejected"])
+            self.assertIn("already 'rejected' in production", err.getvalue())    # zz was archived with telefono
+            self.assertEqual(json.loads((app / ".modeler/proposals/applied" / zz.name).read_text())["closed"], "rejected")
+            self.assertEqual(json.loads((app / ".modeler/proposals/applied" / tel.name).read_text())["closed"], "applied")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                cli.cmd_done(argparse.Namespace(path=str(app), db=self.dsn, write=True))
+            self.assertIn("nothing to close", out.getvalue())
 
     def test_reverse_and_drift(self):
         cat = D.catalog(self.dsn)

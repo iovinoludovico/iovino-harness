@@ -18,15 +18,21 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
      fai eseguire all'utente `! npm run model:pull`. Mai chiedere la password in chat né scriverla in file.
    - Manca lo script `model:pull`: il modellatore installato è vecchio, aggiornalo con `/modeler:install`.
 2. `npm run model:proposals`: elenca le proposte con le differenze rispetto a `domain.ecore.yaml`.
-3. `npm run model:apply -- [file]` (prova a vuoto): mostra all'utente le modifiche e la validazione; segnala
-   ciò che comporta perdita di dati (classi, feature o letterali rimossi) e chiedi conferma.
+3. `npm run model:apply -- [file]` (prova a vuoto; senza file, la proposta più recente): mostra all'utente le
+   modifiche e la validazione; segnala ciò che comporta perdita di dati (classi, feature o letterali rimossi) e
+   chiedi conferma. Ogni proposta è un metamodello intero: la prova a vuoto elenca le altre proposte già
+   contenute in quella scelta (archiviate con lei) e quelle con modifiche in più ("Still pending"), da
+   applicare una per una indicando il file o da scartare dal modellatore.
 4. Con conferma: `npm run model:apply -- [file] --write` (backup in `.modeler/backups/`, proposta spostata in
-   `.modeler/proposals/applied/`, `metamodel.json` aggiornato). Il file cambia solo nelle righe di ciò che è
+   `.modeler/proposals/applied/` insieme a quelle che contiene, `metamodel.json` aggiornato: da qui la proposta
+   non compare più tra quelle in attesa nel modellatore locale). Il file cambia solo nelle righe di ciò che è
    cambiato (ordine, stile e commenti restano); se `git diff domain.ecore.yaml` mostra di più, fermati e
    segnalalo invece di committare.
 5. Prosegui come la skill `metamodel`, sezione "Allineare l'applicazione": `npm run model:migrate -- --name <nome>
    --write` (bozza dal metamodello committato a quello appena scritto), TODO risolti, codice, migrazione
    applicata in locale, `npm run model:drift` → "aligned", typecheck, lint e test.
    In produzione la migrazione va applicata con `/core:db-push` prima del push del codice.
-6. Per le proposte arrivate da produzione: dopo il deploy, segna la riga come `applied` (o `rejected`) solo su
-   richiesta dell'utente.
+6. Per le proposte arrivate da produzione, dopo il deploy e solo su richiesta dell'utente: `npm run model:done`
+   (prova a vuoto) e `npm run model:done -- --write`. Segna `applied` in `model_change_requests` le proposte in
+   `.modeler/proposals/applied/` e `rejected` quelle scartate dal modellatore locale (`rejected/`), così spariscono
+   anche dal modellatore di produzione. Usa lo stesso progetto collegato e la stessa password di `model:pull`.
