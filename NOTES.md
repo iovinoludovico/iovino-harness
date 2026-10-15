@@ -16,7 +16,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: una skill `core:ship` (o `core:pr`) che, dopo i controlli del progetto, fa push del branch, apre la PR (titolo e corpo dai Conventional Commits, con l'attribuzione), aspetta l'esito della CI e la mostra, poi **chiede conferma esplicita** e solo allora fa il merge su `main` (e cancella il branch). Prerequisito: `gh` installato e autenticato (`! brew install gh && gh auth login`), o in alternativa l'API GitHub. Regola in `conventions.md`: il merge su `main` di un'app con deploy automatico richiede sempre la conferma, anche se la PR l'ha aperta Claude; per l'harness ricordare `release.py --write` prima del push.
 - **Plugin**: core
 - **Tipo**: skill
-- **Stato**: da applicare (serve `gh` installato e autenticato).
+- **Stato**: applicata il 2026-10-14: skill `core:ship` (`plugins/core/skills/ship/SKILL.md`: push, PR, `gh pr checks --watch`, merge solo dopo conferma) e riga in `conventions.md` sezione Git; la conferma per `gh pr merge` era già in `ASK_RULES` di `hook.py`.
 
 ## 2026-10-14 — Editor e diagrammi di modellazione: modello leggibile, connettori non sovrapposti
 - **Progetto**: guest-invitations-af (diagramma del workflow in `/admin/workflows/[id]`; vale anche per l'editor del metamodello)
@@ -31,4 +31,4 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
   Riferimento d'implementazione: `src/lib/workflow-layout.ts` e `tests/workflow-layout.test.ts` di guest-invitations-af. Valutare di portare le stesse regole nell'editor del metamodello (`kit/metamodel-editor.js`).
 - **Plugin**: core (convenzione) + modeler (editor del metamodello)
 - **Tipo**: convenzione
-- **Stato**: in parte applicata il 2026-10-14: regole nella skill `core:diagrams`, richiamata da `conventions.md`. Da fare nell'editor del metamodello: layout come funzione pura con test, bus, etichette tra più candidati, porte in entrata sfalsate, evidenziazione al passaggio del mouse.
+- **Stato**: in parte applicata il 2026-10-15: regole nella skill `core:diagrams` (2026-10-14); nell'editor del metamodello (`kit/metamodel-editor.js`) layout e connettori sono funzioni pure (`Layout`, esportate per Node) testate da `plugins/modeler/tests/layout.test.mjs` su molte dimensioni della tela, con porte in entrata sfalsate, porte che scorrono sul lato, variante a Z per le L che attraversano un box, etichette scelte tra più candidate ed evidenziazione al passaggio del mouse. Rinviato fino alla prova del modellatore su un'app reale: il bus per molte sorgenti verso la stessa classe (test `todo` con 8 sorgenti).

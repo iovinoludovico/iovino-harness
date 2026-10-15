@@ -14,7 +14,6 @@
  * The diagram positions are kept in metamodel.diagram ({Class: {x, y}}).
  */
 (() => {
-  if (customElements.get("metamodel-editor")) return;
 
   const DATATYPES = ["EString", "Text", "Email", "URL", "EInt", "ELong", "EDouble", "EBigDecimal", "Money",
     "EBoolean", "Date", "EDate", "JSON"];
@@ -26,6 +25,325 @@
   const BOX_W = 210, HEAD_H = 32, ROW_H = 19, PAD = 8, CHAR_W = 7.4;
   const MAX_ROWS = 12;                     // attributes shown in a box before "+N" (all of them with "Tutti")
   const GAP_X = 110, GAP_Y = 56, MARGIN = 24, K_MIN = 0.25, K_MAX = 2;
+
+  /* ------------------------------------------------------------------ pure layout (no DOM)
+   * Box sizes, placement and connector routing are pure functions of the metamodel: the editor draws what they
+   * return, and plugins/modeler/tests/layout.test.mjs checks them with `node --test` (no overlapping boxes, no
+   * connectors sharing a run or crossing a box, labels clear of boxes and of each other). */
+  const multText = (lo, up) => (lo === 1 && up === 1 ? "1" : `${lo}..${up === -1 ? "*" : up}`);
+  const LABEL_CHAR_W = 6.6, LABEL_H = 14;
+  const PORT_STAGGER = 4;                  // incoming ports sit a few px off the outgoing ones
+  const LANES = [0, 8, -8, 16, -16, 24, -24, 32, -32];
+
+  const Layout = (() => {
+    const rowsOf = (c, allAttrs = false, more = "more") => {
+      // attribute lines of a class box: all of them, or the first ones plus "+N more"
+      const lines = Object.entries(c.attributes).map(([an, a]) => {
+        const m = a.lower === 0 && a.upper === 1 ? "" : ` [${multText(a.lower, a.upper)}]`;
+        return `${a.id ? "🔑 " : ""}${an}: ${a.type}${m}`;
+      });
+      // references to the application users have no box to point to: listed in the class, dimmed
+      for (const [rn, r] of Object.entries(c.references)) {
+        if (r.type === "User") lines.push(`↗ ${rn}: User${r.lower === 0 && r.upper === 1 ? "" : ` [${multText(r.lower, r.upper)}]`}`);
+      }
+      if (allAttrs || lines.length <= MAX_ROWS) return lines;
+      return [...lines.slice(0, MAX_ROWS - 1), `… +${lines.length - MAX_ROWS + 1} ${more}`];
+    };
+
+    const boxSize = (mm, name, opts = {}) => {
+      const c = mm.classes[name];
+      const width = (texts, min) => Math.round(Math.max(min, Math.min(380, Math.max(...texts.map((x) => x.length)) * CHAR_W + 24)));
+      if (c) {
+        const rows = rowsOf(c, opts.allAttrs, opts.more);
+        return { w: width([name, ...rows], 160), h: HEAD_H + Math.max(1, rows.length) * ROW_H + PAD };
+      }
+      const e = mm.enums[name];
+      return { w: width([name, ...e.literals.map((l) => l.name)], 120), h: HEAD_H + 12 + Math.max(1, e.literals.length) * ROW_H + PAD };
+    };
+
+    const normalize = (mm) => {
+      const m = JSON.parse(JSON.stringify(mm || {}));
+      m.classes = m.classes || {};
+      m.enums = m.enums || {};
+      m.diagram = m.diagram || {};
+      for (const c of Object.values(m.classes)) {
+        c.attributes = c.attributes || {};
+        c.references = c.references || {};
+        c.supertypes = c.supertypes || [];
+        c.abstract = !!c.abstract;
+        for (const a of Object.values(c.attributes)) { a.lower = a.lower ?? 0; a.upper = a.upper ?? 1; }
+        for (const r of Object.values(c.references)) { r.lower = r.lower ?? 0; r.upper = r.upper ?? 1; r.containment = !!r.containment; }
+      }
+      for (const [n, e] of Object.entries(m.enums)) {
+        if (Array.isArray(e)) m.enums[n] = { literals: e.map((x) => (typeof x === "string" ? { name: x } : x)) };
+        else e.literals = (e.literals || []).map((x) => (typeof x === "string" ? { name: x } : x));
+      }
+      return m;
+    };
+
+    const autoLayout = (mm, size, opts = {}) => {
+      // Positions of the boxes without one (all of them with force). Order: BFS from the most connected class
+      // (neighbours stay close), enums after the classes, near the first class that uses them. Placement: masonry
+      // columns, with the number of columns chosen to match the canvas aspect ratio, so that the diagram can be
+      // shown as large as possible once fitted.
+      const { force = false } = opts;
+      const W = opts.width > 50 ? opts.width : 960, H = opts.height > 50 ? opts.height : 600;
+      const classes = Object.keys(mm.classes);
+      const enums = Object.keys(mm.enums);
+      const missing = [...classes, ...enums].filter((n) => force || !mm.diagram[n]);
+      if (!missing.length) return {};
+      const adj = Object.fromEntries(classes.map((n) => [n, new Set()]));
+      for (const [cn, c] of Object.entries(mm.classes)) {
+        for (const r of Object.values(c.references)) if (adj[r.type] && r.type !== cn) { adj[cn].add(r.type); adj[r.type].add(cn); }
+        for (const st of c.supertypes) if (adj[st]) { adj[cn].add(st); adj[st].add(cn); }
+      }
+      const byDegree = [...classes].sort((x, y) => adj[y].size - adj[x].size);
+      const order = [];
+      for (const start of byDegree) {
+        if (order.includes(start)) continue;
+        const queue = [start];
+        while (queue.length) {
+          const n = queue.shift();
+          if (order.includes(n)) continue;
+          order.push(n);
+          [...adj[n]].sort((x, y) => adj[y].size - adj[x].size).forEach((x) => { if (!order.includes(x)) queue.push(x); });
+        }
+      }
+      const nodes = [...order];
+      for (const n of order) {
+        for (const a of Object.values(mm.classes[n].attributes)) {
+          if (mm.enums[a.type] && !nodes.includes(a.type)) nodes.push(a.type);
+        }
+      }
+      for (const e of enums) if (!nodes.includes(e)) nodes.push(e);
+      const place = force ? nodes : nodes.filter((n) => !mm.diagram[n]);
+      const sizes = Object.fromEntries(place.map((n) => [n, size(n)]));
+      // neighbours of every node (references, inheritance, enum attributes), to keep connected boxes close
+      const near = Object.fromEntries(nodes.map((n) => [n, new Set(adj[n] || [])]));
+      for (const [cn, c] of Object.entries(mm.classes)) {
+        for (const a of Object.values(c.attributes)) if (near[a.type] && mm.enums[a.type]) { near[cn].add(a.type); near[a.type].add(cn); }
+      }
+      const avgH = place.reduce((a, n) => a + sizes[n].h, 0) / Math.max(1, place.length);
+      const masonry = (cols) => {
+        const colH = new Array(cols).fill(0), colW = new Array(cols).fill(0), at = {};
+        for (const n of place) {
+          // the shortest column, unless a column nearer to the placed neighbours is not much taller
+          const placed = [...near[n]].filter((x) => at[x]).map((x) => at[x][0]);
+          const target = placed.length ? placed.reduce((a, b) => a + b, 0) / placed.length : null;
+          let c = 0, best = Infinity;
+          for (let i = 0; i < cols; i++) {
+            const score = colH[i] + (target === null ? 0 : Math.abs(i - target) * avgH * 0.9);
+            if (score < best - 1e-6) { best = score; c = i; }
+          }
+          at[n] = [c, colH[c]];
+          colH[c] += sizes[n].h + GAP_Y;
+          colW[c] = Math.max(colW[c], sizes[n].w);
+        }
+        const width = colW.reduce((a, b) => a + b, 0) + GAP_X * (cols - 1);
+        const height = Math.max(...colH) - GAP_Y;
+        return { at, colW, width, height, k: Math.min(W / width, H / height) };
+      };
+      let best = null;
+      for (let cols = 1; cols <= Math.max(1, place.length); cols++) {
+        const m = masonry(cols);
+        if (!best || m.k > best.k + 1e-6) best = m;
+      }
+      if (!best) return {};
+      // new nodes next to the existing diagram (on its right), all nodes from the origin when forced
+      const used = Object.entries(mm.diagram).filter(([n]) => !place.includes(n) && (mm.classes[n] || mm.enums[n]));
+      const ox = used.length ? Math.max(...used.map(([n, p]) => p.x + size(n).w)) + GAP_X : 0;
+      const colX = [];
+      best.colW.reduce((x, w, i) => { colX[i] = x; return x + w + GAP_X; }, ox);
+      const pos = {};
+      for (const n of place) {
+        const [c, y] = best.at[n];
+        pos[n] = { x: Math.round(colX[c] + (best.colW[c] - sizes[n].w) / 2), y: Math.round(y) };
+      }
+      return pos;
+    };
+
+    /* geometry helpers */
+    const out = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };
+    const SIDES = ["right", "left", "bottom", "top"];
+    const horizontal = (side) => side === "left" || side === "right";
+    const mid = (R, side) => side === "left" ? { x: R.x, y: R.y + R.h / 2 } : side === "right" ? { x: R.x + R.w, y: R.y + R.h / 2 }
+      : side === "top" ? { x: R.x + R.w / 2, y: R.y } : { x: R.x + R.w / 2, y: R.y + R.h };
+    const segments = (pts) => pts.slice(1).map((q, i) => [pts[i], q]);
+    const hitsRect = (p, q, R, m) => {
+      const x0 = Math.min(p.x, q.x), x1 = Math.max(p.x, q.x), y0 = Math.min(p.y, q.y), y1 = Math.max(p.y, q.y);
+      return x0 < R.x + R.w - m && x1 > R.x + m && y0 < R.y + R.h - m && y1 > R.y + m;
+    };
+    const rectsOverlap = (a, b, m = 0) => a.x < b.x + b.w + m && b.x < a.x + a.w + m && a.y < b.y + b.h + m && b.y < a.y + a.h + m;
+    // two axis-parallel segments on the same line sharing more than a couple of px
+    const collinear = ([p, q], [r, s]) => {
+      const ov = (a0, a1, b0, b1) => Math.min(Math.max(a0, a1), Math.max(b0, b1)) - Math.max(Math.min(a0, a1), Math.min(b0, b1));
+      if (Math.abs(p.y - q.y) < 0.5 && Math.abs(r.y - s.y) < 0.5 && Math.abs(p.y - r.y) < 2) return ov(p.x, q.x, r.x, s.x) > 2;
+      if (Math.abs(p.x - q.x) < 0.5 && Math.abs(r.x - s.x) < 0.5 && Math.abs(p.x - r.x) < 2) return ov(p.y, q.y, r.y, s.y) > 2;
+      return false;
+    };
+
+    const route = (p1, sa, p2, sb, lane, self, detour = 0) => {
+      const h1 = horizontal(sa), h2 = horizontal(sb);
+      const step = 28 + detour * 10;   // connectors going around the boxes get a lane each
+      if (self) { const x = p1.x + step; return [p1, { x, y: p1.y }, { x, y: p2.y }, p2]; }
+      if (h1 && h2) {
+        const facing = out[sa][0] !== out[sb][0] && (out[sa][0] > 0 ? p2.x > p1.x : p2.x < p1.x);
+        const x = facing ? (p1.x + p2.x) / 2 + lane : (out[sa][0] > 0 ? Math.max(p1.x, p2.x) + step : Math.min(p1.x, p2.x) - step);
+        return Math.abs(p1.y - p2.y) < 1 && facing ? [p1, p2] : [p1, { x, y: p1.y }, { x, y: p2.y }, p2];
+      }
+      if (!h1 && !h2) {
+        const facing = out[sa][1] !== out[sb][1] && (out[sa][1] > 0 ? p2.y > p1.y : p2.y < p1.y);
+        const y = facing ? (p1.y + p2.y) / 2 + lane : (out[sa][1] > 0 ? Math.max(p1.y, p2.y) + step : Math.min(p1.y, p2.y) - step);
+        return Math.abs(p1.x - p2.x) < 1 && facing ? [p1, p2] : [p1, { x: p1.x, y }, { x: p2.x, y }, p2];
+      }
+      // one horizontal and one vertical side: an L, or (detour) out of both boxes and around, when the L crosses one
+      if (!detour) return h1 ? [p1, { x: p2.x, y: p1.y }, p2] : [p1, { x: p1.x, y: p2.y }, p2];
+      const a = { x: p1.x + out[sa][0] * step, y: p1.y + out[sa][1] * step };
+      const b = { x: p2.x + out[sb][0] * step, y: p2.y + out[sb][1] * step };
+      return h1 ? [p1, a, { x: a.x, y: b.y }, b, p2] : [p1, a, { x: b.x, y: a.y }, b, p2];
+    };
+
+    const edgesOf = (mm) => {
+      // EMF / Ecore Tools notation: reference = open arrow at the target; containment = filled diamond at the
+      // container; a pair of opposite references = one connector with both ends; inheritance = hollow triangle
+      // at the supertype.
+      const list = [];
+      const drawn = new Set();
+      for (const [cn, c] of Object.entries(mm.classes)) {
+        if (!mm.diagram[cn]) continue;
+        for (const s of c.supertypes) {
+          if (mm.diagram[s] && mm.classes[s]) list.push({ key: `${cn}^${s}`, a: cn, b: s, end: "url(#tri)", cls: "edge inherit" });
+        }
+        for (const [rn, r] of Object.entries(c.references)) {
+          if (drawn.has(`${cn}.${rn}`)) continue;
+          if (r.type === "User" || !mm.diagram[r.type] || !mm.classes[r.type]) continue;   // User: a row in the box
+          const o = r.opposite ? mm.classes[r.type]?.references?.[r.opposite] : null;
+          if (o) drawn.add(`${r.type}.${r.opposite}`);
+          list.push({
+            key: `${cn}.${rn}`, a: cn, b: r.type, cls: "edge",
+            start: r.containment ? "url(#diamond)" : (o ? "url(#arrow)" : null),
+            end: o?.containment ? "url(#diamond)" : "url(#arrow)",
+            labelB: `${rn} ${multText(r.lower, r.upper)}`,
+            labelA: o ? `${r.opposite} ${multText(o.lower, o.upper)}` : null,
+          });
+        }
+      }
+      return list;
+    };
+
+    const routeEdges = (mm, size) => {
+      // Connectors as orthogonal polylines, with the labels of their ends: { edges: [{key, a, b, cls, start, end,
+      // pts, labels: [{text, x, y, w, h}]}], boxes: {name: rect}, ext } (ext: the extent of lines and labels).
+      const rects = {};
+      for (const n of [...Object.keys(mm.classes), ...Object.keys(mm.enums)]) {
+        const p = mm.diagram[n];
+        if (p) { const s = size(n); rects[n] = { x: p.x, y: p.y, w: s.w, h: s.h }; }
+      }
+      const boxes = Object.entries(rects);
+      const crosses = (pts, skip) => {
+        let n = 0;
+        for (const [name, R] of boxes) {
+          const m = skip.includes(name) ? 2 : -4;   // the own boxes only count when the line runs inside them
+          for (const [p, q] of segments(pts)) if (hitsRect(p, q, R, m)) n++;
+        }
+        return n;
+      };
+      const length = (pts) => segments(pts).reduce((a, [p, q]) => a + Math.abs(q.x - p.x) + Math.abs(q.y - p.y), 0);
+      const list = edgesOf(mm);
+      for (const e of list) {   // the sides the connector leaves and enters
+        const A = rects[e.a], B = rects[e.b];
+        e.A = A; e.B = B;
+        if (e.a === e.b) { e.sa = "right"; e.sb = "right"; continue; }
+        let best = Infinity;
+        for (const sa of SIDES) for (const sb of SIDES) {
+          const pts = route(mid(A, sa), sa, mid(B, sb), sb, 0, false);
+          const c = crosses(pts, [e.a, e.b]) * 100000 + length(pts) + (pts.length - 2) * 40;
+          if (c < best - 1e-6) { best = c; e.sa = sa; e.sb = sb; }
+        }
+      }
+      // ports: the connectors on the same side of a box are spread along it, ordered by where they go;
+      // the incoming ends are staggered by a few px from the outgoing ones
+      const ports = {};
+      list.forEach((e, i) => {
+        for (const [end, n, side, other] of [["a", e.a, e.sa, e.B], ["b", e.b, e.sb, e.A]]) {
+          (ports[`${n}|${side}`] ||= []).push({ i, end, key: horizontal(side) ? other.y + other.h / 2 : other.x + other.w / 2 });
+        }
+      });
+      for (const [k, items] of Object.entries(ports)) {
+        const [n, side] = k.split("|");
+        const R = rects[n];
+        items.sort((u, v) => u.key - v.key || (u.end === v.end ? u.i - v.i : u.end === "a" ? -1 : 1));
+        items.forEach((it, j) => {
+          const t = (j + 1) / (items.length + 1);
+          const shift = it.end === "b" ? PORT_STAGGER : 0;
+          const pt = side === "left" ? { x: R.x, y: R.y + HEAD_H / 2 + (R.h - HEAD_H / 2) * t + shift }
+            : side === "right" ? { x: R.x + R.w, y: R.y + HEAD_H / 2 + (R.h - HEAD_H / 2) * t + shift }
+              : side === "top" ? { x: R.x + R.w * t + shift, y: R.y } : { x: R.x + R.w * t + shift, y: R.y + R.h };
+          list[it.i][it.end === "a" ? "pa" : "pb"] = pt;
+          list[it.i][it.end === "a" ? "ja" : "jb"] = j;   // position on the side: labels alternate
+        });
+      }
+      // each connector takes the lane (offset of its middle run, distance of a detour) that crosses no box and
+      // shares no run with the connectors already routed; its ports may slide a few px along their sides, so that
+      // two connectors leaving boxes of the same row at the same height do not run on the same line
+      const slide = (pt, side, d) => (horizontal(side) ? { x: pt.x, y: pt.y + d } : { x: pt.x + d, y: pt.y });
+      const routed = [];
+      for (const e of list) {
+        let best = null;
+        for (const jog of [0, 6, -6]) for (const lane of LANES) for (let detour = 0; detour < 5; detour++) {
+          const pts = route(slide(e.pa, e.sa, jog), e.sa, slide(e.pb, e.sb, jog), e.sb, lane, e.a === e.b, detour);
+          const segs = segments(pts);
+          const shared = routed.reduce((n, o) => n + segs.filter((s) => o.segs.some((t) => collinear(s, t))).length, 0);
+          const c = crosses(pts, [e.a, e.b]) * 100000 + shared * 10000 + length(pts) + (pts.length - 2) * 40
+            + Math.abs(lane) + detour * 6 + Math.abs(jog) * 2;
+          if (!best || c < best.c - 1e-6) best = { c, pts, segs };
+        }
+        e.pts = best.pts;
+        routed.push({ segs: best.segs });
+      }
+      // labels: at the ends, in the first of several candidate places that covers no box, label or line
+      const allSegs = list.flatMap((e) => segments(e.pts));
+      const placed = [];
+      const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+      const grow = (x0, y0, x1, y1) => { ext.x0 = Math.min(ext.x0, x0); ext.y0 = Math.min(ext.y0, y0); ext.x1 = Math.max(ext.x1, x1); ext.y1 = Math.max(ext.y1, y1); };
+      const label = (pt, side, text, below) => {
+        const w = text.length * LABEL_CHAR_W + 4, h = LABEL_H;
+        const [ox, oy] = out[side];
+        // candidates: along the connector (d) and away from it (s), on the preferred side of the line first
+        const cands = [];
+        for (const d of [8, 24, 42, 62, 84, 108]) for (const s of [4, 18, 32, 46]) for (const flip of [0, 1]) {
+          const first = below ? !flip : !!flip;   // below the line (horizontal side) / left of it (vertical side)
+          const r = ox
+            ? { x: ox > 0 ? pt.x + d : pt.x - d - w, y: first ? pt.y + s : pt.y - s - h, w, h }
+            : { x: first ? pt.x - s - 2 - w : pt.x + s + 2, y: oy > 0 ? pt.y + d - 2 : pt.y - d + 2 - h, w, h };
+          cands.push({ r, near: d + s + flip * 6 });
+        }
+        let best = null;
+        for (const { r, near } of cands) {
+          const c = boxes.filter(([, R]) => rectsOverlap(r, R, 1)).length * 1000
+            + placed.filter((q) => rectsOverlap(r, q, 1)).length * 1000
+            + allSegs.filter(([p, q]) => hitsRect(p, q, r, 0)).length * 50 + near;
+          if (!best || c < best.c) best = { c, r };
+        }
+        placed.push(best.r);
+        grow(best.r.x, best.r.y, best.r.x + w, best.r.y + h);
+        return { text, ...best.r };
+      };
+      for (const e of list) {
+        e.labels = [];
+        const pa = e.pts[0], pb = e.pts[e.pts.length - 1];   // the ports, after sliding
+        if (e.labelB) e.labels.push(label(pb, e.sb, e.labelB, e.labelA ? false : e.jb % 2 === 0));   // first port: label on its left
+        if (e.labelA) e.labels.push(label(pa, e.sa, e.labelA, e.ja % 2 === 0));
+        for (const q of e.pts) grow(q.x - 14, q.y - 14, q.x + 14, q.y + 14);
+      }
+      const edges = list.map(({ key, a, b, cls, start, end, pts, labels }) => ({ key, a, b, cls, start, end, pts, labels }));
+      return { edges, boxes: rects, ext: edges.length ? ext : null };
+    };
+
+    return { rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf };
+  })();
+  if (typeof module === "object" && module.exports) module.exports = Layout;
+  if (typeof customElements === "undefined" || customElements.get("metamodel-editor")) return;
 
   const T = {
     it: {
@@ -120,6 +438,11 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .status.warn { color:#d97706; }
 .issues div.w { color:#b45309; }
 .mk-fill { fill:var(--muted); }
+.ehit { stroke:transparent; stroke-width:10; fill:none; pointer-events:stroke; cursor:pointer; }
+.elabel { cursor:pointer; }
+svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
+.edge.hi { stroke:var(--accent); stroke-width:2.4; }
+.elabel.hi { fill:var(--accent); font-weight:600; }
 @media (max-width: 760px) { .main { grid-template-columns:1fr; grid-template-rows:1fr auto; } .side { border-left:none; border-top:1px solid var(--line); max-height:50%; } }
 `;
 
@@ -141,7 +464,6 @@ button.on { border-color:var(--accent); color:var(--accent); }
     return n;
   };
   const add = (parent, ...kids) => parent.append(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false));
-  const multText = (lo, up) => (lo === 1 && up === 1 ? "1" : `${lo}..${up === -1 ? "*" : up}`);
   const multKey = (lo, up) => MULTS.find((m) => m[1] === lo && m[2] === up)?.[0] ?? "0..1";
   const snake = (s) => s.replace(/(?<=[a-z0-9])([A-Z])/g, "_$1").toLowerCase();
 
@@ -156,6 +478,7 @@ button.on { border-color:var(--accent); color:var(--accent); }
       this._panel = false;         // side panel open (it opens on selection)
       this._allAttrs = false;      // boxes show every attribute instead of the first MAX_ROWS
       this._showIssues = false;
+      this._hover = null;          // key of the connector under the mouse: highlighted, the others dimmed
       this.attachShadow({ mode: "open" });
     }
 
@@ -168,22 +491,7 @@ button.on { border-color:var(--accent); color:var(--accent); }
     set readonly(v) { if (v) this.setAttribute("readonly", ""); else this.removeAttribute("readonly"); }
 
     set metamodel(mm) {
-      const m = clone(mm || {});
-      m.classes = m.classes || {};
-      m.enums = m.enums || {};
-      m.diagram = m.diagram || {};
-      for (const c of Object.values(m.classes)) {
-        c.attributes = c.attributes || {};
-        c.references = c.references || {};
-        c.supertypes = c.supertypes || [];
-        c.abstract = !!c.abstract;
-        for (const a of Object.values(c.attributes)) { a.lower = a.lower ?? 0; a.upper = a.upper ?? 1; }
-        for (const r of Object.values(c.references)) { r.lower = r.lower ?? 0; r.upper = r.upper ?? 1; r.containment = !!r.containment; }
-      }
-      for (const [n, e] of Object.entries(m.enums)) {
-        if (Array.isArray(e)) m.enums[n] = { literals: e.map((x) => (typeof x === "string" ? { name: x } : x)) };
-        else e.literals = (e.literals || []).map((x) => (typeof x === "string" ? { name: x } : x));
-      }
+      const m = Layout.normalize(mm);
       this._mm = m;
       this._orig = clone(m);
       this._sel = null;
@@ -372,109 +680,13 @@ button.on { border-color:var(--accent); color:var(--accent); }
     }
 
     /* ------------------------------------------------------------------ layout */
-    _rows(c) {
-      // attribute lines of a class box: all of them, or the first ones plus "+N more"
-      const lines = Object.entries(c.attributes).map(([an, a]) => {
-        const m = a.lower === 0 && a.upper === 1 ? "" : ` [${multText(a.lower, a.upper)}]`;
-        return `${a.id ? "🔑 " : ""}${an}: ${a.type}${m}`;
-      });
-      // references to the application users have no box to point to: listed in the class, dimmed
-      for (const [rn, r] of Object.entries(c.references)) {
-        if (r.type === "User") lines.push(`↗ ${rn}: User${r.lower === 0 && r.upper === 1 ? "" : ` [${multText(r.lower, r.upper)}]`}`);
-      }
-      if (this._allAttrs || lines.length <= MAX_ROWS) return lines;
-      return [...lines.slice(0, MAX_ROWS - 1), `… +${lines.length - MAX_ROWS + 1} ${this.t.more}`];
-    }
-    _boxSize(name) {
-      const c = this._mm.classes[name];
-      const width = (texts, min) => Math.round(Math.max(min, Math.min(380, Math.max(...texts.map((x) => x.length)) * CHAR_W + 24)));
-      if (c) {
-        const rows = this._rows(c);
-        return { w: width([name, ...rows], 160), h: HEAD_H + Math.max(1, rows.length) * ROW_H + PAD };
-      }
-      const e = this._mm.enums[name];
-      return { w: width([name, ...e.literals.map((l) => l.name)], 120), h: HEAD_H + 12 + Math.max(1, e.literals.length) * ROW_H + PAD };
-    }
+    _rows(c) { return Layout.rowsOf(c, this._allAttrs, this.t.more); }
+    _boxSize(name) { return Layout.boxSize(this._mm, name, { allAttrs: this._allAttrs, more: this.t.more }); }
     _autoLayout(force) {
-      // Order: BFS from the most connected class (neighbours stay close), subclasses after their supertype,
-      // enums last. Placement: masonry columns (each box goes to the
-      // shortest column), with the number of columns chosen to match the canvas aspect ratio, so that the
-      // diagram can be shown as large as possible once fitted.
-      const mm = this._mm;
-      const classes = Object.keys(mm.classes);
-      const enums = Object.keys(mm.enums);
-      const missing = [...classes, ...enums].filter((n) => force || !mm.diagram[n]);
-      if (!missing.length) return;
-      const adj = Object.fromEntries(classes.map((n) => [n, new Set()]));
-      for (const [cn, c] of Object.entries(mm.classes)) {
-        for (const r of Object.values(c.references)) if (adj[r.type] && r.type !== cn) { adj[cn].add(r.type); adj[r.type].add(cn); }
-        for (const st of c.supertypes) if (adj[st]) { adj[cn].add(st); adj[st].add(cn); }
-      }
-      const byDegree = [...classes].sort((x, y) => adj[y].size - adj[x].size);
-      const order = [];
-      for (const start of byDegree) {
-        if (order.includes(start)) continue;
-        const queue = [start];
-        while (queue.length) {
-          const n = queue.shift();
-          if (order.includes(n)) continue;
-          order.push(n);
-          [...adj[n]].sort((x, y) => adj[y].size - adj[x].size).forEach((x) => { if (!order.includes(x)) queue.push(x); });
-        }
-      }
-      // classes first (their references are the drawn lines), then the enums, each near the column of the
-      // first class that uses it
-      const nodes = [...order];
-      for (const n of order) {
-        for (const a of Object.values(mm.classes[n].attributes)) {
-          if (mm.enums[a.type] && !nodes.includes(a.type)) nodes.push(a.type);
-        }
-      }
-      for (const e of enums) if (!nodes.includes(e)) nodes.push(e);
-      const place = force ? nodes : nodes.filter((n) => !mm.diagram[n]);
-      const sizes = Object.fromEntries(place.map((n) => [n, this._boxSize(n)]));
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
-      const W = r && r.width > 50 ? r.width - 2 * MARGIN : 960, H = r && r.height > 50 ? r.height - 2 * MARGIN : 600;
-      // neighbours of every node (references, inheritance, enum attributes), to keep connected boxes close
-      const near = Object.fromEntries(nodes.map((n) => [n, new Set(adj[n] || [])]));
-      for (const [cn, c] of Object.entries(mm.classes)) {
-        for (const a of Object.values(c.attributes)) if (near[a.type] && mm.enums[a.type]) { near[cn].add(a.type); near[a.type].add(cn); }
-      }
-      const avgH = place.reduce((a, n) => a + sizes[n].h, 0) / Math.max(1, place.length);
-      const masonry = (cols) => {
-        const colH = new Array(cols).fill(0), colW = new Array(cols).fill(0), at = {};
-        for (const n of place) {
-          // the shortest column, unless a column nearer to the placed neighbours is not much taller
-          const placed = [...near[n]].filter((x) => at[x]).map((x) => at[x][0]);
-          const target = placed.length ? placed.reduce((a, b) => a + b, 0) / placed.length : null;
-          let c = 0, best = Infinity;
-          for (let i = 0; i < cols; i++) {
-            const score = colH[i] + (target === null ? 0 : Math.abs(i - target) * avgH * 0.9);
-            if (score < best - 1e-6) { best = score; c = i; }
-          }
-          at[n] = [c, colH[c]];
-          colH[c] += sizes[n].h + GAP_Y;
-          colW[c] = Math.max(colW[c], sizes[n].w);
-        }
-        const width = colW.reduce((a, b) => a + b, 0) + GAP_X * (cols - 1);
-        const height = Math.max(...colH) - GAP_Y;
-        return { at, colW, width, height, k: Math.min(W / width, H / height) };
-      };
-      let best = null;
-      for (let cols = 1; cols <= Math.max(1, place.length); cols++) {
-        const m = masonry(cols);
-        if (!best || m.k > best.k + 1e-6) best = m;
-      }
-      if (!best) return;
-      // new nodes next to the existing diagram (on its right), all nodes from the origin when forced
-      const used = Object.entries(mm.diagram).filter(([n]) => !place.includes(n) && (mm.classes[n] || mm.enums[n]));
-      const ox = used.length ? Math.max(...used.map(([n, p]) => p.x + this._boxSize(n).w)) + GAP_X : 0;
-      const colX = [];
-      best.colW.reduce((x, w, i) => { colX[i] = x; return x + w + GAP_X; }, ox);
-      for (const n of place) {
-        const [c, y] = best.at[n];
-        mm.diagram[n] = { x: Math.round(colX[c] + (best.colW[c] - sizes[n].w) / 2), y: Math.round(y) };
-      }
+      const pos = Layout.autoLayout(this._mm, (n) => this._boxSize(n),
+        { force, width: r ? r.width - 2 * MARGIN : 0, height: r ? r.height - 2 * MARGIN : 0 });
+      Object.assign(this._mm.diagram, pos);
     }
     _fit() {
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
@@ -617,6 +829,11 @@ button.on { border-color:var(--accent); color:var(--accent); }
         }
         drag = null;
       };
+      canvas.addEventListener("pointerover", (ev) => {
+        const key = drag ? null : ev.target.closest?.("[data-edge]")?.dataset.edge || null;
+        if (key !== this._hover) { this._hover = key; this._applyHover(); }
+      });
+      canvas.addEventListener("pointerleave", () => { if (this._hover) { this._hover = null; this._applyHover(); } });
       canvas.addEventListener("dblclick", (ev) => { if (!ev.target.closest?.(".box")) this._refit(); });
       canvas.addEventListener("pointerup", end);
       canvas.addEventListener("pointercancel", end);
@@ -663,103 +880,7 @@ button.on { border-color:var(--accent); color:var(--accent); }
       const g = svg("g", { transform: `translate(${this._view.x},${this._view.y}) scale(${this._view.k})` });
       const edges = svg("g", {});
       const labels = svg("g", {});
-      // EMF / Ecore Tools notation: reference = open arrow at the target; containment = filled diamond at the
-      // container; a pair of opposite references = one connector with both ends; inheritance = hollow triangle
-      // at the supertype. Connectors are orthogonal with rounded corners.
-      const list = [];
-      const drawn = new Set();
-      for (const [cn, c] of Object.entries(mm.classes)) {
-        if (!mm.diagram[cn]) continue;
-        for (const s of c.supertypes) {
-          if (mm.diagram[s] && mm.classes[s]) list.push({ a: cn, b: s, end: "url(#tri)", cls: "edge inherit" });
-        }
-        for (const [rn, r] of Object.entries(c.references)) {
-          if (drawn.has(`${cn}.${rn}`)) continue;
-          if (r.type === "User" || !mm.diagram[r.type] || !mm.classes[r.type]) continue;   // User: a row in the box
-          const o = r.opposite ? mm.classes[r.type]?.references?.[r.opposite] : null;
-          if (o) drawn.add(`${r.type}.${r.opposite}`);
-          list.push({
-            a: cn, b: r.type, cls: "edge",
-            start: r.containment ? "url(#diamond)" : (o ? "url(#arrow)" : null),
-            end: o?.containment ? "url(#diamond)" : "url(#arrow)",
-            labelB: `${rn} ${multText(r.lower, r.upper)}`,
-            labelA: o ? `${r.opposite} ${multText(o.lower, o.upper)}` : null,
-          });
-        }
-      }
-      const rect = (n) => { const p = mm.diagram[n], s = this._boxSize(n); return { x: p.x, y: p.y, w: s.w, h: s.h }; };
-      const out = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };
-      const SIDES = ["right", "left", "bottom", "top"];
-      const mid = (R, side) => side === "left" ? { x: R.x, y: R.y + R.h / 2 } : side === "right" ? { x: R.x + R.w, y: R.y + R.h / 2 }
-        : side === "top" ? { x: R.x + R.w / 2, y: R.y } : { x: R.x + R.w / 2, y: R.y + R.h };
-      const route = (p1, sa, p2, sb, lane, self, detour = 0) => {
-        const h1 = sa === "left" || sa === "right", h2 = sb === "left" || sb === "right";
-        const step = 28 + detour * 10;   // connectors going around the boxes get a lane each
-        if (self) { const x = p1.x + step; return [p1, { x, y: p1.y }, { x, y: p2.y }, p2]; }
-        if (h1 && h2) {
-          const facing = out[sa][0] !== out[sb][0] && (out[sa][0] > 0 ? p2.x > p1.x : p2.x < p1.x);
-          const x = facing ? (p1.x + p2.x) / 2 + lane : (out[sa][0] > 0 ? Math.max(p1.x, p2.x) + step : Math.min(p1.x, p2.x) - step);
-          return Math.abs(p1.y - p2.y) < 1 && facing ? [p1, p2] : [p1, { x, y: p1.y }, { x, y: p2.y }, p2];
-        }
-        if (!h1 && !h2) {
-          const facing = out[sa][1] !== out[sb][1] && (out[sa][1] > 0 ? p2.y > p1.y : p2.y < p1.y);
-          const y = facing ? (p1.y + p2.y) / 2 + lane : (out[sa][1] > 0 ? Math.max(p1.y, p2.y) + step : Math.min(p1.y, p2.y) - step);
-          return Math.abs(p1.x - p2.x) < 1 && facing ? [p1, p2] : [p1, { x: p1.x, y }, { x: p2.x, y }, p2];
-        }
-        // one horizontal and one vertical side: an L, with short stubs out of each box
-        const a = { x: p1.x + out[sa][0] * step, y: p1.y + out[sa][1] * step };
-        const b = { x: p2.x + out[sb][0] * step, y: p2.y + out[sb][1] * step };
-        return h1 ? [p1, { x: b.x, y: p1.y }, p2] : [p1, { x: p1.x, y: b.y }, p2];
-      };
-      const boxes_ = [...Object.keys(mm.classes), ...Object.keys(mm.enums)].filter((n) => mm.diagram[n]).map((n) => [n, rect(n)]);
-      const crosses = (pts, skip) => {
-        let n = 0;
-        for (const [name, R] of boxes_) {
-          const own = skip.includes(name);
-          for (let i = 0; i < pts.length - 1; i++) {
-            const p = pts[i], q = pts[i + 1];
-            const x0 = Math.min(p.x, q.x), x1 = Math.max(p.x, q.x), y0 = Math.min(p.y, q.y), y1 = Math.max(p.y, q.y);
-            const m = own ? 2 : -4;   // the own boxes only count when the line runs inside them
-            if (x0 < R.x + R.w - m && x1 > R.x + m && y0 < R.y + R.h - m && y1 > R.y + m) n++;
-          }
-        }
-        return n;
-      };
-      const cost = (pts, skip) => {
-        let len = 0;
-        for (let i = 0; i < pts.length - 1; i++) len += Math.abs(pts[i + 1].x - pts[i].x) + Math.abs(pts[i + 1].y - pts[i].y);
-        return crosses(pts, skip) * 100000 + len + (pts.length - 2) * 40;
-      };
-      for (const e of list) {   // the sides the connector leaves and enters
-        const A = rect(e.a), B = rect(e.b);
-        e.A = A; e.B = B;
-        if (e.a === e.b) { e.sa = "right"; e.sb = "right"; continue; }
-        let best = Infinity;
-        for (const sa of SIDES) for (const sb of SIDES) {
-          const c = cost(route(mid(A, sa), sa, mid(B, sb), sb, 0, false), [e.a, e.b]);
-          if (c < best - 1e-6) { best = c; e.sa = sa; e.sb = sb; }
-        }
-      }
-      // ports: the connectors on the same side of a box are spread along it, ordered by where they go
-      const ports = {};
-      list.forEach((e, i) => {
-        for (const [end, n, side, other] of [["a", e.a, e.sa, e.B], ["b", e.b, e.sb, e.A]]) {
-          (ports[`${n}|${side}`] ||= []).push({ i, end, key: side === "left" || side === "right" ? other.y + other.h / 2 : other.x + other.w / 2 });
-        }
-      });
-      for (const [k, items] of Object.entries(ports)) {
-        const [n, side] = k.split("|");
-        const R = rect(n);
-        items.sort((u, v) => u.key - v.key);
-        items.forEach((it, j) => {
-          const t = (j + 1) / (items.length + 1);
-          const pt = side === "left" ? { x: R.x, y: R.y + HEAD_H / 2 + (R.h - HEAD_H / 2) * t }
-            : side === "right" ? { x: R.x + R.w, y: R.y + HEAD_H / 2 + (R.h - HEAD_H / 2) * t }
-              : side === "top" ? { x: R.x + R.w * t, y: R.y } : { x: R.x + R.w * t, y: R.y + R.h };
-          list[it.i][it.end === "a" ? "pa" : "pb"] = pt;
-          list[it.i][it.end === "a" ? "ja" : "jb"] = j;   // position on the side: labels alternate
-        });
-      }
+      // EMF / Ecore Tools notation (see Layout.edgesOf), orthogonal connectors with rounded corners
       const rounded = (pts, radius = 10) => {
         let d = `M${pts[0].x},${pts[0].y}`;
         for (let i = 1; i < pts.length - 1; i++) {
@@ -774,31 +895,18 @@ button.on { border-color:var(--accent); color:var(--accent); }
         const last = pts[pts.length - 1];
         return d + ` L${last.x},${last.y}`;
       };
-      const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };   // connectors' extent, for _fit
-      list.forEach((e, i) => {
-        const p1 = e.pa, p2 = e.pb;
-        const lane = ((i % 5) - 2) * 6;   // parallel connectors do not share the same vertical/horizontal run
-        const pts = route(p1, e.sa, p2, e.sb, lane, e.a === e.b, i % 5);
-        for (const q of pts) {
-          ext.x0 = Math.min(ext.x0, q.x - 14); ext.x1 = Math.max(ext.x1, q.x + 14);
-          ext.y0 = Math.min(ext.y0, q.y - 22); ext.y1 = Math.max(ext.y1, q.y + 22);
-        }
-        const attrs = { d: rounded(pts), class: e.cls };
+      const routed = Layout.routeEdges(mm, (n) => this._boxSize(n));
+      for (const e of routed.edges) {
+        const d = rounded(e.pts);
+        const attrs = { d, class: e.cls, "data-edge": e.key };
         if (e.start) attrs["marker-start"] = e.start;
         if (e.end) attrs["marker-end"] = e.end;
         edges.append(svg("path", attrs));
-        const lab = (pt, side, text, below) => {
-          // just outside the box, extending away from it; the two ends of a pair on opposite sides of the line
-          const [ox, oy] = out[side];
-          if (ox) {
-            labels.append(svg("text", { x: pt.x + ox * 12, y: below ? pt.y + 17 : pt.y - 6, "text-anchor": ox < 0 ? "end" : "start", class: "elabel" }, text));
-          } else {
-            labels.append(svg("text", { x: below ? pt.x - 6 : pt.x + 6, y: pt.y + (oy < 0 ? -8 : 18), "text-anchor": below ? "end" : "start", class: "elabel" }, text));
-          }
-        };
-        if (e.labelB) lab(p2, e.sb, e.labelB, e.labelA ? false : e.jb % 2 === 0);   // first port: label on its left
-        if (e.labelA) lab(p1, e.sa, e.labelA, e.ja % 2 === 0);
-      });
+        edges.append(svg("path", { d, class: "ehit", "data-edge": e.key }));   // wider, invisible: easier to hover
+        for (const l of e.labels) {
+          labels.append(svg("text", { x: l.x + 2, y: l.y + l.h - 3, class: "elabel", "data-edge": e.key }, l.text));
+        }
+      }
       const boxes = svg("g", {});
       for (const [cn, c] of Object.entries(mm.classes)) {
         const p = mm.diagram[cn];
@@ -834,11 +942,20 @@ button.on { border-color:var(--accent); color:var(--accent); }
         for (const l of e.literals) { b.append(svg("text", { x: 8, y }, l.name)); y += ROW_H; }
         boxes.append(b);
       }
-      this._ext = list.length ? ext : null;
+      this._ext = routed.ext;
       g.append(edges, boxes, labels);   // lines under the boxes, labels on top
       const root = svg("svg", { role: "img", "aria-label": "metamodel diagram" }, defs, g);
       const old = canvas.querySelector("svg");
       if (old) old.replaceWith(root); else canvas.prepend(root);
+      this._applyHover();
+    }
+    _applyHover() {
+      const root = this.shadowRoot.querySelector(".canvas svg");
+      if (!root) return;
+      const known = this._hover && [...root.querySelectorAll("[data-edge]")].some((n) => n.dataset.edge === this._hover);
+      if (!known) this._hover = null;
+      root.classList.toggle("hover", !!this._hover);
+      for (const n of root.querySelectorAll("[data-edge]")) n.classList.toggle("hi", n.dataset.edge === this._hover);
     }
 
     _multSelect(f, onchange, disabled) {

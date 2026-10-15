@@ -10,6 +10,7 @@
 - Modifiche non banali su un branch dedicato (`feat/…`, `fix/…`); `main` resta deployabile.
 - Commit piccoli, in Conventional Commits (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`), con il perché nel corpo quando non è ovvio.
 - Prima di committare: test e lint del progetto verdi.
+- Il merge su `main` richiede sempre conferma esplicita, anche se la PR l'ha aperta Claude (su un'app con deploy automatico il merge è un rilascio); per push, PR, CI e merge usa `/core:ship`.
 - Quando proponi di committare o di fare push, includi il messaggio di commit proposto in un blocco ```text copiabile: Conventional Commits in inglese, titolo di circa 72 caratteri al massimo, riga vuota, corpo con il perché, righe di attribuzione se il repository le prevede. Un blocco per commit; se i commit sono già fatti e proponi solo il push, mostra in un blocco l'elenco `git log --oneline` di ciò che verrebbe pubblicato.
 
 ## Sviluppo guidato dai modelli
