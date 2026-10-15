@@ -84,6 +84,7 @@ def session(data: dict) -> int:
         sys.path.insert(0, str(SCRIPTS))
         from metamodel import __version__, cli  # noqa: E402
 
+        lines.append(f"Modeler plugin loaded in this session: {__version__}.")
         installed = cli.installed_version(root)
         if installed is None:
             lines.append("The web modeler is not installed in this app yet: /modeler:install.")

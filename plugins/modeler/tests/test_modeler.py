@@ -487,6 +487,7 @@ class HookTests(unittest.TestCase):
             self.assertIn("Update the metamodel", out.stdout)
             out = self.run_hook("session", {"cwd": d})
             self.assertIn("not installed", out.stdout)
+            self.assertIn(f"Modeler plugin loaded in this session: {__version__}.", out.stdout)
             self.assertNotIn("not applied yet", out.stdout)
             props = Path(d) / ".modeler" / "proposals"
             (props / "applied").mkdir(parents=True)

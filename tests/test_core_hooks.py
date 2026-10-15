@@ -95,6 +95,18 @@ class SessionTests(unittest.TestCase):
             self.assertIn("HANDOFF.md", out)
             self.assertIn("Node", out)
 
+    def test_loaded_version_and_outdated_clone(self):
+        version = json.loads((ROOT / "plugins/core/.claude-plugin/plugin.json").read_text())["version"]
+        with tempfile.TemporaryDirectory() as d:
+            res = run("session", {"cwd": d}, {"CLAUDE_PLUGIN_OPTION_HARNESS_REPO": ""})
+            self.assertIn(f"Harness caricato in questa sessione: core {version}", res.stdout)
+            self.assertNotIn("Il clone dell'harness", res.stdout)
+            clone = Path(d) / "clone" / "plugins" / "core" / ".claude-plugin"
+            clone.mkdir(parents=True)
+            (clone / "plugin.json").write_text(json.dumps({"name": "core", "version": "99.0.0"}))
+            res = run("session", {"cwd": d}, {"CLAUDE_PLUGIN_OPTION_HARNESS_REPO": str(Path(d) / "clone")})
+            self.assertIn("Il clone dell'harness ha core 99.0.0", res.stdout)
+
     def test_harness_notes_to_review(self):
         with tempfile.TemporaryDirectory() as d:
             subprocess.run(["git", "init", "-q", "-b", "main", d], check=True)

@@ -112,6 +112,28 @@ def note_states(notes: Path) -> dict[str, int]:
     return counts
 
 
+def plugin_version(plugin_root: Path) -> str:
+    try:
+        return str(json.loads((plugin_root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return "?"
+
+
+def harness_versions() -> list[str]:
+    """The core version this session loaded, and a warning when the harness clone holds a different one
+    (session started before an update, or plugin not updated on this computer)."""
+    loaded = plugin_version(PLUGIN_ROOT)
+    lines = [f"- Harness caricato in questa sessione: core {loaded}"]
+    repo = option("harness_repo")
+    clone = Path(repo).expanduser() / "plugins" / "core" if repo else None
+    if clone and clone.is_dir() and clone.resolve() != PLUGIN_ROOT.resolve():
+        current = plugin_version(clone)
+        if current not in ("?", loaded):
+            lines.append(f"- Il clone dell'harness ha core {current}: aggiorna con `claude plugin update core@iovino-harness`"
+                         " e `/reload-plugins` (o riavvia la sessione)")
+    return lines
+
+
 def is_harness_repo(root: Path) -> bool:
     configured = option("harness_repo")
     if configured and Path(configured).expanduser().resolve() == root.resolve():
@@ -150,6 +172,7 @@ def cmd_session(data: dict) -> int:
             deferred = f" (più {counts['deferred']} rinviate)" if counts["deferred"] else ""
             info.append(f"- {counts['open']} note da valutare in NOTES.md{deferred}: segnalalo all'utente e proponi "
                         "`/core:harness-review`")
+    info += harness_versions()
     parts.append("## Progetto corrente\n" + "\n".join(info))
 
     print("\n\n".join(parts))
