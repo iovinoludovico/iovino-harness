@@ -36,6 +36,7 @@ NPM_SCRIPTS = {
     "model:sync": "python3 tools/modeler/modeler.py sync",
     "model:drift": "python3 tools/modeler/modeler.py drift",
     "model:proposals": "python3 tools/modeler/modeler.py proposals",
+    "model:pull": "python3 tools/modeler/modeler.py pull",
     "model:apply": "python3 tools/modeler/modeler.py apply",
     "model:migrate": "python3 tools/modeler/modeler.py migrate",
 }
@@ -79,6 +80,35 @@ def local_dsn(root: Path) -> str | None:
                 return f"postgresql://postgres:postgres@127.0.0.1:{port or LOCAL_SUPABASE_PORT}/postgres"
         return f"postgresql://postgres:postgres@127.0.0.1:{LOCAL_SUPABASE_PORT}/postgres"
     return None
+
+
+def remote_dsn(root: Path) -> str | None:
+    """DSN of the production database: MODELER_PROD_DB, else the Supabase project linked with `supabase link`.
+
+    The linked DSN has no password: psql takes it from PGPASSWORD (SUPABASE_DB_PASSWORD), ~/.pgpass or a prompt.
+    """
+    if os.environ.get("MODELER_PROD_DB"):
+        return os.environ["MODELER_PROD_DB"]
+    temp = root / "supabase" / ".temp"
+    pooler = temp / "pooler-url"
+    if pooler.exists() and pooler.read_text(encoding="utf-8").strip():
+        return pooler.read_text(encoding="utf-8").strip()
+    ref = temp / "project-ref"
+    if ref.exists() and ref.read_text(encoding="utf-8").strip():
+        return f"postgresql://postgres@db.{ref.read_text(encoding='utf-8').strip()}.supabase.co:5432/postgres"
+    return None
+
+
+def _dsn_target(dsn: str) -> str:
+    """user@host:port/db of a DSN, without the password, to show where a command connects."""
+    m = re.match(r"^postgres(?:ql)?://(?:([^:@/]+)(?::[^@/]*)?@)?([^/?]+)(/[^?]*)?", dsn)
+    if not m:
+        return "(DSN in key=value form)"
+    return f"{m.group(1) + '@' if m.group(1) else ''}{m.group(2)}{m.group(3) or ''}"
+
+
+def _has_password(dsn: str) -> bool:
+    return bool(re.match(r"^postgres(?:ql)?://[^:@/]+:[^@/]+@", dsn)) or "password=" in dsn
 
 
 def proposals_dir(meta_path: Path) -> Path:
@@ -172,7 +202,7 @@ def cmd_proposals(a) -> int:
     files = sorted(d.glob("*.json")) if d.exists() else []
     if not files:
         print(f"no pending proposals (the modeler saves them in {STATE_DIR}/proposals/ in development; "
-              "in production `pull --db <DSN>` copies them from model_change_requests)")
+              "in production `npm run model:pull` copies them from model_change_requests)")
         return 0
     current = E.load(meta_path)
     for f in files:
@@ -248,9 +278,19 @@ def cmd_pull(a) -> int:
     """Copies the open proposals stored by the production modeler into .modeler/proposals/."""
     import subprocess
     meta_path = find_metamodel(a.path)
+    dsn = a.db or remote_dsn(meta_path.parent)
+    if not dsn:
+        print("no production database: link the app with `supabase link --project-ref <ref>`, "
+              "or set MODELER_PROD_DB, or pass --db <DSN>", file=sys.stderr)
+        return 2
+    env = dict(os.environ)
+    if not _has_password(dsn) and os.environ.get("SUPABASE_DB_PASSWORD") and not os.environ.get("PGPASSWORD"):
+        env["PGPASSWORD"] = os.environ["SUPABASE_DB_PASSWORD"]
+    print(f"pulling from {_dsn_target(dsn)}", file=sys.stderr)
     try:
-        out = subprocess.run(["psql", a.db, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", PULL_SQL],
-                             capture_output=True, text=True, timeout=60)
+        # psql asks a missing password on the terminal, so the prompt works with the captured output
+        out = subprocess.run(["psql", dsn, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", PULL_SQL],
+                             capture_output=True, text=True, timeout=120, env=env)
     except FileNotFoundError as exc:
         raise D.DbError("psql not found: install the PostgreSQL client") from exc
     if out.returncode != 0:
@@ -518,7 +558,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("pull", help="copy the proposals saved in production (model_change_requests)")
     s.add_argument("path", nargs="?")
-    s.add_argument("--db", required=True)
+    s.add_argument("--db", help="DSN (default: MODELER_PROD_DB or the Supabase project linked with `supabase link`)")
     s.set_defaults(fn=cmd_pull)
 
     s = sub.add_parser("reverse", help="derive a metamodel from an existing PostgreSQL schema")

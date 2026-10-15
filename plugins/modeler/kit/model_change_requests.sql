@@ -1,6 +1,6 @@
 -- Domain modeler of this app: proposals of metamodel changes made from the admin area in production.
 -- They never change the running application: the developer copies them into the repository
--- (`python3 tools/modeler/modeler.py pull --db <DSN>`), reviews them and implements them
+-- (`npm run model:pull`, from the Supabase project linked with `supabase link`), reviews them and implements them
 -- (domain.ecore.yaml + migration + code).
 create table if not exists public.model_change_requests (
   id           uuid primary key default gen_random_uuid(),
