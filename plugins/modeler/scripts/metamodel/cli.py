@@ -345,6 +345,34 @@ class NoProductionDb(Exception):
     pass
 
 
+def _can_prompt() -> bool:
+    """psql can ask the password only with a terminal: not from Claude Code (its tools, nor a `! …` command)."""
+    if not sys.stdin.isatty():
+        return False
+    try:
+        os.close(os.open("/dev/tty", os.O_RDWR))
+        return True
+    except OSError:
+        return False
+
+
+def _pgpass_line(dsn: str) -> str:
+    """The ~/.pgpass line for a DSN, with a placeholder for the password."""
+    m = re.match(r"^postgres(?:ql)?://(?:([^:@/]+)(?::[^@/]*)?@)?([^/:?]+)(?::(\d+))?(?:/([^?]*))?", dsn)
+    if not m:
+        return "<host>:<port>:<database>:<user>:<password>"
+    return f"{m.group(2)}:{m.group(3) or 5432}:{m.group(4) or 'postgres'}:{m.group(1) or 'postgres'}:<password>"
+
+
+def _no_password_message(dsn: str) -> str:
+    return ("no database password, and psql cannot ask for it here (no terminal: Claude Code tools and `! …` "
+            "commands have none). Either:\n"
+            "  - export SUPABASE_DB_PASSWORD in the shell before starting Claude Code;\n"
+            f"  - add this line to ~/.pgpass, then `chmod 600 ~/.pgpass`:\n      {_pgpass_line(dsn)}\n"
+            "  - or run the command in your own terminal, outside Claude Code.\n"
+            "Never write the password in the command: it would stay in the shell history.")
+
+
 def _prod_query(dsn: str | None, sql: str, verb: str) -> Any:
     """Runs one statement returning JSON on the production database (see remote_dsn for the DSN and password)."""
     import subprocess
@@ -353,14 +381,21 @@ def _prod_query(dsn: str | None, sql: str, verb: str) -> Any:
     env = dict(os.environ)
     if not _has_password(dsn) and os.environ.get("SUPABASE_DB_PASSWORD") and not os.environ.get("PGPASSWORD"):
         env["PGPASSWORD"] = os.environ["SUPABASE_DB_PASSWORD"]
+    pgpass = Path(env.get("PGPASSFILE") or Path.home() / ".pgpass")
+    interactive = _can_prompt()
+    if not (_has_password(dsn) or env.get("PGPASSWORD") or pgpass.exists() or interactive):
+        raise D.DbError(_no_password_message(dsn))
     print(f"{verb} {_dsn_target(dsn)}", file=sys.stderr)
     try:
-        # psql asks a missing password on the terminal, so the prompt works with the captured output
-        out = subprocess.run(["psql", dsn, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", sql],
-                             capture_output=True, text=True, timeout=120, env=env)
+        # with a terminal psql asks a missing password there (not on the captured output); without one, -w makes it
+        # fail at once instead of waiting
+        out = subprocess.run(["psql", dsn, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", *([] if interactive else ["-w"]),
+                              "-c", sql], capture_output=True, text=True, timeout=120, env=env)
     except FileNotFoundError as exc:
         raise D.DbError("psql not found: install the PostgreSQL client") from exc
     if out.returncode != 0:
+        if "no password supplied" in out.stderr:                    # e.g. ~/.pgpass without a line for this host
+            raise D.DbError(f"{out.stderr.strip()}\n{_no_password_message(dsn)}")
         raise D.DbError(out.stderr.strip())
     return json.loads(out.stdout.strip() or "null")
 

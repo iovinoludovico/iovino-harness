@@ -15,8 +15,9 @@ conferma per `supabase db push` e `supabase link`: è voluto.
 - Radice dell'app: la cartella con `supabase/config.toml` e `supabase/migrations/`.
 - Progetto collegato: `supabase/.temp/project-ref`. Mostralo all'utente con il nome del progetto se lo conosci
   (CLAUDE.md o `docs/deploy.md` dell'app): è il database su cui scriverai.
-- Non collegato: fai eseguire all'utente `! supabase link --project-ref <ref>` (chiede la password del database:
-  è interattivo). Non chiedere la password in chat.
+- Non collegato: fai eseguire all'utente `supabase link --project-ref <ref>` in un suo terminale, fuori da Claude
+  Code (può chiedere la password del database: un comando `! …` non ha un terminale interattivo e la richiesta
+  può fallire). Non chiedere la password in chat.
 
 ## 2. Pre-controlli (fermati se uno fallisce e spiega perché)
 - `git status --porcelain supabase/`: le migrazioni devono essere committate; segnala il branch corrente
@@ -35,13 +36,16 @@ conferma per `supabase db push` e `supabase link`: è voluto.
 - `supabase db push --dry-run`: elenco esatto di ciò che verrebbe applicato.
 - Leggi le migrazioni in arrivo e segnala i rischi: DDL distruttivo (`drop`, `alter … type`, `rename`), nuovi
   vincoli `not null` su tabelle piene, backfill lunghi, modifiche a RLS e permessi.
-- Se un comando chiede la password del database: fallo rieseguire all'utente con `! <comando>`, oppure usa
-  `SUPABASE_DB_PASSWORD` se è già nell'ambiente. Mai scriverla in file o nel repository.
+- Se un comando chiede la password del database: usa `SUPABASE_DB_PASSWORD` se è già nell'ambiente (esportata
+  prima di avviare Claude Code), altrimenti fai eseguire il comando all'utente in un suo terminale, fuori da
+  Claude Code: i comandi `! …` non hanno un terminale interattivo. Mai scrivere la password in file, nel
+  repository o nel comando.
 - Con `--dry-run` fermati qui con il resoconto.
 
 ## 4. Conferma ed esecuzione
 Chiedi conferma con AskUserQuestion: progetto, elenco delle migrazioni, rischi; prima opzione "Applica", ultima
-"Non ora". Con il sì: `supabase db push` (o `! supabase db push` se serve la password interattiva).
+"Non ora". Con il sì: `supabase db push` (se serve la password e `SUPABASE_DB_PASSWORD` non c'è, lo esegue
+l'utente in un suo terminale).
 
 ## 5. Verifica e resoconto
 - `supabase migration list --linked`: Local e Remote devono coincidere.
