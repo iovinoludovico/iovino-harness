@@ -91,4 +91,4 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
   - nella checklist del `core:code-reviewer`: per una pagina che sostituisce una vista esistente, controllare tutti i punti d'ingresso (menu, dashboard, ricerca, breadcrumb, redirect, riferimenti).
 - **Plugin**: core
 - **Tipo**: convenzione
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-10-15 per la parte harness: riga in `plugins/core/context/conventions.md` (Lavoro sul codice: unica funzione con la mappa delle viste sostituite, redirect dal percorso vecchio, ricerca di tutti i punti che costruiscono il percorso, test sulla mappa) e punto "Punti d'ingresso" nella checklist di `plugins/core/agents/code-reviewer.md`. La parte app (`listHref` nel modello dell'app o redirect in `src/proxy.ts` da `/e/<entità>` a `/x/<entità>`) è lavoro di guest-invitations-af, da fare nella sua sessione: l'harness non ha un template per le app ex appforge.
