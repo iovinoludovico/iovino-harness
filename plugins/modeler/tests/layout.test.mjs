@@ -95,3 +95,33 @@ test("incoming ports are staggered from the outgoing ones", () => {
 });
 
 test.todo("many classes referencing the same one (hub(8)) share a bus: one trunk, one arrow, one label");
+
+// Where "+ Classe" / "+ Enum" put the new box (Layout.freeSpot): never over an existing box, with a margin
+test("freeSpot avoids the existing boxes, stays in view, is deterministic", () => {
+  const occupied = [{ x: 300, y: 100, w: 320, h: 180 }, { x: 350, y: 300, w: 200, h: 120 }, { x: 0, y: 0, w: 160, h: 90 }];
+  const size = { w: 210, h: 80 };
+  const view = { x: 0, y: 0, w: 1000, h: 600 };
+  const start = { x: 395, y: 200 };                                  // inside the big box: the old code used it
+  const p = Layout.freeSpot(occupied, size, start, view);
+  for (const o of occupied) assert.ok(!overlap({ x: p.x - 24, y: p.y - 24, w: size.w + 48, h: size.h + 48 }, o), `over ${JSON.stringify(o)}`);
+  assert.ok(p.x >= 0 && p.y >= 0 && p.x + size.w <= view.w && p.y + size.h <= view.h, "inside the view");
+  assert.deepEqual(Layout.freeSpot(occupied, size, start, view), p);
+  assert.deepEqual(Layout.freeSpot([], size, { x: 120, y: 80 }, view), { x: 120, y: 80 });   // empty diagram
+  const full = Layout.freeSpot([{ x: 0, y: 0, w: 400, h: 300 }], size, { x: 95, y: 100 }, { x: 0, y: 0, w: 400, h: 300 });
+  assert.ok(!overlap({ ...full, ...size }, { x: 0, y: 0, w: 400, h: 300 }), "leaves a full view");
+});
+
+for (const [name, raw] of [["anagrafica", () => fixture("anagrafica.ecore.yaml")], ["hub", () => hub(8)]]) {
+  test(`freeSpot on the laid out ${name}, with the real box sizes`, () => {
+    for (const [w, h] of [[400, 480], [900, 630], [1900, 900]]) {
+      const { mm, boxes } = laidOut(raw(), w, h);
+      mm.classes.NuovaClasse = { abstract: false, supertypes: [], attributes: { name: { type: "EString", lower: 1, upper: 1 } }, references: {} };
+      const size = Layout.boxSize(mm, "NuovaClasse");
+      const occupied = Object.entries(boxes).map(([n, b]) => ({ x: mm.diagram[n].x, y: mm.diagram[n].y, w: b.w, h: b.h }));
+      for (const start of [{ x: w / 2 - size.w / 2, y: h / 3 }, { x: 0, y: 0 }, occupied[0]]) {
+        const p = Layout.freeSpot(occupied, size, start, { x: 0, y: 0, w, h });
+        for (const o of occupied) assert.ok(!overlap({ ...p, ...size }, o), `${name} ${w}x${h}: new box over one at ${o.x},${o.y}`);
+      }
+    }
+  });
+}

@@ -343,7 +343,35 @@
       return { edges, boxes: rects, ext: edges.length ? ext : null };
     };
 
-    return { rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf };
+    const freeSpot = (occupied, size, start, view, step = 30, margin = MARGIN) => {
+      // Where a new box of `size` goes: the first place near `start` (candidates on a `step` grid, nearest first)
+      // whose rectangle crosses no existing box, with a margin; inside the view when possible, beyond it otherwise.
+      // Pure and deterministic: the same input gives the same place.
+      const clear = (x, y) => !occupied.some((o) => x < o.x + o.w + margin && o.x < x + size.w + margin
+        && y < o.y + o.h + margin && o.y < y + size.h + margin);
+      const inView = (x, y) => !view || (x >= view.x && y >= view.y && x + size.w <= view.x + view.w && y + size.h <= view.y + view.h);
+      const far = Math.max(view ? Math.max(view.w, view.h) : 0,
+        ...occupied.map((o) => Math.max(Math.abs(o.x - start.x) + o.w, Math.abs(o.y - start.y) + o.h))) + size.w + size.h + margin;
+      const ring = (r) => {
+        if (r === 0) return [[0, 0]];
+        const d = r * step, out = [];
+        for (let i = -r; i <= r; i++) out.push([i * step, -d], [i * step, d]);
+        for (let i = -r + 1; i < r; i++) out.push([-d, i * step], [d, i * step]);
+        return out.sort((a, b) => (a[0] ** 2 + a[1] ** 2) - (b[0] ** 2 + b[1] ** 2) || a[1] - b[1] || a[0] - b[0]);
+      };
+      for (const needView of view ? [true, false] : [false]) {
+        for (let r = 0; r * step <= far; r++) {
+          for (const [dx, dy] of ring(r)) {
+            const x = start.x + dx, y = start.y + dy;
+            if ((!needView || inView(x, y)) && clear(x, y)) return { x: Math.round(x), y: Math.round(y) };
+          }
+        }
+      }
+      const bottom = Math.max(start.y, ...occupied.map((o) => o.y + o.h + margin));   // nothing around: below everything
+      return { x: Math.round(start.x), y: Math.round(bottom) };
+    };
+
+    return { rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -580,7 +608,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
     _addClass() {
       const name = this._uniqueName(this.t.newClass, this._allNames());
       this._mm.classes[name] = { abstract: false, supertypes: [], attributes: { name: { type: "EString", lower: 1, upper: 1 } }, references: {} };
-      this._mm.diagram[name] = this._freeSpot();
+      this._mm.diagram[name] = this._freeSpot(name);
       this._sel = { kind: "class", name };
       this._panel = true;
       this._changed();
@@ -588,19 +616,21 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
     _addEnum() {
       const name = this._uniqueName(this.t.newEnum, this._allNames());
       this._mm.enums[name] = { literals: [{ name: "first" }, { name: "second" }] };
-      this._mm.diagram[name] = this._freeSpot();
+      this._mm.diagram[name] = this._freeSpot(name);
       this._sel = { kind: "enum", name };
       this._panel = true;
       this._changed();
     }
-    _freeSpot() {
-      const used = Object.values(this._mm.diagram);
+    _freeSpot(name) {
+      // the place of the box of `name` (just added to the model, not yet to the diagram): see Layout.freeSpot
+      const mm = this._mm;
+      const occupied = Object.keys(mm.diagram).filter((n) => n !== name && (mm.classes[n] || mm.enums[n]))
+        .map((n) => ({ ...mm.diagram[n], ...this._boxSize(n) }));
+      const size = this._boxSize(name);
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
-      const cx = ((r?.width || 800) / 2 - this._view.x) / this._view.k - BOX_W / 2;
-      const cy = ((r?.height || 500) / 3 - this._view.y) / this._view.k;
-      let x = cx, y = cy;
-      while (used.some((p) => Math.abs(p.x - x) < 40 && Math.abs(p.y - y) < 40)) { x += 30; y += 30; }
-      return { x: Math.round(x), y: Math.round(y) };
+      const v = this._view;
+      const view = { x: -v.x / v.k, y: -v.y / v.k, w: (r?.width || 800) / v.k, h: (r?.height || 500) / v.k };
+      return Layout.freeSpot(occupied, size, { x: view.x + view.w / 2 - size.w / 2, y: view.y + view.h / 3 }, view);
     }
 
     _renameClass(old, name) {
