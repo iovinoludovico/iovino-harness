@@ -28,6 +28,7 @@
 ## Lavoro sul codice
 - Leggi `CLAUDE.md` e la documentazione del progetto prima di modificare; segui i pattern esistenti invece di introdurne di nuovi.
 - Non dichiarare finito un lavoro senza averlo verificato: test, typecheck, build o un'esecuzione reale.
+- Prima di dire in che stato è l'harness o un suo plugin (branch da unire, versione pubblicata, release da fare), esegui `git fetch --prune` e guarda `origin/main` (log, `version` in `plugin.json`): non riusare un controllo fatto prima nella sessione.
 - Segreti mai nel repository: `.env*` restano locali, si versionano solo gli `.env.example`.
 - Migrazioni del database append-only: mai modificare una migrazione già applicata.
 - Migrazioni sul Supabase cloud solo con `/core:db-push` (controlli, conferma, verifica), prima del push del codice che le usa.
