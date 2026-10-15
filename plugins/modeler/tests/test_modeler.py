@@ -366,6 +366,9 @@ class AppTests(unittest.TestCase):
         doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
         self.assertIn("Persona", doc["classes"])
         self.assertNotIn("appforge", (self.app / "src/lib/modeler/metamodel-actions.ts").read_text())
+        editor = (self.app / "public/modeler/metamodel-editor.js").read_text()
+        self.assertIn(f'const VERSION = "{__version__}";', editor)                # shown in the toolbar
+        self.assertNotIn(cli.VERSION_PLACEHOLDER, editor)
 
     def test_install_ignores_python_bytecode(self):
         (self.app / ".gitignore").write_text("node_modules/\n.env*")

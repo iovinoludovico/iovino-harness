@@ -29,6 +29,7 @@ METAMODEL_JSON = Path("src/lib/modeler/metamodel.json")       # what the admin p
 EDITOR_JS = Path("public/modeler/metamodel-editor.js")
 TOOLS_DIR = Path("tools/modeler")
 LOCAL_SUPABASE_PORT = 54322
+VERSION_PLACEHOLDER = "__MODELER_VERSION__"                   # in kit/metamodel-editor.js
 
 NPM_SCRIPTS = {
     "model:validate": "python3 tools/modeler/modeler.py validate",
@@ -445,6 +446,8 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
         written.append(rel)
 
     copy(KIT_DIR / "metamodel-editor.js", str(EDITOR_JS))
+    editor = target / EDITOR_JS                                  # the toolbar shows the installed version
+    editor.write_text(editor.read_text(encoding="utf-8").replace(VERSION_PLACEHOLDER, __version__), encoding="utf-8")
     copy(KIT_DIR / "next" / "metamodel-modeler.tsx", "src/components/modeler/metamodel-modeler.tsx")
     copy(KIT_DIR / "next" / "metamodel-actions.ts", "src/lib/modeler/metamodel-actions.ts")
     copy(KIT_DIR / "next" / "access.ts", "src/lib/modeler/access.ts", overwrite=False)
