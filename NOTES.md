@@ -81,3 +81,14 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Plugin**: modeler (e core per db-push)
 - **Tipo**: skill
 - **Stato**: applicata il 2026-10-15: `_prod_query` (`plugins/modeler/scripts/metamodel/cli.py`, usato da `pull` e `done --write`) si ferma prima di collegarsi se non c'è password (DSN, `PGPASSWORD`, `SUPABASE_DB_PASSWORD`, `~/.pgpass`) e non c'è un terminale (`_can_prompt`), con la riga di `~/.pgpass` da aggiungere (`_pgpass_line`); senza terminale `psql` gira con `-w`, e l'errore `no password supplied` (es. `~/.pgpass` senza la riga del pooler) riceve lo stesso aiuto; test `test_pull_without_a_password_stops_before_psql`. Skill `modeler:apply` e `core:db-push` e README del modeler: niente più `! …` per comandi che chiedono la password, ma `SUPABASE_DB_PASSWORD`, `~/.pgpass` o un terminale proprio. Il comportamento di `supabase link`/`db push` con `! …` non è stato provato: la skill evita comunque `! …`.
+
+## 2026-10-15 — Una pagina personalizzata che sostituisce la vista generica va collegata ovunque, non solo nel menu
+- **Progetto**: guest-invitations-af (matrice delle tariffe del trattamento economico, `/x/economic_rate`, nata dalla nota "Lookup su più dimensioni")
+- **Cosa è successo**: la nuova vista ha sostituito la lista generica `/e/economic_rate`, ma è stata collegata con un caso speciale scritto a mano solo nel menu (`layout.tsx`: `e.key === "economic_rate" ? "/x/…" : "/e/…"`). Gli altri link dell'app costruiscono ancora `/e/${entity}`: le schede della dashboard, "tutti i risultati" della ricerca, il link "← elenco" della scheda record, i redirect dopo salvataggio ed eliminazione, i link dei riferimenti. L'utente arriva di nuovo alla vecchia vista. Né la revisione né i test se ne sono accorti.
+- **Proposta**:
+  - convenzione (`conventions.md`, Lavoro sul codice): "Quando una pagina personalizzata sostituisce una vista generica, tutti i link all'entità passano da un'unica funzione (es. `entityListHref(key)` / `entityHref(key, id?)` con una mappa delle viste sostituite), non da casi speciali sparsi; prima di chiudere cerca nel codice tutti i punti che costruiscono quel percorso (`grep '/e/\${'`) e aggiungi un test che verifichi la mappa";
+  - nelle app con pagine generiche `/e/[entity]` (stack ex appforge): valutare un campo di vista nel modello dell'app (`model.ts`, es. `listHref`) o un redirect in `src/proxy.ts` da `/e/<entità>` a `/x/<entità>`, così i link vecchi e salvati nei preferiti arrivano comunque alla vista nuova;
+  - nella checklist del `core:code-reviewer`: per una pagina che sostituisce una vista esistente, controllare tutti i punti d'ingresso (menu, dashboard, ricerca, breadcrumb, redirect, riferimenti).
+- **Plugin**: core
+- **Tipo**: convenzione
+- **Stato**: da valutare
