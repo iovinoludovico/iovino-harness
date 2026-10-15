@@ -68,6 +68,16 @@ def _coldef(st: dict[str, Any], table: str, f: dict[str, Any], not_null: bool) -
     return " ".join(parts)
 
 
+def _unique_name(table: str, columns: list[str]) -> str:
+    return _q(f"{table}_{'_'.join(columns)}_key"[:63])
+
+
+def _add_unique(table: str, columns: list[str]) -> str:
+    """Columns unique together; nulls not distinct, so a default row (null in a column) cannot be repeated."""
+    cols = ", ".join(_q(c) for c in columns)
+    return f"alter table public.{_q(table)} add constraint {_unique_name(table, columns)} unique nulls not distinct ({cols});"
+
+
 def _index(table: str, column: str) -> str:
     name = f"{table}_{column}_idx"[:63]
     return f"create index if not exists {_q(name)} on public.{_q(table)} ({_q(column)});"
@@ -129,6 +139,7 @@ def migration(old_meta: dict[str, Any], new_meta: dict[str, Any], origin: str = 
                     name, sql = _join_table(new, cname, ent, f)
                     joins += sql
                     rls.append(name)
+            new_refs += [_add_unique(t, cols) for cols in ent.get("unique", [])]   # after the reference columns
             continue
         pt = prev["table"]
         if pt != t:
@@ -177,6 +188,14 @@ def migration(old_meta: dict[str, Any], new_meta: dict[str, Any], origin: str = 
                 risky += [f"-- {TODO}: {cname}.{key} removed: dropping the column deletes its data",
                           f"-- alter table public.{_q(t)} drop column {_q(key)};"]
             notes.append(f"{t}.{key}: removed from the metamodel (drop left commented)")
+        before = prev.get("unique", [])
+        for cols in ent.get("unique", []):
+            if cols not in before:
+                changed.append(_add_unique(t, cols))
+                notes.append(f"{t}: unique ({', '.join(cols)}) added: it fails if the table already has duplicates")
+        for cols in before:
+            if cols not in ent.get("unique", []):
+                changed.append(f"alter table public.{_q(t)} drop constraint if exists {_unique_name(t, cols)};")
     for cname, ent in old["entities"].items():
         if cname not in new["entities"] and ent["table"] not in {e["table"] for e in new["entities"].values()}:
             risky += [f"-- {TODO}: class {cname} removed (or renamed: then rename the table instead and keep the data)",

@@ -124,6 +124,102 @@ def _evolved(meta):
     return new
 
 
+def _tariffs(unique=("voce", "motivo", "posizione")):
+    """A lookup on three dimensions: the row without posizione is the default of voce x motivo."""
+    meta = {"package": "tariffe", "language": "it", "classes": {
+        "Voce": {"attributes": {"nome": {"type": "EString", "lower": 1}}},
+        "Posizione": {"attributes": {"nome": {"type": "EString", "lower": 1}}},
+        "Tariffa": {"attributes": {"motivo": {"type": "Motivo", "lower": 1}, "importo": "Money"},
+                    "references": {"voce": {"type": "Voce", "lower": 1}, "posizione": "Posizione"}}},
+        "enums": {"Motivo": ["NASCITA", "MATRIMONIO"]}}
+    if unique:
+        meta["classes"]["Tariffa"]["unique"] = [list(unique)]
+    return meta
+
+
+class UniqueTogetherTests(unittest.TestCase):
+    """Class-level unique: combinations of features that must be unique (lookups on several dimensions)."""
+
+    def test_notation_storage_and_round_trips(self):
+        meta = _tariffs()
+        self.assertTrue(E.validate(meta).ok, E.validate(meta).render())
+        self.assertEqual(E.storage(meta)["entities"]["Tariffa"]["unique"], [["voce", "motivo", "posizione"]])
+        self.assertEqual(E.expand(E.loads(E.dumps(meta))), E.expand(meta))
+        self.assertEqual(E.expand(E.import_ecore(E.export_ecore(meta)))["classes"], E.expand(meta)["classes"])
+        one = _tariffs(None)
+        one["classes"]["Tariffa"]["unique"] = ["voce", "motivo"]                 # one group, written flat
+        self.assertEqual(E.expand(one)["classes"]["Tariffa"]["unique"], [["voce", "motivo"]])
+
+    def test_inherited_by_the_subclasses(self):
+        meta = _tariffs(None)
+        meta["classes"]["Base"] = {"abstract": True, "attributes": {"codice": "EString", "anno": "EInt"},
+                                   "unique": [["codice", "anno"]]}
+        meta["classes"]["Voce"]["supertypes"] = ["Base"]
+        self.assertTrue(E.validate(meta).ok, E.validate(meta).render())
+        self.assertEqual(E.storage(meta)["entities"]["Voce"]["unique"], [["codice", "anno"]])
+
+    def test_errors(self):
+        def errors(group):
+            meta = _tariffs(None)
+            meta["classes"]["Tariffa"]["unique"] = group
+            return E.validate(meta).render()
+        self.assertIn("two or more features", errors([["voce"]]))
+        self.assertIn("'colore' is not a feature of Tariffa", errors([["voce", "colore"]]))
+        meta = _tariffs(None)
+        meta["classes"]["Voce"]["references"] = {"tariffe": {"type": "Tariffa", "upper": -1}}
+        meta["classes"]["Voce"]["unique"] = [["nome", "tariffe"]]
+        self.assertIn("'tariffe' is multi-valued", E.validate(meta).render())
+        meta = _tariffs(None)                         # the foreign key of a one-to-one is in the other table
+        meta["classes"]["Posizione"]["references"] = {"tariffa": {"type": "Tariffa", "opposite": "posizione"}}
+        meta["classes"]["Tariffa"]["references"]["posizione"] = {"type": "Posizione", "opposite": "tariffa"}
+        meta["classes"]["Tariffa"]["unique"] = [["motivo", "posizione"]]
+        self.assertIn("posizione: not a column of Tariffa", E.validate(meta).render())
+
+    def test_migration_and_diff(self):
+        sql, _ = G.migration({"package": "t", "classes": {}}, _tariffs())
+        add = "alter table public.tariffe add constraint tariffe_voce_motivo_posizione_key unique nulls not distinct (voce, motivo, posizione);"
+        self.assertIn(add, sql)
+        self.assertLess(sql.index("add column posizione"), sql.index(add))     # after the reference columns
+        sql, notes = G.migration(_tariffs(None), _tariffs())
+        self.assertIn(add, sql)
+        self.assertTrue(any("duplicates" in n for n in notes))
+        sql, _ = G.migration(_tariffs(), _tariffs(None))
+        self.assertIn("alter table public.tariffe drop constraint if exists tariffe_voce_motivo_posizione_key;", sql)
+        self.assertEqual(G.migration(_tariffs(), _tariffs())[0], "")
+        self.assertIn("+ Tariffa: unique (voce, motivo, posizione)", E.diff(_tariffs(None), _tariffs()))
+
+    def test_drift_and_reverse_from_a_catalog(self):
+        cols = [("voci", "nome", "text", False), ("posizioni", "nome", "text", False),
+                ("tariffe", "motivo", "text", False), ("tariffe", "importo", "numeric", True),
+                ("tariffe", "voce", "uuid", False), ("tariffe", "posizione", "uuid", True)]
+        cat = {"tables": ["posizioni", "tariffe", "voci"], "enums": [], "unique_indexes": [],
+               "columns": [{"table": t, "name": "id", "udt": "uuid", "type": "uuid", "nullable": False,
+                            "default": "gen_random_uuid()", "maxlen": None} for t in ("voci", "posizioni", "tariffe")]
+               + [{"table": t, "name": n, "udt": u, "type": u, "nullable": nl, "default": None, "maxlen": None}
+                  for t, n, u, nl in cols],
+               "constraints": [
+                   {"table": "tariffe", "name": "f1", "type": "f", "columns": ["voce"], "ftable": "voci",
+                    "fschema": "public", "on_delete": "r", "def": ""},
+                   {"table": "tariffe", "name": "f2", "type": "f", "columns": ["posizione"], "ftable": "posizioni",
+                    "fschema": "public", "on_delete": "n", "def": ""},
+                   {"table": "tariffe", "name": "c1", "type": "c", "columns": ["motivo"], "ftable": None, "fschema": None,
+                    "on_delete": None, "def": "CHECK ((motivo = ANY (ARRAY['nascita'::text, 'matrimonio'::text])))"}]}
+        meta = _tariffs()
+        meta["classes"]["Tariffa"]["attributes"]["motivo"] = {"type": "Motivo", "lower": 1}
+        self.assertIn("MISSING UNIQUE tariffe (voce, motivo, posizione)", D.drift(meta, cat))
+        cat["unique_indexes"] = [{"table": "tariffe", "name": "tariffe_combo", "columns": ["voce", "motivo", "posizione"],
+                                  "expressions": False,
+                                  "def": "CREATE UNIQUE INDEX tariffe_combo ON public.tariffe USING btree (voce, motivo, posizione)"}]
+        self.assertTrue(any(x.startswith("UNIQUE tariffe (voce, motivo, posizione): nulls are distinct")
+                            for x in D.drift(meta, cat)))
+        rev, notes = D.reverse(cat, package="tariffe")
+        tariffa = next(c for c in E.expand(rev)["classes"].values() if c.get("table") == "tariffe")
+        self.assertEqual(tariffa["unique"], [["voce", "motivo", "posizione"]])
+        self.assertTrue(any("treats empty values as distinct" in n for n in notes))
+        cat["unique_indexes"][0]["def"] = cat["unique_indexes"][0]["def"] + " NULLS NOT DISTINCT"
+        self.assertFalse(any("unique" in x.lower() for x in D.drift(meta, cat)), D.drift(meta, cat))
+
+
 class MigrationTests(unittest.TestCase):
     def test_no_change_no_migration(self):
         meta = E.load(FIXTURE)
@@ -391,6 +487,20 @@ class DatabaseTests(unittest.TestCase):
                              capture_output=True, text=True)
         self.assertEqual(out.stdout.strip(), "bozza,chiusa")
 
+
+    def test_unique_together_applies_aligns_and_rejects_a_second_default(self):
+        meta = _tariffs()
+        self.psql(G.migration({"package": "t", "classes": {}}, meta)[0])
+        other = {"rooms", "bookings", "booking_items", "tags", "bookings_tags"}
+        cat = D.catalog(self.dsn)
+        self.assertEqual(D.drift(meta, cat, other), [])
+        rev, _ = D.reverse(cat, package="tariffe", exclude=other)
+        tariffa = next(c for c in E.expand(rev)["classes"].values() if c.get("table") == "tariffe")
+        self.assertEqual(tariffa["unique"], [["voce", "motivo", "posizione"]])
+        row = "insert into tariffe (voce, motivo) select id, 'nascita' from voci;"
+        self.psql("insert into voci (id, nome) values (gen_random_uuid(), 'v');" + row)
+        out = subprocess.run(["psql", self.dsn, "-q", "-v", "ON_ERROR_STOP=1"], input=row, capture_output=True, text=True)
+        self.assertIn("tariffe_voce_motivo_posizione_key", out.stderr)    # the default row cannot be repeated
 
 if __name__ == "__main__":
     unittest.main()

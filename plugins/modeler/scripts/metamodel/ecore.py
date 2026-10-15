@@ -43,7 +43,7 @@ CUSTOM_DATATYPES = {"Text": "java.lang.String", "Email": "java.lang.String", "UR
                     "Money": "java.math.BigDecimal", "Date": "java.time.LocalDate",
                     "DateTime": "java.util.Date", "JSON": "java.lang.String"}
 
-CLASS_KEYS = {"abstract", "supertypes", "doc", "label", "plural", "table", "attributes", "references"}
+CLASS_KEYS = {"abstract", "supertypes", "doc", "label", "plural", "table", "unique", "attributes", "references"}
 ATTRIBUTE_KEYS = {"type", "lower", "upper", "default", "id", "unique", "changeable", "doc", "label", "help",
                   "list", "min", "max", "max_length", "renamed_from", "column"}
 REFERENCE_KEYS = {"type", "lower", "upper", "containment", "opposite", "doc", "label", "help", "list",
@@ -108,6 +108,11 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
         cls["abstract"] = bool(cspec.get("abstract", False))
         sup = cspec.get("supertypes") or []
         cls["supertypes"] = [str(s) for s in (sup if isinstance(sup, list) else [sup])]
+        if "unique" in cspec:   # combinations that must be unique: one group [a, b] or several [[a, b], [c, d]]
+            groups = cspec["unique"] if isinstance(cspec["unique"], list) else [cspec["unique"]]
+            if groups and all(isinstance(g, str) for g in groups):
+                groups = [groups]
+            cls["unique"] = [[str(f) for f in g] if isinstance(g, list) else g for g in groups]
         cls["attributes"] = {}
         for an, aspec in (cspec.get("attributes") or {}).items():
             aspec = {"type": aspec} if isinstance(aspec, str) else dict(aspec or {})
@@ -158,7 +163,7 @@ def compact(raw: dict[str, Any]) -> dict[str, Any]:
     classes: dict[str, Any] = {}
     for cname, c in e["classes"].items():
         cls: dict[str, Any] = {}
-        for k in ("abstract", "supertypes", "doc", "label", "plural", "table"):
+        for k in ("abstract", "supertypes", "doc", "label", "plural", "table", "unique"):
             v = c.get(k)
             if v not in (None, False, [], ""):
                 cls[k] = v
@@ -340,6 +345,7 @@ def validate(raw: dict[str, Any]) -> M.Report:
             if s not in e["classes"]:
                 rep.error(where, f"unknown supertype '{s}'")
         _all_supertypes(e, cname, rep)
+        _check_unique_groups(e, cname, c, where, rep)
         own = list(c["attributes"]) + list(c["references"])
         dup = {n for n in own if own.count(n) > 1}
         if dup:
@@ -412,6 +418,25 @@ def validate(raw: dict[str, Any]) -> M.Report:
     if rep.ok:
         storage(raw, rep)   # columns that clash once references are placed
     return rep
+
+
+def _check_unique_groups(e: dict[str, Any], cname: str, c: dict[str, Any], where: str, rep: M.Report) -> None:
+    """Class-level `unique`: groups of two or more single-valued features (own or inherited)."""
+    if "unique" not in c:
+        return
+    attrs, refs = features(e, cname)
+    for g in c["unique"]:
+        if not isinstance(g, list) or len(g) < 2:
+            rep.error(f"{where}.unique", f"{g!r}: a group lists two or more features (one feature: unique: true on it)")
+            continue
+        if len(set(g)) != len(g):
+            rep.error(f"{where}.unique", f"{g}: a feature is listed twice")
+        for f in g:
+            spec = attrs.get(f) or refs.get(f)
+            if spec is None:
+                rep.error(f"{where}.unique", f"'{f}' is not a feature of {cname}")
+            elif spec["upper"] != 1:
+                rep.error(f"{where}.unique", f"'{f}' is multi-valued: only single-valued features can be unique together")
 
 
 def _check_feature_name(name: str, where: str, rep: M.Report) -> None:
@@ -571,7 +596,8 @@ def storage(meta: dict[str, Any], rep: M.Report | None = None) -> dict[str, Any]
     {"enums": {name: [stored values]}, "entities": {class: {"table", "display", "fields": {column: {...}}}}}.
     Abstract classes have no table (their features are flattened into the concrete subclasses);
     many-valued references (`many: True`) are join tables `<table>_<column>` unless `join_table` is given.
-    `feature` is the feature stored in the column (None for the link of a contained class to its container)."""
+    `feature` is the feature stored in the column (None for the link of a contained class to its container);
+    `unique` lists the column groups that are unique together (class-level `unique`, nulls not distinct)."""
     rep = rep if rep is not None else M.Report()
     e = expand(meta)
     enums = {en: [literal_key(lit["name"]) for lit in spec["literals"]] for en, spec in e["enums"].items()}
@@ -599,10 +625,23 @@ def storage(meta: dict[str, Any], rep: M.Report | None = None) -> dict[str, Any]
                            "max_length": None,
                            "feature": col["from"][1] if col["from"][0] == cname else None,
                            "renamed_from": col["spec"].get("renamed_from") if col["from"][0] == cname else None}
+        column_of = {f["feature"]: k for k, f in fields.items() if f.get("feature") and not f["many"]}
+        uniques: list[list[str]] = []
+        for anc in _all_supertypes(e, cname) + [cname]:
+            for g in e["classes"].get(anc, {}).get("unique") or []:
+                if not isinstance(g, list) or len(g) < 2:
+                    continue
+                missing = [f for f in g if f not in column_of]
+                if missing:
+                    rep.error(f"classes.{anc}.unique", f"{', '.join(missing)}: not a column of {cname} "
+                              "(a reference counts only when its foreign key is in this table)")
+                    continue
+                uniques.append([column_of[f] for f in g])
         entities[cname] = {
             "table": c.get("table") or default_table(cname, e["language"]),
             "display": next((field_key(n, a) for n, a in attrs.items() if a.get("id")), None),
             "fields": fields,
+            "unique": uniques,
         }
     return {"enums": enums, "entities": entities}
 
@@ -717,6 +756,8 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
         if cn not in a["classes"]:
             out.append(f"+ class {cn}" + (" (abstract)" if c["abstract"] else "")
                        + (f" extends {', '.join(c['supertypes'])}" if c["supertypes"] else ""))
+            for g in c.get("unique") or []:
+                out.append(f"  + {cn}: unique ({', '.join(map(str, g))})")
             for an, at in c["attributes"].items():
                 out.append(f"  + {cn}.{an}: {at['type']}{_mult(at['lower'], at['upper'])}")
             for rn, r in c["references"].items():
@@ -728,6 +769,12 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
             out.append(f"~ class {cn}: abstract {oc['abstract']} -> {c['abstract']}")
         if oc["supertypes"] != c["supertypes"]:
             out.append(f"~ class {cn}: supertypes {oc['supertypes']} -> {c['supertypes']}")
+        for g in c.get("unique") or []:
+            if g not in (oc.get("unique") or []):
+                out.append(f"+ {cn}: unique ({', '.join(map(str, g))})")
+        for g in oc.get("unique") or []:
+            if g not in (c.get("unique") or []):
+                out.append(f"- {cn}: unique ({', '.join(map(str, g))})")
         for kind in ("attributes", "references"):
             for fn, f in c[kind].items():
                 renamed = f.get("renamed_from")
@@ -795,7 +842,7 @@ def export_ecore(raw: dict[str, Any]) -> str:
         if c["supertypes"]:
             el.set("eSuperTypes", " ".join(f"#//{s}" for s in c["supertypes"]))
         _annot(el, GENMODEL_SRC, {"documentation": c.get("doc")})
-        _annot(el, MODELER_SRC, {k: c.get(k) for k in ("label", "plural", "table")})
+        _annot(el, MODELER_SRC, {k: c.get(k) for k in ("label", "plural", "table", "unique")})
         for an, a in c["attributes"].items():
             f = ET.SubElement(el, "eStructuralFeatures", {xtype: "ecore:EAttribute", "name": an, "eType": etype(a["type"])})
             if a["lower"]:

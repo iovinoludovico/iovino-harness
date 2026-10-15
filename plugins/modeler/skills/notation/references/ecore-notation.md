@@ -58,6 +58,23 @@ enums:
 `EBigDecimal`, `Money`, `EBoolean`, `Date` (day), `EDate` / `DateTime` (timestamp), `JSON`, or an enum.
 A multi-valued attribute (`upper: -1`) is stored as a JSON array.
 
+### Class keys
+`abstract supertypes doc label plural table unique attributes references`
+
+`unique` lists combinations of single-valued features (attributes, or references whose foreign key is in this
+table) that must be unique together, typically a lookup on several dimensions:
+
+```yaml
+  Tariffa:                       # one row per voce × motivo × posizione; posizione empty = the default row
+    unique: [voce, motivo, posizione]          # one group; several: [[a, b], [c, d]]
+    attributes: {motivo: {type: Motivo, lower: 1}, importo: Money}
+    references: {voce: {type: Voce, lower: 1}, posizione: Posizione}
+```
+
+Stored as `unique nulls not distinct (voce, motivo, posizione)`: an empty column counts as a value, so the
+default row cannot be repeated either. Subclasses inherit the groups of their supertypes. For a single feature
+use `unique: true` on it.
+
 ### Attribute keys
 `type lower upper default id unique changeable(false = readonly) doc label help list min max max_length
 renamed_from column`
@@ -75,6 +92,7 @@ renamed_from column join_table`
 | pair `r: T[*]` / `o: C` (opposite) | column `o` on T (FK to C); cascade if `r` is a containment |
 | pair `r: T[*]` / `o: C[*]` | one join table, owned by the class declared first |
 | pair `r: T` / `o: C` (one-to-one) | one unique FK: on the contained side, else the mandatory side, else the first declared |
+| class `unique: [a, b]` | constraint `<table>_a_b_key unique nulls not distinct (a, b)`; `drift` reports it when missing |
 
 Tables: `table` if given, else the plural snake_case of the class (`BookingItem` → `booking_items`;
 `language: it` → `Persona` → `persone`). Columns: `column` if given, else the snake_case of the feature.
@@ -115,6 +133,7 @@ room_id}`), `join_table:` names an existing join table, `table:` an existing tab
 | "un X è un tipo di Y", "X e Z sono entrambi Y" | supertypes; Y abstract if it has no records of its own |
 | "può essere A, B o C", "stato/tipo/categoria fissa" | enum (a closed list); an open list the users extend is a class |
 | "identificato da", "codice univoco" | `id: true` (or `unique: true`) |
+| "una sola X per ogni combinazione di A e B", "la tariffa per voce e motivo, con un default" | class `unique: [a, b]` (a lookup on several dimensions) |
 | "un utente", "chi ha creato", "il responsabile" (a person who logs in) | reference to `User` |
 | "si chiude/approva/passa da … a …" | the states are an enum attribute (`stato: StatoOrdine`); the rules of the workflow are code |
 
