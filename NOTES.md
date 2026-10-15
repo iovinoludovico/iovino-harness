@@ -70,3 +70,14 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Plugin**: core
 - **Tipo**: convenzione
 - **Stato**: applicata il 2026-10-15 senza l'hook (rinviato: chiederebbe la rete a ogni avvio di sessione, e l'hook mostra già le versioni caricate; si riprende se l'errore si ripete nonostante la regola): riga in `plugins/core/context/conventions.md`, sezione "Lavoro sul codice".
+
+## 2026-10-15 — La password di `psql` non si può chiedere con `! …` in Claude Code
+- **Progetto**: guest-invitations-af
+- **Cosa è successo**: `! npm run model:done -- --write` è fallito con `fe_sendauth: no password supplied`. `psql`, lanciato dalla CLI del modeler con `capture_output`, chiede la password, ma un comando `!` non ha un terminale interattivo e la risposta arriva vuota. Non è stato scritto niente. La skill `modeler:apply` (punto 1) suggerisce proprio `! npm run model:pull` quando la password non è nell'ambiente: con `pull` e `done --write` l'indicazione non funziona.
+- **Proposta**:
+  - nelle skill `modeler:apply` (pull, done) e nei messaggi della CLI, senza password nell'ambiente: indicare di lanciare il comando da un terminale proprio, fuori da Claude Code, oppure di configurare `~/.pgpass` (riga host:porta:db:utente del pooler, `chmod 600`). Mai `! …` e mai la password scritta nel comando, che finirebbe nella cronologia;
+  - nella CLI (`pull`, `done --write`): se non c'è password (`_has_password`, `PGPASSWORD`, `SUPABASE_DB_PASSWORD`, `~/.pgpass`) e `stdin` non è un TTY, fermarsi prima di connettersi con questo messaggio, invece di far fallire `psql`;
+  - da verificare anche per `core:db-push`, che suggerisce `! supabase db push` "se serve la password interattiva".
+- **Plugin**: modeler (e core per db-push)
+- **Tipo**: skill
+- **Stato**: da valutare
