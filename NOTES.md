@@ -40,3 +40,21 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Plugin**: core (convenzione) + modeler (vista matrix e unicità composta nel metamodello)
 - **Tipo**: convenzione
 - **Stato**: applicata il 2026-10-15 senza la vista matrix (scartata): chiave di classe `unique` nel metamodello (`ecore.py`: validazione, `storage`, diff, export Ecore; `sqlgen.py`: `unique nulls not distinct`; `dbschema.py`: reverse e drift, anche da indici unici), documentata in `notation`, test `UniqueTogetherTests` e test su Postgres; riga in `conventions.md` (Sviluppo guidato dai modelli). Vista `matrix` scartata: il modello descrive solo la struttura, le pagine sono codice dell'app.
+
+## 2026-10-15 — `modeler apply --write` riscrive tutto domain.ecore.yaml
+- **Progetto**: guest-invitations-af
+- **Cosa è successo**: una proposta con una sola modifica (`Invitation.invitationFunds: lower 0 -> 1`) applicata con `npm run model:apply -- <file> --write` ha riordinato alfabeticamente le chiavi di tutte le classi (attributi, `label`, `doc` senza virgolette): diff di 187 righe per un cambiamento di una, e perso l'ordine curato degli attributi. Annullato e applicato a mano.
+- **Proposta**: in `tools/modeler` `apply` deve modificare il YAML in modo chirurgico (patch delle sole feature cambiate, preservando ordine, stile e commenti) o almeno serializzare senza `sort_keys`; test: applicare una proposta con una modifica produce un diff di una riga. Anche: `pull` richiede il DSN di produzione; valutare la lettura via `supabase db query --linked` (sola lettura) e una marcatura `pulled` separata e confermata.
+- **Plugin**: modeler
+- **Tipo**: altro (bug della CLI)
+
+## 2026-10-15 — Il modellatore non mostra le proposte salvate e non ancora applicate
+- **Progetto**: guest-invitations-af
+- **Cosa è successo**: una modifica al metamodello proposta e salvata da `/admin/model` in produzione (riga `open` in `model_change_requests`) non lasciava alcuna traccia riaprendo l'editor: l'editor mostra solo il metamodello in esercizio, e l'utente ha dovuto chiedere "che fine ha fatto la mia modifica?" per scoprire che era ancora in attesa.
+- **Proposta**: nella pagina `/admin/model` del plugin modeler:
+  - all'apertura, un avviso con le proposte in sospeso (`open`/`pulled`, sia `.modeler/proposals/` in sviluppo sia `model_change_requests` in produzione): data, autore, nota e un riepilogo delle differenze rispetto al metamodello in esercizio (stesso formato di `modeler diff`, es. `~ Invitation.invitationFunds: lower 0 -> 1`);
+  - per ciascuna: "Apri nell'editor" (carica la proposta per rivederla o continuarla), "Scarta" (stato `rejected`, con conferma) e l'indicazione di come applicarla (`/modeler:apply`); stato `applied` mostrato come storico;
+  - un indicatore nel menu/titolo ("1 proposta da applicare") e, al salvataggio di una nuova proposta, l'avviso se ce n'è già una in sospeso (sostituirla o aggiungerla);
+  - nella CLI, `modeler proposals` elenca anche quelle di produzione (lettura via DSN o `supabase db query --linked`) e la skill `modeler:apply`/l'hook di sessione segnala all'avvio le proposte in sospeso.
+- **Plugin**: modeler
+- **Tipo**: altro (funzionalità del modellatore)
