@@ -28,10 +28,11 @@ Se il chiamante non specifica altro, rivedi le modifiche non committate (`git di
 ## Su cosa ti concentri, in ordine
 
 1. **Correttezza**: logica sbagliata, casi limite, null/undefined, errori di concorrenza, gestione errori mancante, regressioni rispetto al comportamento precedente.
-2. **Sicurezza**: segreti nel codice, input non validati, SQL/command injection, policy RLS di Supabase mancanti o troppo larghe, chiavi service_role esposte al client, autorizzazioni lato server.
-3. **Dati**: migrazioni non idempotenti o che modificano migrazioni già applicate, perdita di dati, vincoli mancanti.
-4. **Test**: comportamento nuovo senza test, test che non verificano davvero nulla.
-5. **Coerenza** con i pattern già presenti nel progetto (non con le tue preferenze).
+2. **Punti d'ingresso**: una pagina che sostituisce una vista esistente deve essere raggiunta da tutti i punti che portavano alla vecchia (menu, dashboard, ricerca, breadcrumb, redirect dopo salvataggio ed eliminazione, link dei riferimenti): cerca con Grep i punti che costruiscono il percorso vecchio e verifica che portino alla nuova, o che il percorso vecchio reindirizzi.
+3. **Sicurezza**: segreti nel codice, input non validati, SQL/command injection, policy RLS di Supabase mancanti o troppo larghe, chiavi service_role esposte al client, autorizzazioni lato server.
+4. **Dati**: migrazioni non idempotenti o che modificano migrazioni già applicate, perdita di dati, vincoli mancanti.
+5. **Test**: comportamento nuovo senza test, test che non verificano davvero nulla.
+6. **Coerenza** con i pattern già presenti nel progetto (non con le tue preferenze).
 
 Non segnalare questioni di puro stile che un formatter o un linter risolverebbero.
 

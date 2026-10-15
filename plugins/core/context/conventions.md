@@ -33,6 +33,7 @@
 - Migrazioni del database append-only: mai modificare una migrazione già applicata.
 - Migrazioni sul Supabase cloud solo con `/core:db-push` (controlli, conferma, verifica), prima del push del codice che le usa.
 - Editor e diagrammi di modelli (nodi e connettori): segui la skill `core:diagrams` (layout che riempie il contenitore, layout come funzione pura con test, connettori ortogonali non sovrapposti, etichette leggibili).
+- Quando una pagina personalizzata sostituisce una vista generica, tutti i link a quell'entità passano da un'unica funzione con la mappa delle viste sostituite (es. `entityListHref(key)`), mai da casi speciali sparsi; il percorso vecchio reindirizza al nuovo. Prima di chiudere, cerca nel codice tutti i punti che costruiscono quel percorso (menu, dashboard, ricerca, breadcrumb, redirect dopo salvataggio ed eliminazione, link dei riferimenti) e metti un test sulla mappa.
 - File generati non si modificano a mano: si cambia la sorgente e si rigenera. Il modellatore installato (`public/modeler/`, `src/components/modeler/`, `src/lib/modeler/metamodel-actions.ts`, `tools/modeler/`) si aggiorna con `/modeler:install`, non a mano.
 
 ## Stack ricorrente
