@@ -4,7 +4,10 @@ python3 -m unittest discover -s plugins/modeler/tests   (MODELER_PG=postgresql:/
 """
 
 import argparse
+import contextlib
 import copy
+import difflib
+import io
 import json
 import os
 import shutil
@@ -221,6 +224,56 @@ class UniqueTogetherTests(unittest.TestCase):
         self.assertFalse(any("unique" in x.lower() for x in D.drift(meta, cat)), D.drift(meta, cat))
 
 
+class PatchTextTests(unittest.TestCase):
+    """`patch_text` rewrites only the lines of what changed in a metamodel written by hand."""
+
+    def setUp(self):
+        self.text = FIXTURE.read_text()
+        self.meta = E.load(FIXTURE)
+
+    def changed(self, new):
+        out = E.patch_text(self.text, new)
+        self.assertIsNotNone(out)
+        self.assertEqual(E.expand(E.loads(out)), E.expand(new))
+        return [x for x in difflib.unified_diff(self.text.splitlines(), out.splitlines(), n=0)
+                if x[:1] in "+-" and not x.startswith(("+++", "---"))]
+
+    def test_features_classes_enums_and_diagram(self):
+        new = E.expand(self.meta)
+        new["classes"]["Persona"]["attributes"]["codice"] = {"type": "EString", "lower": 0, "upper": 1}
+        self.assertEqual(self.changed(new), ["+      codice: EString"])
+        new = E.expand(self.meta)
+        del new["classes"]["Persona"]["references"]["utente"]
+        self.assertEqual(self.changed(new), ["-      utente: User"])
+        new = E.expand(self.meta)
+        del new["classes"]["Allegato"]
+        del new["classes"]["Gruppo"]["references"]["allegati"]
+        self.assertEqual(self.changed(new), ["-      allegati: {type: Allegato, upper: \"*\", containment: true}",
+                                             "-  Allegato:", "-    attributes: {file: URL}"])
+        new = E.expand(self.meta)
+        new["classes"]["Etichetta"] = {"attributes": {"nome": {"type": "EString", "lower": 0, "upper": 1}}}
+        self.assertEqual(self.changed(new), ["+  Etichetta: {attributes: {nome: EString}}"])
+        new = E.expand(self.meta)
+        new["enums"]["Ruolo"]["literals"].append({"name": "REVISORE"})
+        self.assertTrue(all("Ruolo" in x or "REVISORE" in x or x.strip("+-").strip().startswith(("-", "literals"))
+                            for x in self.changed(new)))
+        new = E.expand(self.meta)
+        new["diagram"] = {"Persona": {"x": 0, "y": 0}}
+        self.assertIsNone(E.patch_text(self.text, new))         # no diagram section yet: whole rewrite
+
+    def test_inline_attributes_rewrite_only_their_class(self):
+        new = E.expand(self.meta)
+        new["classes"]["Indirizzo"]["attributes"]["cap"] = {"type": "EString", "lower": 0, "upper": 1}
+        lines = self.changed(new)
+        self.assertTrue(lines and all("via" in x or "cap" in x or "Indirizzo" in x or "persona" in x or "attributes" in x
+                                      or "references" in x for x in lines), lines)
+
+    def test_header_change_is_left_to_a_full_rewrite(self):
+        new = E.expand(self.meta)
+        new["doc"] = "altro"
+        self.assertIsNone(E.patch_text(self.text, new))
+
+
 class MigrationTests(unittest.TestCase):
     def test_no_change_no_migration(self):
         meta = E.load(FIXTURE)
@@ -370,6 +423,30 @@ class AppTests(unittest.TestCase):
         self.assertEqual(cli.cmd_apply(ns), 1)
         self.assertNotIn("Ghost", (self.app / "domain.ecore.yaml").read_text())
 
+
+    def test_apply_changes_only_the_changed_lines(self):
+        # a proposal from production comes back from a jsonb column: keys sorted by length, then name
+        def jsonb(v):
+            return {k: jsonb(v[k]) for k in sorted(v, key=lambda k: (len(k), k))} if isinstance(v, dict) else v
+        cli.install(self.app)
+        meta_path = self.app / "domain.ecore.yaml"
+        before = meta_path.read_text()
+        doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
+        doc["classes"]["Persona"]["attributes"]["dataNascita"]["lower"] = 1
+        (self.app / "p.json").write_text(json.dumps({"metamodel": jsonb(doc)}))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_apply(argparse.Namespace(path=str(self.app), proposal=str(self.app / "p.json"),
+                                                              write=True)), 0)
+        changed = [line for line in difflib.unified_diff(before.splitlines(), meta_path.read_text().splitlines(), n=0)
+                   if line[:1] in "+-" and not line.startswith(("+++", "---"))]
+        self.assertEqual(changed, ["-      dataNascita: Date", "+      dataNascita: {type: Date, lower: 1}"], changed)
+        meta_path.write_text(meta_path.read_text().replace("classes:\n", "classes:  # curated by hand\n", 1))
+        doc["classes"]["Persona"]["attributes"]["dataNascita"]["lower"] = 0
+        (self.app / "p.json").write_text(json.dumps({"metamodel": jsonb(doc)}))
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.cmd_apply(argparse.Namespace(path=str(self.app), proposal=str(self.app / "p.json"), write=True))
+        self.assertEqual(meta_path.read_text(), before.replace("classes:\n", "classes:  # curated by hand\n", 1))
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class EditorLayoutTests(unittest.TestCase):

@@ -250,6 +250,144 @@ def dumps(raw: dict[str, Any]) -> str:
     return header + text
 
 
+def align_order(new: Any, old: Any) -> Any:
+    """`new` with the keys in the order of `old` (classes, features, keys of a feature, enums, diagram), the keys
+    that `old` lacks after them. A proposal comes back from the editor or from a jsonb column with its keys
+    reordered: aligned, rewriting the metamodel changes only the lines of what really changed. Lists (literals,
+    supertypes, unique groups) keep their own order."""
+    if not isinstance(new, dict) or not isinstance(old, dict):
+        return new
+    keys = [k for k in old if k in new] + [k for k in new if k not in old]
+    return {k: align_order(new[k], old.get(k)) for k in keys}
+
+
+def comment_lines(text: str) -> list[str]:
+    """Comments written by hand in a metamodel file (the header written by dumps excluded): rewriting loses them.
+    Inline comments are recognised by ` # ` (a value containing it is reported too: a harmless false alarm)."""
+    header = set(dumps({"package": "x", "classes": {}}).splitlines()[:2])
+    return [line for line in text.splitlines()
+            if line not in header and (line.lstrip().startswith("#") or " # " in line)]
+
+
+# --------------------------------------------------------------------------- #
+# Surgical rewrite: only the lines of what changed
+# --------------------------------------------------------------------------- #
+def _yaml_lines(value: dict[str, Any], indent: int) -> list[str]:
+    """`value` ({name: spec}) as dumps writes it (one block entry per name), indented by `indent` spaces."""
+    yaml, Dumper = _flow_dumper()
+    chunk = yaml.dump(_Block(value), Dumper=Dumper, sort_keys=False, allow_unicode=True, width=120)
+    return [" " * indent + line for line in chunk.rstrip("\n").split("\n")]
+
+
+def _children(lines: list[str], start: int, end: int, indent: int) -> dict[str, tuple[int, int]]:
+    """The keys written at exactly `indent` spaces in lines[start:end]: {key: (first line, end line)}.
+    Blank and comment lines stay with the key above them."""
+    out: dict[str, tuple[int, int]] = {}
+    key_re = re.compile(rf"^ {{{indent}}}([A-Za-z_][\w]*)\s*:")
+    current = None
+    for i in range(start, end):
+        line = lines[i]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        depth = len(line) - len(line.lstrip())
+        m = key_re.match(line)
+        if m and depth == indent:
+            if current:
+                out[current] = (out[current][0], i)
+            current = m.group(1)
+            out[current] = (i, end)
+        elif depth < indent:
+            break
+    if current:
+        out[current] = (out[current][0], max(i for i in range(out[current][0], end)
+                                              if lines[i].strip() and not lines[i].lstrip().startswith("#")) + 1)
+    return out
+
+
+def _inline(line: str) -> bool:
+    """A key written with its value on the same line (`attributes: {a: X}`), a trailing comment aside."""
+    return bool(line.split(":", 1)[1].split(" #", 1)[0].strip())
+
+
+def patch_text(text: str, new: dict[str, Any]) -> str | None:
+    """`text` (the current metamodel file) changed into `new` rewriting only what differs: one feature line, else
+    the block of one class or enum, else the diagram. None when the file is not in the expected layout or the
+    change touches the package header: the caller then rewrites the whole file."""
+    try:
+        old = loads(text)
+    except Exception:  # noqa: BLE001 - an unreadable file is rewritten
+        return None
+    a, b = expand(old), expand(new)
+    if any(a[k] != b[k] for k in ("package", "nsURI", "nsPrefix", "doc", "language")):
+        return None
+    cb = compact(new)
+    lines = text.split("\n")
+    top = _children(lines, 0, len(lines), 0)
+    edits: list[tuple[int, int, list[str]]] = []   # (start, end, replacement)
+
+    def feature_edits(cname: str, cs: int, ce: int) -> list[tuple[int, int, list[str]]] | None:
+        ca, cn = a["classes"][cname], b["classes"][cname]
+        if {k: v for k, v in ca.items() if k not in ("attributes", "references")} != \
+                {k: v for k, v in cn.items() if k not in ("attributes", "references")}:
+            return None
+        found: list[tuple[int, int, list[str]]] = []
+        keys = _children(lines, cs + 1, ce, 4)
+        for kind in ("attributes", "references"):
+            if ca[kind] == cn[kind]:
+                continue
+            if kind not in keys or _inline(lines[keys[kind][0]]):
+                return None                           # missing or written inline: rewrite the class
+            ks, ke = keys[kind]
+            feats = _children(lines, ks + 1, ke, 6)
+            if set(feats) != set(ca[kind]):
+                return None
+            new_feats = cb["classes"][cname].get(kind, {})
+            for fname in ca[kind]:
+                if fname not in cn[kind]:
+                    found.append((*feats[fname], []))
+                elif ca[kind][fname] != cn[kind][fname]:
+                    found.append((*feats[fname], _yaml_lines({fname: new_feats[fname]}, 6)))
+            added = [f for f in cn[kind] if f not in ca[kind]]
+            if added:
+                last = max(e for _, e in feats.values()) if feats else ks + 1
+                found.append((last, last, [x for f in added for x in _yaml_lines({f: new_feats[f]}, 6)]))
+        return found
+
+    for section in ("classes", "enums"):
+        if a[section] == b[section]:
+            continue
+        if section not in top or _inline(lines[top[section][0]]):
+            return None
+        ss, se = top[section]
+        blocks = _children(lines, ss + 1, se, 2)
+        if set(blocks) != set(a[section]):
+            return None
+        for name in a[section]:
+            if name not in b[section]:
+                edits.append((*blocks[name], []))
+            elif a[section][name] != b[section][name]:
+                fe = feature_edits(name, *blocks[name]) if section == "classes" else None
+                edits += fe if fe is not None else [(*blocks[name], _yaml_lines({name: cb[section][name]}, 2))]
+        added = [n for n in b[section] if n not in a[section]]
+        if added:
+            last = max(e for _, e in blocks.values()) if blocks else ss + 1
+            edits.append((last, last, [x for n in added for x in _yaml_lines({n: cb[section][n]}, 2)]))
+    if a["diagram"] != b["diagram"]:
+        if "diagram" not in top or not b["diagram"]:
+            return None
+        ds, de = top["diagram"]
+        edits.append((ds, de, ["diagram:"] + _yaml_lines(cb["diagram"], 2)))
+    for start, end, repl in sorted(edits, key=lambda x: (x[0], x[1]), reverse=True):
+        lines[start:end] = repl
+    out = "\n".join(lines)
+    try:
+        if expand(loads(out)) != b:          # never write a file that does not read back as the proposal
+            return None
+    except Exception:  # noqa: BLE001
+        return None
+    return out
+
+
 def dump(raw: dict[str, Any], path: str | Path) -> None:
     Path(path).write_text(dumps(raw), encoding="utf-8")
 

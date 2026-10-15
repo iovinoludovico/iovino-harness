@@ -16,7 +16,9 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
 3. `npm run model:apply -- [file]` (prova a vuoto): mostra all'utente le modifiche e la validazione; segnala
    ciò che comporta perdita di dati (classi, feature o letterali rimossi) e chiedi conferma.
 4. Con conferma: `npm run model:apply -- [file] --write` (backup in `.modeler/backups/`, proposta spostata in
-   `.modeler/proposals/applied/`, `metamodel.json` aggiornato).
+   `.modeler/proposals/applied/`, `metamodel.json` aggiornato). Il file cambia solo nelle righe di ciò che è
+   cambiato (ordine, stile e commenti restano); se `git diff domain.ecore.yaml` mostra di più, fermati e
+   segnalalo invece di committare.
 5. Prosegui come la skill `metamodel`, sezione "Allineare l'applicazione": `npm run model:migrate -- --name <nome>
    --write` (bozza dal metamodello committato a quello appena scritto), TODO risolti, codice, migrazione
    applicata in locale, `npm run model:drift` → "aligned", typecheck, lint e test.

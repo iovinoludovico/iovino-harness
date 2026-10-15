@@ -212,7 +212,19 @@ def cmd_apply(a) -> int:
         bak = meta_path.parent / STATE_DIR / "backups" / f"{E.METAMODEL_FILE}.{dt.datetime.now():%Y%m%d-%H%M%S}"
         bak.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(meta_path, bak)
-    E.dump(new, meta_path)
+        text = meta_path.read_text(encoding="utf-8")
+        new = E.align_order(new, old)   # the proposal's key order (editor, jsonb) must not reorder the file
+        patched = E.patch_text(text, new)
+        if patched is not None:         # only the lines of what changed: order, style and comments kept
+            meta_path.write_text(patched, encoding="utf-8")
+        else:
+            lost = E.comment_lines(text)
+            if lost:
+                print(f"\nwarning: {len(lost)} comment line(s) of {E.METAMODEL_FILE} are not kept (copy in {bak}):")
+                print("\n".join(f"  {line.strip()}" for line in lost[:10]))
+            E.dump(new, meta_path)
+    else:
+        E.dump(new, meta_path)
     if src.parent == proposals_dir(meta_path):
         done = src.parent / "applied"
         done.mkdir(exist_ok=True)

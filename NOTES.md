@@ -47,6 +47,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: in `tools/modeler` `apply` deve modificare il YAML in modo chirurgico (patch delle sole feature cambiate, preservando ordine, stile e commenti) o almeno serializzare senza `sort_keys`; test: applicare una proposta con una modifica produce un diff di una riga. Anche: `pull` richiede il DSN di produzione; valutare la lettura via `supabase db query --linked` (sola lettura) e una marcatura `pulled` separata e confermata.
 - **Plugin**: modeler
 - **Tipo**: altro (bug della CLI)
+- **Stato**: applicata il 2026-10-15 senza la lettura di `pull` via Supabase CLI (rinviata: comando da verificare prima di usarlo in produzione): `apply --write` riscrive solo le righe cambiate (`patch_text` e `align_order` in `ecore.py`, usati da `cmd_apply`; ricade sulla riscrittura completa con avviso sui commenti persi), test `PatchTextTests` e `test_apply_changes_only_the_changed_lines`; sul metamodello di guest-invitations-af una modifica = 2 righe di diff invece di 194; skill `apply` aggiornata.
 
 ## 2026-10-15 — Il modellatore non mostra le proposte salvate e non ancora applicate
 - **Progetto**: guest-invitations-af
