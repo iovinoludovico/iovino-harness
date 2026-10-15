@@ -141,6 +141,20 @@ def is_harness_repo(root: Path) -> bool:
     return (root / ".claude-plugin" / "marketplace.json").exists() and (root / "plugins" / "core").is_dir()
 
 
+def harness_root() -> Path | None:
+    """The harness clone: the configured harness_repo, else the clone this plugin is loaded from (install in place)."""
+    repo = option("harness_repo")
+    if repo:
+        p = Path(repo).expanduser()
+        return p.resolve() if p.is_dir() else None
+    clone = PLUGIN_ROOT.resolve().parents[1]
+    return clone if is_harness_repo(clone) else None
+
+
+def is_inside(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
 def cmd_session(data: dict) -> int:
     cwd = Path(data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     parts: list[str] = []
@@ -232,7 +246,24 @@ def cmd_guard_file(data: dict) -> int:
                     f"I segreti vanno nelle variabili d'ambiente, non nei file versionati. "
                     f"Usa un placeholder e un riferimento a process.env / os.environ."
                 )
-    return 0
+    return guard_harness_edit(path, data)
+
+
+def guard_harness_edit(path: str, data: dict) -> int:
+    """A session opened on an app should not change the harness: its rules (branch, tests, release) are not loaded
+    there, and the clone may be in use by a harness session. NOTES.md is what /core:harness-note writes."""
+    root = harness_root()
+    if not path or root is None:
+        return 0
+    cwd = Path(data.get("cwd") or os.getcwd()).resolve()
+    target = (cwd / path).resolve()
+    if not is_inside(target, root) or is_inside(cwd, root) or target == root / "NOTES.md":
+        return 0
+    return ask(
+        f"{target} è nel clone dell'harness ({root}), ma questa sessione è aperta su {cwd}. Le migliorie all'harness "
+        f"si annotano con /core:harness-note e si applicano in una sessione aperta nella cartella dell'harness "
+        f"(branch, test, release). Conferma solo se è voluto."
+    )
 
 
 # ------------------------------------------------------------------ guard-bash

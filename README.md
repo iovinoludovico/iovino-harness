@@ -86,7 +86,8 @@ Gli agenti `core:code-reviewer` e `core:debugger` vengono usati da Claude quando
 ## Cosa fanno gli hook
 
 - **SessionStart**: inietta `plugins/core/context/conventions.md` e lo stato del progetto (branch, file modificati, stack, presenza di CLAUDE.md e HANDOFF.md).
-- **PreToolUse su Edit/Write**: blocca la scrittura di `.env*` (tranne `*.example`), chiavi e certificati, interni di `.git/`, e contenuti che sembrano chiavi o token.
+- **PreToolUse su Edit/Write**: blocca la scrittura di `.env*` (tranne `*.example`), chiavi e certificati, interni di `.git/`, e contenuti che sembrano chiavi o token. Chiede conferma se una sessione aperta su un'altra
+  cartella modifica file del clone dell'harness (tranne `NOTES.md`, scritto da `/core:harness-note`).
 - **PreToolUse su Bash**: blocca `rm -rf /` e simili e il force push su main/master; chiede conferma per `git push`, `reset --hard`, `clean`, `rm -r`, `sudo`, `curl | sh`, lettura di `.env`, `supabase db reset/push`, DDL distruttivo, `--no-verify`.
 - **PostToolUse su Edit/Write**: formatta il file con il formatter già configurato nel progetto (prettier locale, ruff o black). Disattivabile con l'opzione `autoformat`.
 

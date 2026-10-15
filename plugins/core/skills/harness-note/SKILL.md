@@ -37,4 +37,5 @@ Se l'utente non ha dato una lezione esplicita, ricavala dalla sessione e mostral
 
 - Una voce per lezione, niente duplicati: leggi prima il file e, se una voce simile esiste, aggiornala aggiungendo il nuovo caso.
 - Niente dati riservati del progetto (segreti, nomi di clienti, dati personali): la nota deve essere generale.
-- Non modificare direttamente `conventions.md`, gli hook o le skill dei plugin: le note si rivedono e si applicano in una sessione dedicata dentro il repository harness, con `/core:harness-review`. Non committare lì senza richiesta.
+- Non modificare direttamente `conventions.md`, gli hook o le skill dei plugin: le note si rivedono e si applicano in una sessione dedicata dentro il repository harness, con `/core:harness-review`. Non committare lì senza richiesta. (L'hook di `core` chiede conferma se una sessione aperta altrove modifica il clone dell'harness.)
+- Se il problema blocca il lavoro in corso, dopo la nota suggerisci di correggerlo subito in una seconda sessione aperta nel repository harness (`cd ${user_config.harness_repo} && claude`, poi una correzione diretta con release e `/core:ship`); qui, dopo il rilascio, `/reload-plugins` (e `/modeler:install` se la correzione riguarda il modellatore installato nell'app). Nel frattempo, se possibile, aggira il problema a mano senza toccare l'harness.
