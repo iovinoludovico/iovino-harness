@@ -229,6 +229,11 @@ def cmd_apply(a) -> int:
         src = files[-1]
     new = _load_any(src)
     old = E.load(meta_path) if meta_path.exists() else {"package": new.get("package", "domain"), "classes": {}}
+    if meta_path.exists():
+        # the box positions saved by the editor are not domain: the file keeps its own (or none)
+        new.pop("diagram", None)
+        if old.get("diagram"):
+            new["diagram"] = old["diagram"]
     changes = E.diff(old, new)
     print(f"Proposal {src}:")
     print("\n".join(f"  {c}" for c in changes) if changes else "  no changes")
@@ -249,12 +254,18 @@ def cmd_apply(a) -> int:
         print("\n(dry run: pass --write to update the metamodel)")
         return 0
     if meta_path.exists():
-        bak = meta_path.parent / STATE_DIR / "backups" / f"{E.METAMODEL_FILE}.{dt.datetime.now():%Y%m%d-%H%M%S}"
-        bak.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(meta_path, bak)
         text = meta_path.read_text(encoding="utf-8")
         new = E.align_order(new, old)   # the proposal's key order (editor, jsonb) must not reorder the file
         patched = E.patch_text(text, new)
+        if patched is None and not a.rewrite:
+            print(f"\nThis change cannot be written by editing only the changed lines of {E.METAMODEL_FILE} "
+                  "(it touches the package header, or the file is not in the usual layout): nothing was written. "
+                  "Apply it by hand, or pass --rewrite to rewrite the whole file (key order, quoting and comments "
+                  "are not kept).", file=sys.stderr)
+            return 1
+        bak = meta_path.parent / STATE_DIR / "backups" / f"{E.METAMODEL_FILE}.{dt.datetime.now():%Y%m%d-%H%M%S}"
+        bak.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(meta_path, bak)
         if patched is not None:         # only the lines of what changed: order, style and comments kept
             meta_path.write_text(patched, encoding="utf-8")
         else:
@@ -706,6 +717,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("proposal", nargs="?")
     s.add_argument("--path", help="metamodel file or app directory")
     s.add_argument("--write", action="store_true", help="update the metamodel (otherwise dry run)")
+    s.add_argument("--rewrite", action="store_true",
+                   help="with --write, rewrite the whole file when only the changed lines cannot be edited")
     s.set_defaults(fn=cmd_apply)
 
     s = sub.add_parser("migrate", help="draft the migration from the previous metamodel to the current one")
