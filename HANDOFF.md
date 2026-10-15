@@ -8,8 +8,16 @@ Si raffina un pezzo alla volta, applicando le note raccolte nei progetti (`NOTES
 poi arriveranno i plugin `research` e `mde`.
 
 ## Stato
-- Rilasciato e pubblicato su GitHub: `0f588b7` `chore(release): core 0.5.0, modeler 0.7.0`. Plugin installati su
-  questo computer aggiornati (core 0.5.0, modeler 0.7.0). Nessun branch aperto oltre `main`.
+- Rilasciato e pubblicato su GitHub: core 0.5.0, modeler 0.8.0. Plugin installati su questo computer aggiornati.
+  Nessun branch aperto oltre `main`.
+- Novità della modeler 0.8.0:
+  - `apply --write` riscrive solo le righe cambiate (`patch_text`, `align_order` in
+    `plugins/modeler/scripts/metamodel/ecore.py`, usati da `cmd_apply`; se non può, riscrittura completa con avviso
+    sui commenti persi): sul metamodello di guest-invitations-af una modifica = 2 righe di diff invece di 194;
+  - `/admin/model` elenca sopra l'editor le proposte in sospeso con le differenze (`Layout.diff` in
+    `metamodel-editor.js`, uguale a `modeler diff`, test `diff.test.mjs`), "Apri nell'editor", "Scarta"
+    (`listMetamodelProposals`, `rejectMetamodelProposal` in `kit/next/metamodel-actions.ts`), avviso al salvataggio;
+    l'hook di sessione del modeler segnala le proposte in `.modeler/proposals/`.
 - Novità della 0.5.0 / 0.7.0:
   - `/core:harness-review` e promemoria a inizio sessione (`note_states`, `is_harness_repo` in `cmd_session` di
     `plugins/core/scripts/hook.py`): conta le note aperte, le rinviate a parte;
@@ -21,15 +29,13 @@ poi arriveranno i plugin `research` e `mde`.
     controllato da drift, anche da indici unici;
   - due righe nuove in `conventions.md`: merge su `main` sempre con conferma; lookup a più dimensioni come matrice
     con combinazione unica.
-- `NOTES.md`: 3 note applicate, 1 rinviata (il bus dell'editor), **2 da valutare** (aggiunte il 2026-10-15 da
-  guest-invitations-af):
-  - `modeler apply --write` riscrive tutto `domain.ecore.yaml` (chiavi riordinate: diff di 187 righe per una
-    modifica);
-  - il modellatore non mostra le proposte salvate e non ancora applicate.
-- Verificato su `main` (2026-10-15): `python3 -m unittest discover -s tests` → 21 OK;
-  `python3 -m unittest discover -s plugins/modeler/tests` → 31 OK (4 skip senza `MODELER_PG`; con Postgres 16 in
-  Docker tutti verdi); `node --test plugins/modeler/tests/layout.test.mjs` → 79 pass, 1 todo;
-  `claude plugin validate .` → passed.
+- `NOTES.md`: 6 note, tutte decise: 5 applicate (due con una parte rinviata: `pull` e l'elenco delle proposte di
+  produzione dalla CLI, che richiedono un accesso in sola lettura al database di produzione), 1 rinviata (il bus
+  dell'editor).
+- Verificato (2026-10-15): `python3 -m unittest discover -s tests` → 21 OK;
+  `python3 -m unittest discover -s plugins/modeler/tests` → 36 OK (4 skip senza `MODELER_PG`; lancia anche
+  `layout.test.mjs` e `diff.test.mjs`); `claude plugin validate .` → passed; kit TypeScript compilato con `tsc` in
+  un progetto di prova (con i `node_modules` di guest-invitations-af). Non provato nel browser dentro un'app.
 - Non committato: nulla.
 
 ## Decisioni
@@ -42,23 +48,22 @@ poi arriveranno i plugin `research` e `mde`.
   branch.
 
 ## Problemi aperti
-- Le 2 note da valutare (vedi Stato): la prima è un bug della CLI che tocca ogni app con il modellatore.
+- `pull` e l'elenco delle proposte di produzione richiedono ancora il DSN di produzione: da riprendere dopo aver
+  verificato una lettura in sola lettura (es. `supabase db query --linked`, comando non ancora verificato).
+- L'avviso delle proposte in `/admin/model` non è stato visto nel browser in un'app reale.
 - Il modellatore non è ancora installato in nessuna app reale con questa versione (`/admin/model` mai provato con
   Supabase reale).
 - Le app nate con appforge (`guest-invitations-af`, `order-management`) citano ancora appforge.
 - Sugli altri computer i plugin sono alla versione precedente finché non si aggiornano.
 
 ## Prossimi passi
-1. `/core:harness-review` sulle 2 note aperte; per `apply --write` partire da `E.dump`/`dumps` in
-   `plugins/modeler/scripts/metamodel/ecore.py` (ordine delle chiavi) e da `cmd_apply` in `cli.py`, con un test
-   "una modifica nella proposta → una riga di diff".
+1. `/modeler:install` su guest-invitations-af (porta la 0.8.0 nell'app) e prova in browser di `/admin/model`: avviso
+   delle proposte in sospeso, "Apri nell'editor", "Scarta", nuovo layout, `unique` di classe sulle tariffe; se il
+   metamodello ha ≥4 classi verso la stessa, riprendere la nota rinviata sul bus.
 2. Sugli altri computer: `git pull` nel clone e `./install.sh`, oppure `claude plugin update core@iovino-harness` e
    `claude plugin update modeler@iovino-harness`.
-3. `/modeler:install` su guest-invitations-af con `supabase start`: prova di `/admin/model`, delle proposte, del
-   nuovo layout e di `unique` di classe sulle tariffe; se il metamodello ha ≥4 classi verso la stessa, riprendere la
-   nota rinviata sul bus.
-4. Provare `/core:db-push` alla prima migrazione da portare in produzione.
-5. Plugin `mde` (Eclipse/EMF, Epsilon) e `research`.
+3. Provare `/core:db-push` alla prima migrazione da portare in produzione.
+4. Plugin `mde` (Eclipse/EMF, Epsilon) e `research`.
 
 ## Per riprendere
 `cd <clone> && claude` — i plugin si caricano da questa cartella: dopo una modifica usa `/reload-plugins`.
