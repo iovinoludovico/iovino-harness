@@ -54,6 +54,23 @@ class GuardFileTests(unittest.TestCase):
         self.check("/p/src/a.ts", "none", content="const k = process.env.ANTHROPIC_API_KEY")
 
 
+    def test_harness_edits_from_an_app_session_ask(self):
+        with tempfile.TemporaryDirectory() as d:
+            harness, app = Path(d) / "harness", Path(d) / "app"
+            (harness / "plugins/core").mkdir(parents=True)
+            app.mkdir()
+            env = {"CLAUDE_PLUGIN_OPTION_HARNESS_REPO": str(harness)}
+            edit = lambda path, cwd: decision(run("guard-file", {  # noqa: E731
+                "cwd": str(cwd), "tool_name": "Edit", "tool_input": {"file_path": str(path)}}, env))
+            self.assertEqual(edit(harness / "plugins/core/context/conventions.md", app), "ask")
+            self.assertEqual(edit(harness / "NOTES.md", app), "none")         # written by /core:harness-note
+            self.assertEqual(edit(harness / "plugins/core/context/conventions.md", harness), "none")
+            self.assertEqual(edit(harness / "plugins/core/x.md", harness / "plugins"), "none")
+            self.assertEqual(edit(app / "src/page.tsx", app), "none")
+            self.assertEqual(edit("../harness/plugins/core/x.md", app), "ask")   # relative path
+            self.assertEqual(edit(app / ".env", app), "deny")                # secrets still denied first
+
+
 class GuardBashTests(unittest.TestCase):
     def check(self, command, expected):
         res = run("guard-bash", {"tool_name": "Bash", "tool_input": {"command": command}})
