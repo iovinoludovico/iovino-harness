@@ -426,6 +426,30 @@ class AppTests(unittest.TestCase):
         self.assertTrue(cli._has_password("postgresql://u:secret@h/db"))
         self.assertFalse(cli._has_password("postgresql://postgres.ref@h:6543/postgres"))
 
+    def test_pull_without_a_password_stops_before_psql(self):
+        dsn = "postgresql://postgres.abcref@aws-0-eu-central-1.pooler.supabase.com:5432/postgres"
+        self.assertEqual(cli._pgpass_line(dsn),
+                         "aws-0-eu-central-1.pooler.supabase.com:5432:postgres:postgres.abcref:<password>")
+        env = {k: v for k, v in os.environ.items() if k not in ("PGPASSWORD", "SUPABASE_DB_PASSWORD")}
+        env["PGPASSFILE"] = str(self.app / "no-pgpass")
+        with unittest.mock.patch.dict(os.environ, env, clear=True), \
+                unittest.mock.patch.object(cli, "_can_prompt", return_value=False), \
+                unittest.mock.patch("subprocess.run") as psql, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(D.DbError) as err:
+                cli._prod_query(dsn, "select 1", "pulling from")
+            psql.assert_not_called()                                         # nothing sent to production
+            self.assertIn("~/.pgpass", str(err.exception))
+            self.assertIn(cli._pgpass_line(dsn), str(err.exception))
+            os.environ["SUPABASE_DB_PASSWORD"] = "x"                          # a password: psql runs, with -w
+            psql.return_value = subprocess.CompletedProcess([], 0, stdout="[]", stderr="")
+            self.assertEqual(cli._prod_query(dsn, "select 1", "pulling from"), [])
+            self.assertIn("-w", psql.call_args.args[0])
+            self.assertEqual(psql.call_args.kwargs["env"]["PGPASSWORD"], "x")
+            psql.return_value = subprocess.CompletedProcess([], 2, stdout="", stderr="fe_sendauth: no password supplied")
+            with self.assertRaises(D.DbError) as err:                       # e.g. ~/.pgpass without this host
+                cli._prod_query(dsn, "select 1", "pulling from")
+            self.assertIn(cli._pgpass_line(dsn), str(err.exception))
+
     def test_pull_without_a_linked_project(self):
         env = {k: v for k, v in os.environ.items() if k != "MODELER_PROD_DB"}
         err = io.StringIO()

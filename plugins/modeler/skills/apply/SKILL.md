@@ -13,9 +13,12 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    `npm run model:pull -- --db <DSN>`) solo dopo conferma esplicita dell'utente (scrive sul database di
    produzione: segna le proposte come `pulled`). Le copia in `.modeler/proposals/`.
    - Il DSN si ricava dal progetto collegato con `supabase link` (`supabase/.temp/`), o da `MODELER_PROD_DB`.
-     Non collegato: fai eseguire all'utente `! supabase link --project-ref <ref>`.
-   - La password viene da `SUPABASE_DB_PASSWORD`, `~/.pgpass` o dal prompt di `psql`: se non è nell'ambiente,
-     fai eseguire all'utente `! npm run model:pull`. Mai chiedere la password in chat né scriverla in file.
+     Non collegato: fai eseguire all'utente `supabase link --project-ref <ref>` in un suo terminale.
+   - La password viene da `SUPABASE_DB_PASSWORD` (esportata prima di avviare Claude Code) o da `~/.pgpass`
+     (la CLI, se manca, stampa la riga da aggiungere; poi `chmod 600 ~/.pgpass`). Altrimenti l'utente lancia il
+     comando in un suo terminale, fuori da Claude Code. Non suggerire `! npm run model:pull`: i comandi `! …`
+     non hanno un terminale e `psql` non può chiedere la password. Mai chiedere la password in chat, scriverla
+     in file del repository o nel comando.
    - Manca lo script `model:pull`: il modellatore installato è vecchio, aggiornalo con `/modeler:install`.
 2. `npm run model:proposals`: elenca le proposte con le differenze rispetto a `domain.ecore.yaml`.
 3. `npm run model:apply -- [file]` (prova a vuoto; senza file, la proposta più recente): mostra all'utente le

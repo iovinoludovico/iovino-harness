@@ -80,4 +80,4 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
   - da verificare anche per `core:db-push`, che suggerisce `! supabase db push` "se serve la password interattiva".
 - **Plugin**: modeler (e core per db-push)
 - **Tipo**: skill
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-10-15: `_prod_query` (`plugins/modeler/scripts/metamodel/cli.py`, usato da `pull` e `done --write`) si ferma prima di collegarsi se non c'è password (DSN, `PGPASSWORD`, `SUPABASE_DB_PASSWORD`, `~/.pgpass`) e non c'è un terminale (`_can_prompt`), con la riga di `~/.pgpass` da aggiungere (`_pgpass_line`); senza terminale `psql` gira con `-w`, e l'errore `no password supplied` (es. `~/.pgpass` senza la riga del pooler) riceve lo stesso aiuto; test `test_pull_without_a_password_stops_before_psql`. Skill `modeler:apply` e `core:db-push` e README del modeler: niente più `! …` per comandi che chiedono la password, ma `SUPABASE_DB_PASSWORD`, `~/.pgpass` o un terminale proprio. Il comportamento di `supabase link`/`db push` con `! …` non è stato provato: la skill evita comunque `! …`.
