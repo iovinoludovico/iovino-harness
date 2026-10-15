@@ -34,7 +34,7 @@ rivedilo **con l'utente**:
 `install <app>` copia o aggiorna:
 - `public/modeler/metamodel-editor.js` (editor senza dipendenze),
 - `src/components/modeler/metamodel-modeler.tsx` (wrapper React),
-- `src/lib/modeler/metamodel-actions.ts` (salva le proposte: file in sviluppo, tabella in produzione),
+- `src/lib/modeler/metamodel-actions.ts` (salva, elenca e scarta le proposte: file in sviluppo, tabella in produzione),
 - `src/lib/modeler/access.ts` (solo se manca: chi è admin e quale client Supabase usare),
 - `src/lib/modeler/metamodel.json` (il metamodello letto dalla pagina),
 - `tools/modeler/` (la CLI, con `VERSION`) e gli script `model:*` in `package.json`,

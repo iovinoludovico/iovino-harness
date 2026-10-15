@@ -16,7 +16,9 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   anything that loses data are left as commented `TODO(modeler)` lines to resolve.
 - A save in the modeler never changes the running app: it is a **proposal** (a file in `.modeler/proposals/` in
   development, a `model_change_requests` row in production) applied with `/modeler:apply`, which goes on with
-  the migration and the code in the same change.
+  the migration and the code in the same change. Until then `/admin/model` lists it above the editor (date,
+  author, note, the changes as `modeler diff` prints them), where it can be opened or rejected, and the session
+  start reminds the developer of the proposals in `.modeler/proposals/`.
 - `drift` compares the metamodel with a live database (local Supabase by default): "aligned" is the invariant.
 - Behaviour (workflows, permissions, pages) is code; what the metamodel cannot express is a customization
   listed in `docs/customizations.md` and marked `CUSTOM(<id>)`.

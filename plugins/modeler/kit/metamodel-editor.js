@@ -342,6 +342,60 @@
 
     return { rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf };
   })();
+
+  /* ------------------------------------------------------------------ changes between two metamodels
+   * The same lines as `modeler diff` (ecore.diff in the CLI), on the canonical form: the admin page shows them
+   * for the proposals waiting to be applied. Values are printed as the CLI prints them (None, True, ['A']). */
+  const pyRepr = (v) => v === undefined || v === null ? "None" : v === true ? "True" : v === false ? "False"
+    : Array.isArray(v) ? `[${v.map((x) => (typeof x === "string" ? `'${x}'` : pyRepr(x))).join(", ")}]` : String(v);
+  const multSuffix = (lo, up) => lo === 0 && up === 1 ? "" : lo === 0 && up === -1 ? "[*]" : lo === 1 && up === -1 ? "[+]"
+    : lo === up ? `[${lo}]` : `[${lo}..${up === -1 ? "*" : up}]`;
+  const sameGroup = (g, h) => JSON.stringify(g) === JSON.stringify(h);
+  const diff = (oldMm, newMm) => {
+    const a = Layout.normalize(oldMm), b = Layout.normalize(newMm);
+    const out = [];
+    const lits = (e) => e.literals.map((l) => l.name);
+    for (const en of Object.keys(b.enums)) {
+      if (!a.enums[en]) { out.push(`+ enum ${en}: ${lits(b.enums[en]).join(", ")}`); continue; }
+      for (const n of lits(b.enums[en])) if (!lits(a.enums[en]).includes(n)) out.push(`+ literal ${en}.${n}`);
+      for (const n of lits(a.enums[en])) if (!lits(b.enums[en]).includes(n)) out.push(`- literal ${en}.${n}`);
+    }
+    for (const en of Object.keys(a.enums)) if (!b.enums[en]) out.push(`- enum ${en}`);
+    for (const [cn, c] of Object.entries(b.classes)) {
+      const oc = a.classes[cn];
+      if (!oc) {
+        out.push(`+ class ${cn}${c.abstract ? " (abstract)" : ""}${c.supertypes.length ? ` extends ${c.supertypes.join(", ")}` : ""}`);
+        for (const g of c.unique || []) out.push(`  + ${cn}: unique (${g.join(", ")})`);
+        for (const [an, at] of Object.entries(c.attributes)) out.push(`  + ${cn}.${an}: ${at.type}${multSuffix(at.lower, at.upper)}`);
+        for (const [rn, r] of Object.entries(c.references)) {
+          out.push(`  + ${cn}.${rn} -> ${r.type}${multSuffix(r.lower, r.upper)}${r.containment ? " containment" : ""}${r.opposite ? ` opposite ${r.opposite}` : ""}`);
+        }
+        continue;
+      }
+      if (oc.abstract !== c.abstract) out.push(`~ class ${cn}: abstract ${pyRepr(oc.abstract)} -> ${pyRepr(c.abstract)}`);
+      if (!sameGroup(oc.supertypes, c.supertypes)) out.push(`~ class ${cn}: supertypes ${pyRepr(oc.supertypes)} -> ${pyRepr(c.supertypes)}`);
+      for (const g of c.unique || []) if (!(oc.unique || []).some((h) => sameGroup(g, h))) out.push(`+ ${cn}: unique (${g.join(", ")})`);
+      for (const g of oc.unique || []) if (!(c.unique || []).some((h) => sameGroup(g, h))) out.push(`- ${cn}: unique (${g.join(", ")})`);
+      for (const kind of ["attributes", "references"]) {
+        for (const [fn, f] of Object.entries(c[kind])) {
+          const renamed = f.renamed_from;
+          const of = oc[kind][fn] || (renamed ? oc[kind][renamed] : null);
+          if (!of) { out.push(`+ ${cn}.${fn}: ${f.type}${multSuffix(f.lower, f.upper)}`); continue; }
+          if (renamed && !oc[kind][fn]) out.push(`~ ${cn}.${renamed} renamed to ${fn}`);
+          for (const k of ["type", "lower", "upper", "containment", "opposite", "default", "id", "changeable"]) {
+            if (JSON.stringify(of[k] ?? null) !== JSON.stringify(f[k] ?? null)) out.push(`~ ${cn}.${fn}: ${k} ${pyRepr(of[k])} -> ${pyRepr(f[k])}`);
+          }
+        }
+        for (const fn of Object.keys(oc[kind])) {
+          if (!c[kind][fn] && !Object.values(c[kind]).some((x) => x.renamed_from === fn)) out.push(`- ${cn}.${fn}`);
+        }
+      }
+    }
+    for (const cn of Object.keys(a.classes)) if (!b.classes[cn]) out.push(`- class ${cn}`);
+    return out;
+  };
+  Layout.diff = diff;
+
   if (typeof module === "object" && module.exports) module.exports = Layout;
   if (typeof customElements === "undefined" || customElements.get("metamodel-editor")) return;
 
@@ -502,6 +556,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
       requestAnimationFrame(() => this._fit());
     }
     get metamodel() { return clone(this._mm); }
+    // the changes from the metamodel the editor was opened with (the running one) to `mm`, as `modeler diff`
+    changesTo(mm) { return Layout.diff(this._orig || {}, mm); }
     getMetamodel() { return this.metamodel; }
 
     /* ------------------------------------------------------------------ model edits */

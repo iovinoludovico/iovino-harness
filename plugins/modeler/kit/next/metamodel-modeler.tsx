@@ -3,9 +3,11 @@
 // Domain modeler of this app (installed by the modeler plugin, upgraded by re-running `modeler install`):
 // wraps the framework-free <metamodel-editor> (public/modeler/metamodel-editor.js).
 // The page passes the metamodel (src/lib/modeler/metamodel.json) and a server action that stores the proposal.
+// The proposals saved and not yet applied are listed above the editor: each can be opened or rejected.
 
 import Script from "next/script";
-import { useEffect, useRef, useState, type DetailedHTMLProps, type HTMLAttributes, type Ref } from "react";
+import { useCallback, useEffect, useRef, useState, type DetailedHTMLProps, type HTMLAttributes, type Ref } from "react";
+import { listMetamodelProposals, rejectMetamodelProposal, type PendingProposal } from "@/lib/modeler/metamodel-actions";
 
 export type ProposalResult = { ok: boolean; message: string };
 
@@ -18,8 +20,37 @@ type Props = {
   onSave: (json: string, note: string) => Promise<ProposalResult>;
 };
 
-type EditorElement = HTMLElement & { metamodel: unknown };
+type EditorElement = HTMLElement & { metamodel: unknown; changesTo: (mm: unknown) => string[] };
 type SaveDetail = { metamodel: unknown; note: string };
+
+const TEXT = {
+  it: {
+    pending: (n: number) => (n === 1 ? "1 proposta salvata e non ancora applicata" : `${n} proposte salvate e non ancora applicate`),
+    apply: "La applica lo sviluppatore con /modeler:apply (npm run model:apply).",
+    open: "Apri nell'editor",
+    reject: "Scarta",
+    confirmReject: "Scartare questa proposta? Non verrà applicata.",
+    viewing: (d: string) => `Stai vedendo la proposta del ${d}: salvandola ne crei una nuova.`,
+    back: "Torna al modello in esercizio",
+    noChanges: "nessuna differenza dal modello in esercizio",
+    more: (n: number) => `… e altre ${n}`,
+    confirmSave: (n: number) => `C'è già ${n === 1 ? "una proposta" : `${n} proposte`} in attesa: salvarne un'altra?`,
+    by: "di",
+  },
+  en: {
+    pending: (n: number) => (n === 1 ? "1 proposal saved and not applied yet" : `${n} proposals saved and not applied yet`),
+    apply: "The developer applies it with /modeler:apply (npm run model:apply).",
+    open: "Open in the editor",
+    reject: "Reject",
+    confirmReject: "Reject this proposal? It will not be applied.",
+    viewing: (d: string) => `You are viewing the proposal of ${d}: saving it creates a new one.`,
+    back: "Back to the running model",
+    noChanges: "no difference from the running model",
+    more: (n: number) => `… and ${n} more`,
+    confirmSave: (n: number) => `${n === 1 ? "A proposal is" : `${n} proposals are`} already waiting: save another one?`,
+    by: "by",
+  },
+};
 
 declare module "react" {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -35,10 +66,23 @@ declare module "react" {
 }
 
 export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, downloadLabel = "Download", onSave }: Props) {
+  const t = TEXT[lang.startsWith("en") ? "en" : "it"];
   const ref = useRef<EditorElement | null>(null);
   const [ready, setReady] = useState(false);
   const [result, setResult] = useState<ProposalResult | null>(null);
   const [last, setLast] = useState<SaveDetail | null>(null);
+  const [pending, setPending] = useState<PendingProposal[]>([]);
+  const [viewing, setViewing] = useState<PendingProposal | null>(null);
+  const pendingRef = useRef(0);
+  pendingRef.current = pending.length;
+
+  const refresh = useCallback(async () => {
+    try {
+      setPending(await listMetamodelProposals());
+    } catch {
+      setPending([]);   // the list is a help: the editor works without it
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -50,13 +94,19 @@ export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, d
 
   useEffect(() => {
     if (ready && ref.current) ref.current.metamodel = metamodel;
+    setViewing(null);
   }, [ready, metamodel]);
+
+  useEffect(() => {
+    if (ready) refresh();
+  }, [ready, refresh]);
 
   useEffect(() => {
     const el = ref.current;
     if (!ready || !el) return;
     const handler = async (ev: Event) => {
       const detail = (ev as CustomEvent<SaveDetail>).detail;
+      if (pendingRef.current > 0 && !window.confirm(t.confirmSave(pendingRef.current))) return;
       setLast(detail);
       setResult(null);
       try {
@@ -64,10 +114,38 @@ export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, d
       } catch (err) {
         setResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
       }
+      refresh();
     };
     el.addEventListener("save", handler);
     return () => el.removeEventListener("save", handler);
-  }, [ready, onSave]);
+  }, [ready, onSave, refresh, t]);
+
+  const changes = (p: PendingProposal): string[] => {
+    try {
+      return ref.current?.changesTo?.(p.metamodel) ?? [];
+    } catch {
+      return [];
+    }
+  };
+
+  const openProposal = (p: PendingProposal) => {
+    if (!ref.current) return;
+    ref.current.metamodel = p.metamodel;
+    setViewing(p);
+  };
+
+  const backToRunning = () => {
+    if (ref.current) ref.current.metamodel = metamodel;
+    setViewing(null);
+  };
+
+  const reject = async (p: PendingProposal) => {
+    if (!window.confirm(t.confirmReject)) return;
+    const res = await rejectMetamodelProposal(p.id);
+    setResult(res);
+    if (viewing?.id === p.id) backToRunning();
+    refresh();
+  };
 
   const download = () => {
     if (!last) return;
@@ -81,9 +159,55 @@ export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, d
     URL.revokeObjectURL(a.href);
   };
 
+  const when = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(lang);
+  };
+
   return (
     <div className="space-y-3">
       <Script src="/modeler/metamodel-editor.js" strategy="afterInteractive" />
+      {pending.length > 0 && !viewing && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950">
+          <p className="font-medium">{t.pending(pending.length)}</p>
+          <p className="text-muted-foreground">{t.apply}</p>
+          <ul className="mt-2 space-y-2">
+            {pending.map((p) => {
+              const lines = changes(p);
+              return (
+                <li key={p.id} className="rounded border bg-background p-2">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="font-medium">{when(p.createdAt)}</span>
+                    {p.author && <span className="text-muted-foreground">{t.by} {p.author}</span>}
+                    {p.status === "pulled" && <span className="text-muted-foreground">(pulled)</span>}
+                    {p.note && <span>· {p.note}</span>}
+                    <span className="grow" />
+                    <button type="button" className="underline" onClick={() => openProposal(p)}>
+                      {t.open}
+                    </button>
+                    {canEdit && (
+                      <button type="button" className="text-destructive underline" onClick={() => reject(p)}>
+                        {t.reject}
+                      </button>
+                    )}
+                  </div>
+                  <pre className="mt-1 whitespace-pre-wrap font-mono text-xs text-muted-foreground">
+                    {lines.length ? lines.slice(0, 8).join("\n") + (lines.length > 8 ? `\n${t.more(lines.length - 8)}` : "") : t.noChanges}
+                  </pre>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+      {viewing && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-sky-300 bg-sky-50 p-2 text-sm dark:border-sky-700 dark:bg-sky-950">
+          <span>{t.viewing(when(viewing.createdAt))}</span>
+          <button type="button" className="underline" onClick={backToRunning}>
+            {t.back}
+          </button>
+        </div>
+      )}
       <metamodel-editor
         ref={ref as Ref<HTMLElement>}
         lang={lang}

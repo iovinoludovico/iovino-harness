@@ -452,8 +452,13 @@ class AppTests(unittest.TestCase):
 class EditorLayoutTests(unittest.TestCase):
     def test_layout_of_the_editor(self):
         # the layout rules of core:diagrams, checked on the editor's pure layout functions (layout.test.mjs)
-        res = subprocess.run(["node", "--test", str(ROOT / "tests" / "layout.test.mjs")],
-                             capture_output=True, text=True, timeout=120)
+        self.node_test("layout.test.mjs")
+
+    def test_changes_of_a_proposal_match_the_cli(self):
+        self.node_test("diff.test.mjs")
+
+    def node_test(self, name):
+        res = subprocess.run(["node", "--test", str(ROOT / "tests" / name)], capture_output=True, text=True, timeout=120)
         self.assertEqual(res.returncode, 0, res.stdout[-3000:] + res.stderr[-2000:])
 
 
@@ -482,6 +487,14 @@ class HookTests(unittest.TestCase):
             self.assertIn("Update the metamodel", out.stdout)
             out = self.run_hook("session", {"cwd": d})
             self.assertIn("not installed", out.stdout)
+            self.assertNotIn("not applied yet", out.stdout)
+            props = Path(d) / ".modeler" / "proposals"
+            (props / "applied").mkdir(parents=True)
+            (props / "2026-10-15T10-00-00.json").write_text("{}")
+            (props / "applied" / "old.json").write_text("{}")
+            out = self.run_hook("session", {"cwd": d})
+            self.assertIn("1 proposal(s) saved by the admin modeler and not applied yet", out.stdout)
+            self.assertIn("2026-10-15T10-00-00.json", out.stdout)
             self.assertEqual(self.run_hook("session", {"cwd": tempfile.gettempdir()}).stdout, "")
 
 

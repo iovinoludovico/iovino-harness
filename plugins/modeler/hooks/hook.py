@@ -90,6 +90,11 @@ def session(data: dict) -> int:
         elif installed != __version__:
             lines.append(f"The app ships modeler {installed}, the plugin is {__version__}: "
                          "upgrade it with /modeler:install.")
+        pending = sorted(cli.proposals_dir(root / METAMODEL_FILE).glob("*.json"))
+        if pending:
+            lines.append(f"{len(pending)} proposal(s) saved by the admin modeler and not applied yet "
+                         f"(.modeler/proposals/: {', '.join(p.name for p in pending[:5])}): tell the user and "
+                         "propose /modeler:apply. Production proposals: `pull`.")
         dsn = os.environ.get("MODELER_DRIFT_DB")
         if dsn:
             from metamodel import dbschema as D, ecore as E  # noqa: E402
