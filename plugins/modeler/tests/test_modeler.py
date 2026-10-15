@@ -553,6 +553,46 @@ class AppTests(unittest.TestCase):
             cli.cmd_apply(argparse.Namespace(path=str(self.app), proposal=str(self.app / "p.json"), write=True))
         self.assertEqual(meta_path.read_text(), before.replace("classes:\n", "classes:  # curated by hand\n", 1))
 
+    def test_apply_ignores_the_diagram_of_a_production_proposal(self):
+        # the production editor saves box positions; the repository file has no diagram block
+        def jsonb(v):
+            return {k: jsonb(v[k]) for k in sorted(v, key=lambda k: (len(k), k))} if isinstance(v, dict) else v
+        cli.install(self.app)
+        meta_path = self.app / "domain.ecore.yaml"
+        before = meta_path.read_text()
+        doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
+        doc["classes"]["Persona"]["attributes"]["dataNascita"]["lower"] = 1
+        doc["classes"]["Persona"]["attributes"]["attivo"]["lower"] = 1
+        doc["diagram"] = {"Persona": {"x": 40, "y": 80}, "Soggetto": {"x": 300, "y": 80}}
+        (self.app / "p.json").write_text(json.dumps({"metamodel": jsonb(doc)}))
+        with contextlib.redirect_stdout(io.StringIO()):
+            ns = argparse.Namespace(path=str(self.app), proposal=str(self.app / "p.json"), write=True, rewrite=False)
+            self.assertEqual(cli.cmd_apply(ns), 0)
+        after = meta_path.read_text()
+        changed = [line for line in difflib.unified_diff(before.splitlines(), after.splitlines(), n=0)
+                   if line[:1] in "+-" and not line.startswith(("+++", "---"))]
+        self.assertEqual(len(changed), 4, changed)                          # two attributes, nothing else
+        self.assertNotIn("diagram", after)
+
+    def test_apply_stops_instead_of_rewriting_the_whole_file(self):
+        cli.install(self.app)
+        meta_path = self.app / "domain.ecore.yaml"
+        before = meta_path.read_text()
+        doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
+        doc["doc"] = "Another package description"                          # header: not editable line by line
+        (self.app / "p.json").write_text(json.dumps({"metamodel": doc}))
+        ns = argparse.Namespace(path=str(self.app), proposal=str(self.app / "p.json"), write=True, rewrite=False)
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(cli.cmd_apply(ns), 1)
+        self.assertEqual(meta_path.read_text(), before)
+        self.assertIn("--rewrite", err.getvalue())
+        self.assertTrue((self.app / "p.json").exists())
+        ns.rewrite = True
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(ns), 0)
+        self.assertIn("Another package description", meta_path.read_text())
+
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class EditorLayoutTests(unittest.TestCase):
     def test_layout_of_the_editor(self):
