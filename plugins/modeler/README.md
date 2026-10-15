@@ -9,8 +9,8 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
 - `/modeler:install` puts the modeler in the app's repository: editor (`public/modeler/`), React wrapper,
   server action that saves proposals, admin page `/admin/model`, table `model_change_requests`, and the CLI
   itself in `tools/modeler/` with `npm run model:*` scripts. After that the app does not need the plugin:
-  `model:validate`, `model:sync`, `model:migrate`, `model:drift`, `model:proposals`, `model:pull`, `model:apply`
-  run from the repository and in CI.
+  `model:validate`, `model:sync`, `model:migrate`, `model:drift`, `model:proposals`, `model:pull`, `model:apply`,
+  `model:done` run from the repository and in CI.
 - `migrate` drafts the SQL migration from the previous metamodel (committed `HEAD` by default) to the current one:
   tables, columns, foreign keys, join tables, enum literals and renames are written; RLS policies, backfills and
   anything that loses data are left as commented `TODO(modeler)` lines to resolve.
@@ -72,8 +72,8 @@ Eclipse EMF and Epsilon.
 
 ## Requirements
 Python 3.10+ (PyYAML if installed, else the vendored pure-Python copy in `scripts/vendor`); `psql` for
-`reverse`, `drift` and `pull`. `pull` connects to the Supabase project linked with `supabase link` (or
-`MODELER_PROD_DB`, or `--db`); psql takes the password from `SUPABASE_DB_PASSWORD`, `~/.pgpass` or a prompt.
+`reverse`, `drift`, `pull` and `done`. `pull` and `done` connect to the Supabase project linked with
+`supabase link` (or `MODELER_PROD_DB`, or `--db`); psql takes the password from `SUPABASE_DB_PASSWORD`, `~/.pgpass` or a prompt.
 
 ## Tests
 ```bash
