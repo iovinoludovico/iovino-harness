@@ -21,5 +21,6 @@ claude plugin validate .
 ```
 
 ## Regole
-- Le note raccolte da `/core:harness-note` in `NOTES.md` si applicano qui, in una sessione dedicata.
+- Le note raccolte da `/core:harness-note` in `NOTES.md` si valutano qui con `/core:harness-review` (l'inizio
+  sessione segnala quante sono aperte); ogni nota resta nel file con lo stato applicata, scartata o rinviata.
 - Le convenzioni personali sono in `plugins/core/context/conventions.md`: si modificano lì, non in questo file.

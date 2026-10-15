@@ -90,6 +90,35 @@ def detect_stack(root: Path) -> list[str]:
     return found
 
 
+NOTE_STATE_RE = re.compile(r"^- \*\*Stato\*\*:\s*(.*)$", re.MULTILINE)
+
+
+def note_states(notes: Path) -> dict[str, int]:
+    """Count the NOTES.md entries by state: a note without a final decision is still to be reviewed."""
+    counts = {"open": 0, "deferred": 0, "closed": 0}
+    try:
+        text = notes.read_text(encoding="utf-8")
+    except OSError:
+        return counts
+    for entry in re.split(r"^## ", text, flags=re.MULTILINE)[1:]:
+        m = NOTE_STATE_RE.search(entry)
+        state = m.group(1).strip().lower() if m else ""
+        if state.startswith(("applicata", "scartata")):
+            counts["closed"] += 1
+        elif state.startswith("rinviata"):
+            counts["deferred"] += 1
+        else:
+            counts["open"] += 1
+    return counts
+
+
+def is_harness_repo(root: Path) -> bool:
+    configured = option("harness_repo")
+    if configured and Path(configured).expanduser().resolve() == root.resolve():
+        return True
+    return (root / ".claude-plugin" / "marketplace.json").exists() and (root / "plugins" / "core").is_dir()
+
+
 def cmd_session(data: dict) -> int:
     cwd = Path(data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     parts: list[str] = []
@@ -115,6 +144,12 @@ def cmd_session(data: dict) -> int:
         info.append("- Manca CLAUDE.md: proponi `/core:project-init` se il lavoro sul progetto non è occasionale")
     if (root / "HANDOFF.md").exists():
         info.append("- Esiste HANDOFF.md: leggilo prima di iniziare, contiene lo stato lasciato dalla sessione precedente")
+    if is_harness_repo(root) and (root / "NOTES.md").exists():
+        counts = note_states(root / "NOTES.md")
+        if counts["open"]:
+            deferred = f" (più {counts['deferred']} rinviate)" if counts["deferred"] else ""
+            info.append(f"- {counts['open']} note da valutare in NOTES.md{deferred}: segnalalo all'utente e proponi "
+                        "`/core:harness-review`")
     parts.append("## Progetto corrente\n" + "\n".join(info))
 
     print("\n\n".join(parts))
