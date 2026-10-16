@@ -485,6 +485,32 @@ class AppTests(unittest.TestCase):
         self.assertIn(f'const VERSION = "{__version__}";', editor)                # shown in the toolbar
         self.assertNotIn(cli.VERSION_PLACEHOLDER, editor)
 
+    def test_install_stops_on_a_docs_domain_md_with_other_case(self):
+        other = self.app / "docs" / "domain.md"                          # appforge's document, not hand notes
+        other.parent.mkdir(parents=True)
+        other.write_text("# Behaviour\n\nroles and workflow\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_install(argparse.Namespace(app=str(self.app), no_migration=True)), 0)
+        self.assertEqual(sorted(os.listdir(self.app / "docs")), ["domain.md"])   # no DOMAIN.md, nothing overwritten
+        self.assertEqual(other.read_text(), "# Behaviour\n\nroles and workflow\n")
+        self.assertFalse((self.app / ".modeler" / "DOMAIN.generated.md").exists())
+        self.assertIn("docs/domain.md differs from docs/DOMAIN.md only by letter case", out.getvalue())
+        self.assertIn("docs/behavior.md", out.getvalue())
+        st = cli.docs_status(self.app)
+        self.assertEqual((st["state"], st["other"]), ("clash", "docs/domain.md"))
+        ns = lambda **kw: argparse.Namespace(path=str(self.app), **kw)   # noqa: E731
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(cli.cmd_sync(ns(force=True)), 1)                      # even --force keeps it
+        self.assertIn("letter case", err.getvalue())
+        self.assertEqual(sorted(os.listdir(self.app / "docs")), ["domain.md"])
+        other.rename(self.app / "docs" / "behavior.md")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_sync(ns(force=False)), 0)
+        self.assertEqual(sorted(os.listdir(self.app / "docs")), ["DOMAIN.md", "behavior.md"])
+        self.assertEqual(cli.docs_status(self.app)["state"], "aligned")
+
     def test_sync_keeps_hand_edits_in_domain_md(self):
         cli.install(self.app)
         md = self.app / "docs/DOMAIN.md"
@@ -853,6 +879,11 @@ class HookTests(unittest.TestCase):
             (Path(d) / "tools" / "modeler").mkdir(parents=True)
             (Path(d) / "tools" / "modeler" / "VERSION").write_text(__version__ + "\n")
             self.assertIn("docs/DOMAIN.md missing", self.run_hook("session", {"cwd": d}).stdout)
+            (Path(d) / "docs").mkdir()
+            (Path(d) / "docs" / "domain.md").write_text("# other\n")
+            self.assertIn("docs/domain.md differs from docs/DOMAIN.md only by letter case",
+                          self.run_hook("session", {"cwd": d}).stdout)
+            (Path(d) / "docs" / "domain.md").unlink()
             cli.write_docs(Path(d), E.load(Path(d) / "domain.ecore.yaml"))
             self.assertNotIn("DOMAIN.md", self.run_hook("session", {"cwd": d}).stdout)
             md = Path(d) / "docs" / "DOMAIN.md"

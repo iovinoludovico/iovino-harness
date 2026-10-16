@@ -18,6 +18,8 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   session start; `/modeler:metamodel` translates them into the metamodel (structure or `rules`), then
   `sync --force` regenerates the file (the original goes to `.modeler/backups/`). `sync` never overwrites hand edits;
   it keeps a copy of what it wrote in `.modeler/DOMAIN.generated.md`, so hand edits are told apart from metamodel changes.
+  A `docs/domain.md` with other letter case (appforge apps) is another document: nothing is written until it is
+  renamed or removed (`docs` and the session hook say so).
 - `migrate` drafts the SQL migration from the previous metamodel (committed `HEAD` by default) to the current one:
   tables, columns, foreign keys, join tables, enum literals and renames are written; RLS policies, backfills and
   anything that loses data are left as commented `TODO(modeler)` lines to resolve.

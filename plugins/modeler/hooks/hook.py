@@ -112,6 +112,10 @@ def session(data: dict) -> int:
             lines.append("docs/DOMAIN.md is out of date (the metamodel changed): `npm run model:sync`.")
         elif docs["state"] == "missing" and installed is not None:
             lines.append("docs/DOMAIN.md missing: `npm run model:sync` writes it.")
+        elif docs["state"] == "clash":
+            lines.append(f"{docs['other']} differs from docs/DOMAIN.md only by letter case: another document, not "
+                         "hand notes. Nothing is written to docs/DOMAIN.md until it is renamed (e.g. docs/behavior.md, "
+                         "updating its references) or deleted; tell the user.")
         dsn = os.environ.get("MODELER_DRIFT_DB")
         if dsn:
             from metamodel import dbschema as D, ecore as E  # noqa: E402

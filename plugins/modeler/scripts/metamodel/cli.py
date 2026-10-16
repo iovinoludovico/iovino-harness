@@ -290,7 +290,7 @@ def cmd_apply(a) -> int:
             dst = dst.with_name(f"{dst.stem}-1{dst.suffix}")
         moved.append(f.rename(dst))
     sync(meta_path.parent)
-    if docs_status(meta_path.parent)["state"] == "edited":
+    if docs_status(meta_path.parent)["state"] in ("edited", "clash"):
         print(docs_report(docs_status(meta_path.parent), diff=False))
     print(f"\nwrote {meta_path}")
     print("next: `npm run model:migrate -- --write` drafts the migration; resolve its TODO(modeler) lines, "
@@ -633,6 +633,8 @@ def sync(root: Path, force: bool = False) -> list[str]:
     _write_json(root / METAMODEL_JSON, E.runtime_json(raw))
     written = [str(METAMODEL_JSON)]
     st = docs_status(root, raw)
+    if st["state"] == "clash":                       # another document would be read or overwritten as DOMAIN.md
+        return written
     if st["state"] != "edited" or force:
         if st["state"] == "edited":
             bak = root / STATE_DIR / "backups" / f"DOMAIN.md.{dt.datetime.now():%Y%m%d-%H%M%S}"
@@ -643,9 +645,25 @@ def sync(root: Path, force: bool = False) -> list[str]:
     return written
 
 
+def docs_clash(root: Path) -> str | None:
+    """A file in docs/ named like DOMAIN.md with other letter case (appforge wrote docs/domain.md): another
+    document. On macOS it would be read as DOMAIN.md, on Linux sync would write a twin next to it."""
+    docs = root / DOMAIN_MD.parent
+    if not docs.is_dir():
+        return None
+    for name in sorted(os.listdir(docs)):                # listdir, not exists(): the latter lies on macOS
+        if name.lower() == DOMAIN_MD.name.lower() and name != DOMAIN_MD.name:
+            return str(DOMAIN_MD.parent / name)
+    return None
+
+
 def docs_status(root: Path, raw: dict[str, Any] | None = None) -> dict[str, Any]:
-    """docs/DOMAIN.md against the metamodel: `missing`, `aligned`, `stale` (the metamodel changed: regenerate)
-    or `edited` (hand notes to translate into the metamodel, listed by section with a short diff)."""
+    """docs/DOMAIN.md against the metamodel: `missing`, `aligned`, `stale` (the metamodel changed: regenerate),
+    `edited` (hand notes to translate into the metamodel, listed by section with a short diff) or `clash`
+    (a docs/domain.md with other letter case: nothing is written until it is renamed or removed)."""
+    other = docs_clash(root)
+    if other:
+        return {"state": "clash", "sections": [], "other": other}
     path = root / DOMAIN_MD
     if not path.exists():
         return {"state": "missing", "sections": []}
@@ -680,6 +698,10 @@ def write_docs(root: Path, raw: dict[str, Any]) -> Path:
 
 def docs_report(st: dict[str, Any], diff: bool = True) -> str:
     state = st["state"]
+    if state == "clash":
+        return (f"{st['other']} differs from {DOMAIN_MD} only by letter case: another document, read as {DOMAIN_MD} "
+                "on macOS and doubled on Linux. Rename it (e.g. docs/behavior.md) and update its references, or "
+                f"delete it if {DOMAIN_MD} replaces it; then `npm run model:sync`")
     if state == "missing":
         return f"{DOMAIN_MD} missing: `npm run model:sync` writes it"
     if state == "stale":
@@ -702,7 +724,7 @@ def cmd_sync(a) -> int:
     for w in sync(root, force=getattr(a, "force", False)):
         print(f"wrote {w}")
     st = docs_status(root)
-    if st["state"] == "edited":
+    if st["state"] in ("edited", "clash"):
         print(docs_report(st), file=sys.stderr)
         return 1
     return 0
@@ -788,7 +810,7 @@ def cmd_install(a) -> int:
         print(f"  + {w}")
     if not (target / E.METAMODEL_FILE).exists():
         print(f"no {E.METAMODEL_FILE} yet: derive it with `reverse --db <DSN> -o {E.METAMODEL_FILE}`, then `sync`")
-    elif docs_status(target)["state"] == "edited":
+    elif docs_status(target)["state"] in ("edited", "clash"):
         print(docs_report(docs_status(target), diff=False))
     print("next: adapt src/lib/modeler/access.ts to the app's admin check, add the admin page and the link "
           "in the admin navigation (see the install skill)")
