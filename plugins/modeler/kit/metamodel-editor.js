@@ -25,7 +25,7 @@
   const FEATURE_RE = /^[a-z][A-Za-z0-9_]{0,39}$/;
   const LITERAL_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
   const RESERVED = ["id", "createdAt", "updatedAt", "created_at", "updated_at"];
-  const BOX_W = 210, HEAD_H = 32, ROW_H = 19, PAD = 8, CHAR_W = 7.4;
+  const HEAD_H = 32, ROW_H = 19, PAD = 8, CHAR_W = 7.4;
   const MAX_ROWS = 12;                     // attributes shown in a box before "+N" (all of them with "Tutti")
   const GAP_X = 110, GAP_Y = 56, MARGIN = 24, K_MIN = 0.25, K_MAX = 2;
 
