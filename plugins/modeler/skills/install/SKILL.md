@@ -37,6 +37,7 @@ rivedilo **con l'utente**:
 - `src/lib/modeler/metamodel-actions.ts` (salva, elenca e scarta le proposte: file in sviluppo, tabella in produzione),
 - `src/lib/modeler/access.ts` (solo se manca: chi è admin e quale client Supabase usare),
 - `src/lib/modeler/metamodel.json` (il metamodello letto dalla pagina),
+- `docs/DOMAIN.md` (la descrizione del dominio generata dal metamodello; si rigenera con `npm run model:sync`),
 - `tools/modeler/` (la CLI, con `VERSION`) e gli script `model:*` in `package.json`,
 - `supabase/migrations/<ts>_model_change_requests.sql` (solo la prima volta).
 
@@ -53,7 +54,10 @@ rivedilo **con l'utente**:
   `.modeler/proposals/` (le proposte si rivedono nel repository).
 - In `CLAUDE.md` dell'app: "Il metamodello del dominio è `domain.ecore.yaml`: ogni modifica di schema parte da
   lì (/modeler:metamodel) insieme alla migrazione; `npm run model:sync` aggiorna il modellatore,
-  `npm run model:drift` deve dare 'aligned'. Le proposte del modellatore si applicano con /modeler:apply."
+  `npm run model:drift` deve dare 'aligned'. Le proposte del modellatore si applicano con /modeler:apply.
+  `docs/DOMAIN.md` è generato dal metamodello: lì si annotano a mano dettagli e regole da portare nel metamodello
+  (/modeler:metamodel), mai la struttura." Se l'app formatta `docs/` con Prettier, aggiungi `docs/DOMAIN.md` a
+  `.prettierignore`.
 - Proponi uno step di CI che applica le migrazioni a un database temporaneo ed esegue
   `npm run model:validate` e `MODELER_DB=<dsn> npm run model:drift`.
 - Logica scritta a mano che il metamodello non esprime (workflow, regole, pagine speciali): elencala in

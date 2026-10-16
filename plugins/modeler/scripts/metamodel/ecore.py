@@ -12,6 +12,8 @@ drift and shown to the developer; the application code itself is written by hand
 from __future__ import annotations
 
 import copy
+import difflib
+import hashlib
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -43,15 +45,18 @@ CUSTOM_DATATYPES = {"Text": "java.lang.String", "Email": "java.lang.String", "UR
                     "Money": "java.math.BigDecimal", "Date": "java.time.LocalDate",
                     "DateTime": "java.util.Date", "JSON": "java.lang.String"}
 
-CLASS_KEYS = {"abstract", "supertypes", "doc", "label", "plural", "table", "unique", "attributes", "references"}
+CLASS_KEYS = {"abstract", "supertypes", "doc", "label", "plural", "table", "unique", "attributes", "references", "rules"}
 ATTRIBUTE_KEYS = {"type", "lower", "upper", "default", "id", "unique", "changeable", "doc", "label", "help",
                   "list", "min", "max", "max_length", "renamed_from", "column"}
 REFERENCE_KEYS = {"type", "lower", "upper", "containment", "opposite", "doc", "label", "help", "list",
                   "on_delete", "unique", "renamed_from", "column", "join_table"}
 # columns every table may have that the metamodel does not describe (managed by the database)
 STANDARD_COLUMNS = {"id", "created_at", "updated_at"}
-TOP_KEYS = {"package", "nsURI", "nsPrefix", "doc", "language", "classes", "enums", "diagram"}
+TOP_KEYS = {"package", "nsURI", "nsPrefix", "doc", "language", "classes", "enums", "rules", "diagram"}
 LANGUAGES = {"en", "it"}
+# domain rules the structure cannot express: [{id, text}] on the package or on a class; shown in docs/DOMAIN.md
+RULE_ID = re.compile(r"^[a-z][a-z0-9_]*$")
+RULE_KEYS = {"id", "text"}
 
 
 class MetamodelError(Exception):
@@ -100,12 +105,15 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
         "language": raw.get("language") or "en",
         "classes": {},
         "enums": {},
+        "rules": copy.deepcopy(raw.get("rules") or []),
         "diagram": copy.deepcopy(raw.get("diagram") or {}),
     }
     for cname, cspec in (raw.get("classes") or {}).items():
         cspec = cspec if isinstance(cspec, dict) else {}
         cls: dict[str, Any] = {k: copy.deepcopy(v) for k, v in cspec.items() if k not in ("attributes", "references")}
         cls["abstract"] = bool(cspec.get("abstract", False))
+        if "rules" in cls and cls["rules"] is None:
+            cls["rules"] = []
         sup = cspec.get("supertypes") or []
         cls["supertypes"] = [str(s) for s in (sup if isinstance(sup, list) else [sup])]
         if "unique" in cspec:   # combinations that must be unique: one group [a, b] or several [[a, b], [c, d]]
@@ -180,6 +188,8 @@ def compact(raw: dict[str, Any]) -> dict[str, Any]:
             cls["attributes"] = attrs
         if refs:
             cls["references"] = refs
+        if c.get("rules"):
+            cls["rules"] = c["rules"]
         classes[cname] = cls
     out["classes"] = classes
     enums = {}
@@ -192,6 +202,8 @@ def compact(raw: dict[str, Any]) -> dict[str, Any]:
             enums[en] = {**rest, "literals": [lit["name"] if list(lit) == ["name"] else lit for lit in lits]}
     if enums:
         out["enums"] = enums
+    if e["rules"]:
+        out["rules"] = e["rules"]
     if e["diagram"]:
         out["diagram"] = e["diagram"]
     return out
@@ -245,7 +257,7 @@ def dumps(raw: dict[str, Any]) -> str:
             text += f"{key}: {scalar.removesuffix('...').strip()}\n"
         else:
             body_text = yaml.dump(value, Dumper=Dumper, sort_keys=False, allow_unicode=True, width=120)
-            text += ("\n" if key in ("enums", "diagram") else "") + f"{key}:\n" + "".join(
+            text += ("\n" if key in ("enums", "rules", "diagram") else "") + f"{key}:\n" + "".join(
                 "  " + line + "\n" for line in body_text.rstrip("\n").split("\n"))
     return header + text
 
@@ -276,6 +288,13 @@ def _yaml_lines(value: dict[str, Any], indent: int) -> list[str]:
     """`value` ({name: spec}) as dumps writes it (one block entry per name), indented by `indent` spaces."""
     yaml, Dumper = _flow_dumper()
     chunk = yaml.dump(_Block(value), Dumper=Dumper, sort_keys=False, allow_unicode=True, width=120)
+    return [" " * indent + line for line in chunk.rstrip("\n").split("\n")]
+
+
+def _yaml_list_lines(value: list[Any], indent: int) -> list[str]:
+    """A list as dumps writes it (`- {id: x, text: …}` items), indented by `indent` spaces."""
+    yaml, Dumper = _flow_dumper()
+    chunk = yaml.dump(value, Dumper=Dumper, sort_keys=False, allow_unicode=True, width=120)
     return [" " * indent + line for line in chunk.rstrip("\n").split("\n")]
 
 
@@ -377,6 +396,16 @@ def patch_text(text: str, new: dict[str, Any]) -> str | None:
             return None
         ds, de = top["diagram"]
         edits.append((ds, de, ["diagram:"] + _yaml_lines(cb["diagram"], 2)))
+    if a["rules"] != b["rules"]:                     # package rules: their own top-level block
+        block = ["rules:"] + _yaml_list_lines(cb["rules"], 2) if b["rules"] else []
+        if "rules" in top:
+            edits.append((*top["rules"], block))
+        elif block:                                  # new block before the diagram, else after the last key
+            if "diagram" in top:
+                edits.append((top["diagram"][0], top["diagram"][0], block + [""]))
+            else:
+                at = max(e for _, e in top.values())
+                edits.append((at, at, [""] + block))
     for start, end, repl in sorted(edits, key=lambda x: (x[0], x[1]), reverse=True):
         lines[start:end] = repl
     out = "\n".join(lines)
@@ -449,6 +478,7 @@ def validate(raw: dict[str, Any]) -> M.Report:
         rep.error("metamodel", f"unknown top-level keys: {', '.join(sorted(map(str, unknown)))} "
                   "(the metamodel describes structure only: workflows, permissions and pages live in the code)")
     e = expand(raw)
+    _check_rules(e["rules"], "rules", rep)
     if e["language"] not in LANGUAGES:
         rep.error("language", f"must be one of {', '.join(sorted(LANGUAGES))} (names of tables and plurals)")
     if not re.match(r"^[a-z][A-Za-z0-9_]*$", e["package"]):
@@ -479,6 +509,8 @@ def validate(raw: dict[str, Any]) -> M.Report:
         extra = set(c) - CLASS_KEYS
         if extra:
             rep.error(where, f"unknown keys: {', '.join(sorted(extra))} (allowed: {', '.join(sorted(CLASS_KEYS))})")
+        if "rules" in c:
+            _check_rules(c["rules"], f"{where}.rules", rep)
         for s in c["supertypes"]:
             if s not in e["classes"]:
                 rep.error(where, f"unknown supertype '{s}'")
@@ -556,6 +588,31 @@ def validate(raw: dict[str, Any]) -> M.Report:
     if rep.ok:
         storage(raw, rep)   # columns that clash once references are placed
     return rep
+
+
+def _check_rules(rules: Any, where: str, rep: M.Report) -> None:
+    """`rules`: a list of {id, text}; ids are lowercase identifiers, unique in their scope."""
+    if not isinstance(rules, list):
+        rep.error(where, "a list of {id, text} mappings")
+        return
+    seen: set[str] = set()
+    for i, r in enumerate(rules):
+        w = f"{where}[{i}]"
+        if not isinstance(r, dict):
+            rep.error(w, "a rule is a mapping {id, text} (a comma or colon in the text: quote it)")
+            continue
+        rid = r.get("id")
+        if not isinstance(rid, str) or not RULE_ID.match(rid):
+            rep.error(w, f"id {rid!r}: lowercase identifier (letters, digits, _)")
+        elif rid in seen:
+            rep.error(w, f"rule id '{rid}' declared twice")
+        else:
+            seen.add(rid)
+        if not isinstance(r.get("text"), str) or not r["text"].strip():
+            rep.error(w, "text: the rule in one sentence")
+        extra = set(r) - RULE_KEYS
+        if extra:
+            rep.error(w, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: id, text)")
 
 
 def _check_unique_groups(e: dict[str, Any], cname: str, c: dict[str, Any], where: str, rep: M.Report) -> None:
@@ -863,12 +920,238 @@ def to_mermaid(raw: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# --------------------------------------------------------------------------- #
+# docs/DOMAIN.md: the domain explained (generated by `sync`, hand notes detected by `docs`)
+# --------------------------------------------------------------------------- #
+DOC_TEXT: dict[str, dict[str, str]] = {
+    "it": {
+        "title": "Dominio {package}",
+        "note1": "Generato da `domain.ecore.yaml` con `npm run model:sync`: la struttura si cambia nel metamodello, non qui.",
+        "note2": "Dettagli, vincoli e regole scritti a mano in questo file sono letti da `/modeler:metamodel` "
+                 "e portati nel metamodello.",
+        "diagram": "Diagramma", "rules": "Regole generali", "class_rules": "Regole", "attributes": "Attributi",
+        "references": "Riferimenti", "enums": "Enum", "abstract": "Astratta.", "extends": "Estende {names}.",
+        "name": "Nome", "type": "Tipo", "mult": "Molteplicità", "constraints": "Vincoli", "description": "Descrizione",
+        "to": "Verso", "notes": "Note", "literal": "Letterale", "label": "Etichetta",
+        "id": "identificativo", "unique": "unico", "default": "default {v}", "max_length": "max {n} caratteri",
+        "min": "min {v}", "max": "max {v}", "readonly": "sola lettura", "containment": "contenimento",
+        "opposite": "opposto `{name}`", "on_delete": "alla cancellazione: {v}",
+    },
+    "en": {
+        "title": "Domain {package}",
+        "note1": "Generated from `domain.ecore.yaml` by `npm run model:sync`: the structure changes in the metamodel, not here.",
+        "note2": "Details, constraints and rules written by hand in this file are read by `/modeler:metamodel` "
+                 "and moved into the metamodel.",
+        "diagram": "Diagram", "rules": "General rules", "class_rules": "Rules", "attributes": "Attributes",
+        "references": "References", "enums": "Enums", "abstract": "Abstract.", "extends": "Extends {names}.",
+        "name": "Name", "type": "Type", "mult": "Multiplicity", "constraints": "Constraints", "description": "Description",
+        "to": "To", "notes": "Notes", "literal": "Literal", "label": "Label",
+        "id": "identifier", "unique": "unique", "default": "default {v}", "max_length": "max {n} characters",
+        "min": "min {v}", "max": "max {v}", "readonly": "read only", "containment": "containment",
+        "opposite": "opposite `{name}`", "on_delete": "on delete: {v}",
+    },
+}
+MARKDOWN_MARK = "<!-- modeler: generated from domain.ecore.yaml by model:sync; checksum {checksum} -->"
+_MARK_RE = re.compile(r"^<!-- modeler: generated from domain\.ecore\.yaml by model:sync; checksum ([0-9a-f]{12}) -->\s*$")
+_TABLE_SEP_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$")
+
+
+def _label(value: Any, lang: str) -> str:
+    """A label written as a string or as {it: …, en: …}."""
+    if isinstance(value, dict):
+        return str(value.get(lang) or value.get("en") or value.get("it") or next(iter(value.values()), ""))
+    return "" if value is None else str(value)
+
+
+def _cell(value: Any) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _table(header: list[str], rows: list[list[Any]]) -> list[str]:
+    return (["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+            + ["| " + " | ".join(_cell(c) for c in r) + " |" for r in rows])
+
+
+def _literal_text(value: Any) -> str:
+    return str(value).lower() if isinstance(value, bool) else str(value)
+
+
+def _constraints(a: dict[str, Any], t: dict[str, str]) -> str:
+    out = []
+    if a.get("id"):
+        out.append(t["id"])
+    if a.get("unique"):
+        out.append(t["unique"])
+    if a.get("default") is not None:
+        out.append(t["default"].format(v=_literal_text(a["default"])))
+    if a.get("max_length"):
+        out.append(t["max_length"].format(n=a["max_length"]))
+    if a.get("min") is not None:
+        out.append(t["min"].format(v=a["min"]))
+    if a.get("max") is not None:
+        out.append(t["max"].format(v=a["max"]))
+    if a.get("changeable") is False:
+        out.append(t["readonly"])
+    return ", ".join(out)
+
+
+def _ref_notes(r: dict[str, Any], t: dict[str, str]) -> str:
+    out = []
+    if r["containment"]:
+        out.append(t["containment"])
+    if r.get("opposite"):
+        out.append(t["opposite"].format(name=r["opposite"]))
+    if r.get("on_delete"):
+        out.append(t["on_delete"].format(v=r["on_delete"]))
+    if r.get("unique"):
+        out.append(t["unique"])
+    return ", ".join(out)
+
+
+def _description(f: dict[str, Any]) -> str:
+    doc = str(f.get("doc") or "")
+    return f"{doc} ({f['help']})".strip() if f.get("help") else doc
+
+
+def to_markdown(raw: dict[str, Any], lang: str | None = None) -> str:
+    """The domain explained: package, diagram, one section per class (attributes, references, rules), enums.
+    Deterministic: the same metamodel always gives the same text (docs/DOMAIN.md is compared with it)."""
+    e = expand(raw)
+    lang = lang or e["language"]
+    t = DOC_TEXT.get(lang) or DOC_TEXT["en"]
+
+    def heading(name: str) -> str:
+        spec = e["classes"].get(name) or e["enums"].get(name) or {}
+        label = _label(spec.get("label"), lang)
+        return f"{label} (`{name}`)" if label and label != name else name
+
+    def display(name: str) -> str:
+        return heading(name).split(" (`")[0]
+
+    out = [f"# {t['title'].format(package=e['package'])}", ""]
+    if e["doc"]:
+        out += [str(e["doc"]), ""]
+    out += [f"> {t['note1']}", f"> {t['note2']}", "", f"## {t['diagram']}", "", "```mermaid",
+            to_mermaid(raw).rstrip("\n"), "```", ""]
+    if e["rules"]:
+        out += [f"## {t['rules']}", ""] + [f"- `{r['id']}`: {r['text']}" for r in e["rules"]] + [""]
+    for cn, c in e["classes"].items():
+        out += [f"## {heading(cn)}", ""]
+        doc = str(c.get("doc") or "").strip()
+        intro = [doc if doc.endswith((".", "!", "?")) else doc + "."] if doc else []
+        if c["abstract"]:
+            intro.append(f"*{t['abstract']}*")
+        if c["supertypes"]:
+            intro.append(t["extends"].format(names=", ".join(display(x) for x in c["supertypes"])))
+        if intro:
+            out += [" ".join(intro), ""]
+        if c["attributes"]:
+            rows = [[an, a["type"], _mermaid_mult(a["lower"], a["upper"]), _constraints(a, t), _description(a)]
+                    for an, a in c["attributes"].items()]
+            out += [f"### {t['attributes']}", ""] + _table([t["name"], t["type"], t["mult"], t["constraints"], t["description"]], rows) + [""]
+        if c["references"]:
+            rows = [[rn, display(r["type"]) if r["type"] in e["classes"] else r["type"],
+                     _mermaid_mult(r["lower"], r["upper"]), _ref_notes(r, t), _description(r)]
+                    for rn, r in c["references"].items()]
+            out += [f"### {t['references']}", ""] + _table([t["name"], t["to"], t["mult"], t["notes"], t["description"]], rows) + [""]
+        if c.get("rules"):
+            out += [f"### {t['class_rules']}", ""] + [f"- `{r['id']}`: {r['text']}" for r in c["rules"]] + [""]
+    if e["enums"]:
+        out += [f"## {t['enums']}", ""]
+        for en, espec in e["enums"].items():
+            rows = [[lit["name"], _label(lit.get("label"), lang)] for lit in espec["literals"]]
+            out += [f"### {heading(en)}", ""] + _table([t["literal"], t["label"]], rows) + [""]
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def markdown_normalize(text: str) -> str:
+    """What a formatter or an editor may change is ignored: the marker line, table separator rows (with a pipe:
+    a bare `---` is a thematic break and counts), spaces around pipes, line wrapping and blank lines.
+    Two bullets and one bullet with the same words also compare equal: the price of ignoring the wrapping."""
+    lines = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or _MARK_RE.match(s) or ("|" in s and _TABLE_SEP_RE.match(s)):
+            continue
+        lines.append(re.sub(r"\s*\|\s*", "|", s))
+    return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
+
+def markdown_checksum(body: str) -> str:
+    return hashlib.sha256(markdown_normalize(body).encode("utf-8")).hexdigest()[:12]
+
+
+def markdown_document(raw: dict[str, Any], lang: str | None = None) -> str:
+    """What `sync` writes: the marker line (with the checksum of the body) and the body."""
+    body = to_markdown(raw, lang)
+    return MARKDOWN_MARK.format(checksum=markdown_checksum(body)) + "\n" + body
+
+
+def markdown_split(text: str) -> tuple[str | None, str]:
+    """(checksum of the marker line or None, body without it)."""
+    first, _, rest = text.partition("\n")
+    m = _MARK_RE.match(first)
+    return (m.group(1), rest) if m else (None, text)
+
+
+def markdown_sections(text: str) -> dict[str, str]:
+    """The text split by headings: {"(intro)", "Persona", "Persona › Attributi", "Enum › Ruolo", …}, in order.
+    Fenced blocks are not scanned; a repeated heading gets a " (2)" suffix."""
+    out: dict[str, list[str]] = {"(intro)": []}
+    cur, parent, fence = "(intro)", "", False
+    for line in text.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            fence = not fence
+        if not fence and (line.startswith("## ") or line.startswith("### ")):
+            if line.startswith("## "):
+                parent = line[3:].strip()
+                name = parent
+            else:
+                name = f"{parent} › {line[4:].strip()}" if parent else line[4:].strip()
+            cur, n = name, 2
+            while cur in out:
+                cur, n = f"{name} ({n})", n + 1
+            if line.startswith("## "):
+                parent = cur
+            out[cur] = []
+            continue
+        out[cur].append(line)
+    return {k: "\n".join(v) for k, v in out.items()}
+
+
+def markdown_changes(generated: str, actual: str, limit: int = 12) -> list[dict[str, Any]]:
+    """The sections of `actual` (the file on disk) that differ from `generated`, with a short diff each."""
+    g = markdown_sections(markdown_split(generated)[1])
+    a = markdown_sections(markdown_split(actual)[1])
+    out = []
+    for name in list(g) + [n for n in a if n not in g]:
+        gs, as_ = g.get(name), a.get(name)
+        if gs is not None and as_ is not None and markdown_normalize(gs) == markdown_normalize(as_):
+            continue
+        d = [x.rstrip() for x in list(difflib.unified_diff((gs or "").strip().splitlines(), (as_ or "").strip().splitlines(),
+                                                           lineterm="", n=1))[2:] if not x.startswith("@@")]
+        out.append({"name": name + (" (new)" if gs is None else " (missing)" if as_ is None else ""),
+                    "diff": d[:limit] + (["…"] if len(d) > limit else [])})
+    return out
+
+
 def runtime_json(raw: dict[str, Any]) -> dict[str, Any]:
     """The metamodel as the web modeler reads it (canonical form + storage hints)."""
     e = expand(raw)
     e["datatypes"] = list(DATATYPES)
     e["builtin"] = sorted(BUILTIN_CLASSES)
     return e
+
+
+def _rule_lines(prefix: str, old: Any, new: Any) -> list[str]:
+    """`+ rule x`, `~ rule x changed`, `- rule x` (prefix "" for the package, "Persona: " for a class).
+    The text is not printed: ids are stable and the text is in the file (and in docs/DOMAIN.md)."""
+    o = {r.get("id"): r.get("text") for r in (old if isinstance(old, list) else []) if isinstance(r, dict)}
+    n = {r.get("id"): r.get("text") for r in (new if isinstance(new, list) else []) if isinstance(r, dict)}
+    out = [f"+ {prefix}rule {k}" for k in n if k not in o]
+    out += [f"~ {prefix}rule {k} changed" for k in n if k in o and o[k] != n[k]]
+    out += [f"- {prefix}rule {k}" for k in o if k not in n]
+    return out
 
 
 def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
@@ -890,6 +1173,7 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     for en in a["enums"]:
         if en not in b["enums"]:
             out.append(f"- enum {en}")
+    out += _rule_lines("", a["rules"], b["rules"])
     for cn, c in b["classes"].items():
         if cn not in a["classes"]:
             out.append(f"+ class {cn}" + (" (abstract)" if c["abstract"] else "")
@@ -901,6 +1185,8 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
             for rn, r in c["references"].items():
                 out.append(f"  + {cn}.{rn} -> {r['type']}{_mult(r['lower'], r['upper'])}"
                            + (" containment" if r["containment"] else "") + (f" opposite {r['opposite']}" if r.get("opposite") else ""))
+            for r in c.get("rules") or []:
+                out.append(f"  + {cn}: rule {r.get('id') if isinstance(r, dict) else r}")
             continue
         oc = a["classes"][cn]
         if oc["abstract"] != c["abstract"]:
@@ -913,6 +1199,7 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
         for g in oc.get("unique") or []:
             if g not in (c.get("unique") or []):
                 out.append(f"- {cn}: unique ({', '.join(map(str, g))})")
+        out += _rule_lines(f"{cn}: ", oc.get("rules") or [], c.get("rules") or [])
         for kind in ("attributes", "references"):
             for fn, f in c[kind].items():
                 renamed = f.get("renamed_from")
@@ -942,6 +1229,7 @@ XMI_NS = "http://www.omg.org/XMI"
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 GENMODEL_SRC = "http://www.eclipse.org/emf/2002/GenModel"
 MODELER_SRC = "modeler"
+RULES_SRC = "rules"                    # domain rules: one detail per rule, id -> text
 LEGACY_SRC = ("modeler", "appforge")   # annotations of files exported by earlier tools
 
 
@@ -954,6 +1242,14 @@ def _annot(parent: ET.Element, source: str, details: dict[str, Any]) -> None:
         ET.SubElement(a, "details", {"key": k, "value": v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)})
 
 
+def _rule_details(rules: Any) -> dict[str, Any]:
+    return {r["id"]: r.get("text") for r in (rules if isinstance(rules, list) else []) if isinstance(r, dict) and "id" in r}
+
+
+def _rules_from(el: ET.Element) -> list[dict[str, str]]:
+    return [{"id": k, "text": v} for k, v in _details(el, RULES_SRC).items()]
+
+
 def export_ecore(raw: dict[str, Any]) -> str:
     e = expand(raw)
     ET.register_namespace("xmi", XMI_NS)
@@ -963,6 +1259,7 @@ def export_ecore(raw: dict[str, Any]) -> str:
         f"{{{XMI_NS}}}version": "2.0", "name": e["package"],
         "nsURI": e["nsURI"] or f"http://modeler/{e['package']}", "nsPrefix": e["nsPrefix"] or e["package"]})
     _annot(root, GENMODEL_SRC, {"documentation": e["doc"]})
+    _annot(root, RULES_SRC, _rule_details(e["rules"]))
     xtype = f"{{{XSI_NS}}}type"
 
     def etype(t: str) -> str:
@@ -981,6 +1278,7 @@ def export_ecore(raw: dict[str, Any]) -> str:
             el.set("eSuperTypes", " ".join(f"#//{s}" for s in c["supertypes"]))
         _annot(el, GENMODEL_SRC, {"documentation": c.get("doc")})
         _annot(el, MODELER_SRC, {k: c.get(k) for k in ("label", "plural", "table", "unique")})
+        _annot(el, RULES_SRC, _rule_details(c.get("rules")))
         for an, a in c["attributes"].items():
             f = ET.SubElement(el, "eStructuralFeatures", {xtype: "ecore:EAttribute", "name": an, "eType": etype(a["type"])})
             if a["lower"]:
@@ -1050,6 +1348,8 @@ def import_ecore(text: str) -> dict[str, Any]:
     doc = _details(root, GENMODEL_SRC).get("documentation")
     if doc:
         raw["doc"] = doc
+    if _rules_from(root):
+        raw["rules"] = _rules_from(root)
 
     def tname(ref: str | None) -> str:
         return (ref or "EString").split("#//")[-1]
@@ -1105,6 +1405,8 @@ def import_ecore(text: str) -> dict[str, Any]:
                 c["attributes"] = attrs
             if refs:
                 c["references"] = refs
+            if _rules_from(cl):
+                c["rules"] = _rules_from(cl)
             raw["classes"][name] = c
         elif kind == "EEnum":
             lits = []

@@ -59,7 +59,7 @@ enums:
 A multi-valued attribute (`upper: -1`) is stored as a JSON array.
 
 ### Class keys
-`abstract supertypes doc label plural table unique attributes references`
+`abstract supertypes doc label plural table unique attributes references rules`
 
 `unique` lists combinations of single-valued features (attributes, or references whose foreign key is in this
 table) that must be unique together, typically a lookup on several dimensions:
@@ -82,6 +82,21 @@ renamed_from column`
 ### Reference keys
 `type lower upper containment opposite doc label help list on_delete(restrict|set_null|cascade) unique
 renamed_from column join_table`
+
+### Rules
+Domain rules the structure cannot express, on the package or on a class: a list of `{id, text}`. The id is a
+lowercase identifier (`^[a-z][a-z0-9_]*$`), unique in its scope; the text is one sentence in the user's words
+(quote it if it contains a comma or a colon). They produce no DDL: they are shown in `docs/DOMAIN.md`, exported
+to Ecore as an annotation, and the code that enforces them is a customization.
+
+```yaml
+rules:
+  - {id: email_unica, text: Un account per persona con email unica nel sistema}
+classes:
+  Prenotazione:
+    rules:
+      - {id: no_overlap, text: "Due prenotazioni della stessa sala non si sovrappongono"}
+```
 
 ### How the metamodel is stored (deterministic: migrations follow it, `drift` checks it)
 | metamodel | database |
@@ -136,6 +151,7 @@ room_id}`), `join_table:` names an existing join table, `table:` an existing tab
 | "una sola X per ogni combinazione di A e B", "la tariffa per voce e motivo, con un default" | class `unique: [a, b]` (a lookup on several dimensions) |
 | "un utente", "chi ha creato", "il responsabile" (a person who logs in) | reference to `User` |
 | "si chiude/approva/passa da … a …" | the states are an enum attribute (`stato: StatoOrdine`); the rules of the workflow are code |
+| "non può", "deve sempre", "al massimo uno per…", "si calcola come…" (what no key expresses) | a rule in `rules` of the class or package (`{id, text}`), shown in `docs/DOMAIN.md` |
 
 ## Ambiguities to settle with the user (ask, do not guess, when they matter)
 1. **Multiplicity** of each end: `[0..1]`, `[1]`, `[*]`.

@@ -39,6 +39,88 @@ class NotationTests(unittest.TestCase):
         back = E.expand(E.import_ecore(E.export_ecore(meta)))
         self.assertEqual(back["classes"], E.expand(meta)["classes"])
         self.assertEqual(back["enums"], E.expand(meta)["enums"])
+        self.assertEqual(back["rules"], E.expand(meta)["rules"])
+        self.assertEqual(E.expand(E.from_editor(E.runtime_json(meta)))["rules"], E.expand(meta)["rules"])   # editor keeps them
+
+    def test_rules_validation(self):
+        base = E.load(FIXTURE)
+
+        def errors(change):
+            m = copy.deepcopy(base)
+            change(m)
+            return E.validate(m).render()
+        self.assertIn("a list of {id, text}", errors(lambda m: m.__setitem__("rules", "x")))
+        self.assertIn("lowercase identifier", errors(lambda m: m.__setitem__("rules", [{"id": "No-Overlap", "text": "t"}])))
+        self.assertIn("text: the rule", errors(lambda m: m.__setitem__("rules", [{"id": "a"}])))
+        self.assertIn("declared twice", errors(lambda m: m.__setitem__("rules", [{"id": "a", "text": "t"}, {"id": "a", "text": "u"}])))
+        self.assertIn("unknown keys: when", errors(lambda m: m.__setitem__("rules", [{"id": "a", "text": "t", "when": 1}])))
+        self.assertIn("classes.Persona.rules[0]", errors(lambda m: m["classes"]["Persona"].__setitem__("rules", ["no"])))
+        self.assertTrue(E.validate(base).ok)
+        c = E.compact(base)
+        self.assertEqual(c["rules"], [{"id": "email_unica", "text": "Un account per persona con email unica nel sistema"}])
+        self.assertEqual(list(c["classes"]["Persona"])[-1], "rules")                       # after references
+        self.assertEqual(list(c)[-1], "rules")                                             # after enums
+
+    def test_diff_shows_rules(self):
+        old = E.load(FIXTURE)
+        new = copy.deepcopy(old)
+        new["rules"].append({"id": "x", "text": "t"})
+        new["classes"]["Persona"]["rules"][0]["text"] = "changed"
+        new["classes"]["Nuova"] = {"attributes": {"n": "EString"}, "rules": [{"id": "r", "text": "t"}]}
+        d = E.diff(old, new)
+        for line in ("+ rule x", "~ Persona: rule indirizzo_attivo changed", "+ class Nuova", "  + Nuova: rule r"):
+            self.assertIn(line, d)
+        del new["classes"]["Persona"]["rules"]
+        self.assertIn("- Persona: rule indirizzo_attivo", E.diff(old, new))
+
+    def test_markdown(self):
+        meta = E.load(FIXTURE)
+        md = E.to_markdown(meta)
+        for s in ["# Dominio anagrafica", "## Diagramma", "```mermaid", "Soggetto <|-- Persona", "## Regole generali",
+                  "- `email_unica`: Un account per persona con email unica nel sistema", "## Soggetto", "*Astratta.*",
+                  "## Persona", "Una persona fisica. Estende Soggetto.", "### Attributi",
+                  "| codiceFiscale | EString | 1 | identificativo |  |", "| nome | EString | 1 | max 120 caratteri |  |",
+                  "| ruolo | Ruolo | 0..1 | default STAFF |  |", "### Riferimenti",
+                  "| indirizzi | Indirizzo | 0..* | contenimento, opposto `persona` |  |",
+                  "### Regole", "- `indirizzo_attivo`: Una persona attiva ha almeno un indirizzo",
+                  "## Enum", "### Ruolo", "| OSPITE | Ospite esterno |"]:
+            self.assertIn(s, md)
+        self.assertNotIn("### Regole", md.split("## Account")[1].split("## Indirizzo")[0])   # no empty blocks
+        self.assertEqual(md, E.to_markdown(meta))
+        en = E.to_markdown(meta, "en")
+        for s in ["# Domain anagrafica", "## General rules", "### Attributes", "*Abstract.*", "Extends Soggetto.",
+                  "| OSPITE | External guest |"]:
+            self.assertIn(s, en)
+        m2 = copy.deepcopy(meta)
+        m2["classes"]["Persona"]["label"] = {"it": "Persona fisica", "en": "Person"}
+        m2["classes"]["Persona"]["attributes"]["dataNascita"] = {"type": "Date", "doc": "Data di nascita", "help": "gg/mm/aaaa"}
+        self.assertIn("## Persona fisica (`Persona`)", E.to_markdown(m2))
+        self.assertIn("## Person (`Persona`)", E.to_markdown(m2, "en"))
+        self.assertIn("| dataNascita | Date | 0..1 |  | Data di nascita (gg/mm/aaaa) |", E.to_markdown(m2))
+        self.assertIn("| persona | Persona fisica | 1 | opposto `indirizzi` |  |", E.to_markdown(m2))   # label in "Verso"
+
+    def test_markdown_sections_and_changes(self):
+        meta = E.load(FIXTURE)
+        doc = E.markdown_document(meta)
+        secs = E.markdown_sections(E.markdown_split(doc)[1])
+        for k in ["(intro)", "Diagramma", "Regole generali", "Persona", "Persona › Attributi", "Persona › Regole", "Enum › Ruolo"]:
+            self.assertIn(k, secs)
+        rule = "- `indirizzo_attivo`: Una persona attiva ha almeno un indirizzo\n"
+        edited = doc.replace(rule, rule + "- Una persona non può avere due account\n")
+        ch = E.markdown_changes(doc, edited)
+        self.assertEqual([c["name"] for c in ch], ["Persona › Regole"])
+        self.assertIn("+- Una persona non può avere due account", ch[0]["diff"])
+        # a formatter is not a hand edit: trailing spaces, padded tables, separator rows, re-wrapped paragraphs
+        pretty = "\n".join(line + "   " if line.startswith("|") else line for line in doc.splitlines())
+        pretty = pretty.replace("|---|---|---|---|---|", "| --- | --- | --- | --- | --- |")
+        pretty = pretty.replace("| codiceFiscale | EString | 1 |", "| codiceFiscale   | EString | 1   |")
+        pretty = pretty.replace("Anagrafica di prova con tutti i costrutti", "Anagrafica di prova\ncon tutti i costrutti")
+        self.assertEqual(E.markdown_changes(doc, pretty), [])
+        self.assertEqual(E.markdown_checksum(E.markdown_split(pretty)[1]), E.markdown_split(doc)[0])
+        self.assertEqual([c["name"] for c in E.markdown_changes(doc, doc + "\n## Note\n\nqualcosa\n")], ["Note (new)"])
+        self.assertEqual([c["name"] for c in E.markdown_changes(doc, doc + "\n---\n")], ["Enum › Ruolo"])   # a rule is content
+        self.assertNotIn("InTilde", E.markdown_sections("## A\n\n~~~\n## InTilde\n~~~\n"))
+        self.assertEqual(E.validate({**meta, "classes": {**meta["classes"], "Allegato": {**meta["classes"]["Allegato"], "rules": None}}}).ok, True)
 
     def test_storage_mapping(self):
         st = E.storage(E.load(FIXTURE))
@@ -239,6 +321,36 @@ class PatchTextTests(unittest.TestCase):
         return [x for x in difflib.unified_diff(self.text.splitlines(), out.splitlines(), n=0)
                 if x[:1] in "+-" and not x.startswith(("+++", "---"))]
 
+    def test_rules_rewrite_only_their_block(self):
+        new = copy.deepcopy(self.meta)
+        new["classes"]["Persona"]["rules"][0]["text"] = "Una persona attiva ha un indirizzo"
+        lines = self.changed(new)
+        self.assertTrue(any("Una persona attiva ha un indirizzo" in x for x in lines))
+        self.assertFalse(any("email_unica" in x or "Account:" in x or "Gruppo:" in x for x in lines), lines)
+        new = copy.deepcopy(self.meta)
+        new["rules"][0]["text"] = "Email unica"
+        lines = self.changed(new)
+        self.assertEqual(len(lines), 2, lines)                                              # one item of the block
+        self.assertTrue(all("email_unica" in x for x in lines))
+        new = copy.deepcopy(self.meta)
+        new["rules"] = []
+        lines = self.changed(new)
+        self.assertEqual(sorted(x[:1] for x in lines), ["-", "-"])                           # block removed
+        text = self.text.replace("\nrules:\n  - {id: email_unica, text: Un account per persona con email unica nel sistema}\n", "")
+        self.assertNotIn("email_unica", text)
+        new = copy.deepcopy(E.loads(text))
+        new["rules"] = [{"id": "x", "text": "t"}]
+        out = E.patch_text(text, new)
+        self.assertIsNotNone(out)
+        self.assertEqual(E.expand(E.loads(out)), E.expand(new))                              # block added at the end
+        self.assertTrue(out.rstrip("\n").endswith("rules:\n  - {id: x, text: t}"), out[-80:])
+        with_diagram = text + "\ndiagram:\n  Persona: {x: 1, y: 2}\n"
+        new = copy.deepcopy(E.loads(with_diagram))
+        new["rules"] = [{"id": "x", "text": "t"}]
+        out = E.patch_text(with_diagram, new)
+        self.assertEqual(E.expand(E.loads(out)), E.expand(new))
+        self.assertIn("\n\nrules:\n  - {id: x, text: t}\n\ndiagram:\n", out)                   # before the diagram, one blank line each side
+
     def test_features_classes_enums_and_diagram(self):
         new = E.expand(self.meta)
         new["classes"]["Persona"]["attributes"]["codice"] = {"type": "EString", "lower": 0, "upper": 1}
@@ -353,7 +465,7 @@ class AppTests(unittest.TestCase):
     def test_install_makes_the_modeler_part_of_the_app(self):
         written = cli.install(self.app)
         for rel in ("public/modeler/metamodel-editor.js", "src/components/modeler/metamodel-modeler.tsx",
-                    "src/lib/modeler/metamodel-actions.ts", "src/lib/modeler/access.ts",
+                    "src/lib/modeler/metamodel-actions.ts", "src/lib/modeler/access.ts", "docs/DOMAIN.md",
                     "src/lib/modeler/metamodel.json", "tools/modeler/modeler.py",
                     "tools/modeler/metamodel/ecore.py", "tools/modeler/vendor/yaml/__init__.py"):
             self.assertTrue((self.app / rel).exists(), rel)
@@ -363,12 +475,84 @@ class AppTests(unittest.TestCase):
         self.assertEqual(scripts["dev"], "next dev")
         self.assertEqual(scripts["model:drift"], cli.NPM_SCRIPTS["model:drift"])
         self.assertEqual(scripts["model:migrate"], cli.NPM_SCRIPTS["model:migrate"])
+        self.assertEqual(scripts["model:docs"], cli.NPM_SCRIPTS["model:docs"])
+        self.assertIn("## Persona", (self.app / "docs/DOMAIN.md").read_text())
+        self.assertEqual(cli.docs_status(self.app)["state"], "aligned")
         doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
         self.assertIn("Persona", doc["classes"])
         self.assertNotIn("appforge", (self.app / "src/lib/modeler/metamodel-actions.ts").read_text())
         editor = (self.app / "public/modeler/metamodel-editor.js").read_text()
         self.assertIn(f'const VERSION = "{__version__}";', editor)                # shown in the toolbar
         self.assertNotIn(cli.VERSION_PLACEHOLDER, editor)
+
+    def test_sync_keeps_hand_edits_in_domain_md(self):
+        cli.install(self.app)
+        md = self.app / "docs/DOMAIN.md"
+        ns = lambda **kw: argparse.Namespace(path=str(self.app), **kw)   # noqa: E731
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_sync(ns(force=False)), 0)
+        before = md.read_text()
+        md.write_text(before.replace("### Regole\n\n", "### Regole\n\n- Una persona non può avere due account\n", 1))
+        st = cli.docs_status(self.app)
+        self.assertEqual(st["state"], "edited")
+        self.assertEqual([x["name"] for x in st["sections"]], ["Persona › Regole"])
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(cli.cmd_sync(ns(force=False)), 1)                       # kept, with the sections
+        self.assertIn("Persona › Regole", err.getvalue())
+        self.assertIn("due account", md.read_text())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_docs(ns()), 1)
+        self.assertIn("+- Una persona non può avere due account", out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_sync(ns(force=True)), 0)
+        self.assertEqual(md.read_text(), before)
+        self.assertTrue(list((self.app / ".modeler" / "backups").glob("DOMAIN.md.*")))
+        y = self.app / "domain.ecore.yaml"                                           # the metamodel changes: stale
+        y.write_text(y.read_text().replace("      dataNascita: Date\n", "      dataNascita: Date\n      telefono: EString\n"))
+        self.assertEqual(cli.docs_status(self.app)["state"], "stale")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_sync(ns(force=False)), 0)
+        self.assertEqual(cli.docs_status(self.app)["state"], "aligned")
+        self.assertIn("| telefono |", md.read_text())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli.cmd_show(argparse.Namespace(path=str(self.app), format="markdown"))
+        self.assertTrue(out.getvalue().startswith("# Dominio anagrafica"))             # no marker line
+        # a hand note and a metamodel change together: only the note is reported, the file is kept
+        current = md.read_text()
+        md.write_text(current.replace("### Regole\n\n", "### Regole\n\n- Nota a mano\n", 1))
+        y.write_text(y.read_text().replace("      telefono: EString\n", "      telefono: EString\n      fax: EString\n"))
+        st = cli.docs_status(self.app)
+        self.assertEqual((st["state"], [x["name"] for x in st["sections"]], st["metamodel_changed"]),
+                         ("edited", ["Persona › Regole"], True))
+        self.assertIn("metamodel changed too", cli.docs_report(st))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.cmd_sync(ns(force=False)), 1)
+        self.assertIn("Nota a mano", md.read_text())
+        # the marker deleted by hand: not an edit
+        md.write_text(current.split("\n", 1)[1])
+        self.assertEqual(cli.docs_status(self.app)["state"], "stale")                 # the metamodel has fax now
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_sync(ns(force=False)), 0)
+        md.write_text("\ufeff" + md.read_text().split("\n", 1)[1])                    # BOM and no marker
+        self.assertEqual(cli.docs_status(self.app)["state"], "aligned")
+
+    def test_apply_keeps_an_edited_domain_md(self):
+        cli.install(self.app)
+        md = self.app / "docs/DOMAIN.md"
+        md.write_text(md.read_text() + "\n## Note\n\nDa tradurre\n")
+        doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
+        doc["classes"]["Persona"]["attributes"]["telefono"] = {"type": "EString", "lower": 0, "upper": 1}
+        (self.app / "p.json").write_text(json.dumps({"metamodel": doc}))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ns = argparse.Namespace(path=str(self.app), proposal=str(self.app / "p.json"), write=True, rewrite=False)
+            self.assertEqual(cli.cmd_apply(ns), 0)
+        self.assertIn("Note (new)", out.getvalue())
+        self.assertIn("Da tradurre", md.read_text())
+        self.assertIn("telefono", (self.app / "src/lib/modeler/metamodel.json").read_text())
 
     def test_install_ignores_python_bytecode(self):
         (self.app / ".gitignore").write_text("node_modules/\n.env*")
@@ -666,6 +850,19 @@ class HookTests(unittest.TestCase):
             self.assertIn("1 proposal(s) saved by the admin modeler and not applied yet", out.stdout)
             self.assertIn("2026-10-15T10-00-00.json", out.stdout)
             self.assertEqual(self.run_hook("session", {"cwd": tempfile.gettempdir()}).stdout, "")
+            (Path(d) / "tools" / "modeler").mkdir(parents=True)
+            (Path(d) / "tools" / "modeler" / "VERSION").write_text(__version__ + "\n")
+            self.assertIn("docs/DOMAIN.md missing", self.run_hook("session", {"cwd": d}).stdout)
+            cli.write_docs(Path(d), E.load(Path(d) / "domain.ecore.yaml"))
+            self.assertNotIn("DOMAIN.md", self.run_hook("session", {"cwd": d}).stdout)
+            md = Path(d) / "docs" / "DOMAIN.md"
+            md.write_text(md.read_text() + "\n## Note\n\nx\n")
+            out = self.run_hook("session", {"cwd": d})
+            self.assertIn("hand edits", out.stdout)
+            self.assertIn("Note (new)", out.stdout)
+            out = self.run_hook("post", {"tool_input": {"file_path": str(md)}})
+            self.assertEqual(out.returncode, 0)
+            self.assertIn("generated from", out.stdout)
 
 
 @unittest.skipUnless(os.environ.get("MODELER_PG"), "MODELER_PG not set")

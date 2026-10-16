@@ -12,6 +12,16 @@ CLI: nell'app `npm run model:<comando>` (o `python3 tools/modeler/modeler.py <co
 è ancora installato, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/modeler.py" <comando>`. Leggi prima
 `${CLAUDE_PLUGIN_ROOT}/skills/notation/references/ecore-notation.md`.
 
+## 0. Appunti in `docs/DOMAIN.md`
+`npm run model:docs`. Se segnala modifiche a mano, leggile come parte della richiesta, sezione per sezione:
+- fatti strutturali (classi, attributi, relazioni) → chiavi del metamodello, con la migrazione (sezione 4);
+- vincoli che la notazione esprime (`lower: 1`, `unique`, enum, `max_length`, `default`, `unique` di classe) →
+  quelle chiavi;
+- tutto il resto ("non può", "deve sempre", invarianti, regole di calcolo) → `rules` della classe o del package,
+  `text` con le parole dell'utente e un `id` breve in snake_case.
+Poi `npm run model:sync -- --force` rigenera il file (copia dell'originale in `.modeler/backups/`). Nel resoconto:
+cosa è diventato struttura, cosa regola, cosa non si è potuto collocare (chiedi).
+
 ## 1. Dove
 Cerca `domain.ecore.yaml` nella cartella corrente o nelle superiori.
 - Esiste: la modifica parte da lì (modifiche minime, rinomine con `renamed_from`).
@@ -46,13 +56,15 @@ il client lo supporta); `--format storage` mostra tabelle e colonne.
    tabelle nuove nascono con RLS attivo e nessuna policy), backfill dei campi diventati obbligatori, conferma
    esplicita dell'utente prima di scommentare drop o cambi di tipo (perdita di dati). Rinomine di classe: rinomina
    la tabella invece di drop + create. Mai modificare una migrazione già applicata.
-2. `npm run model:sync` (aggiorna il modellatore in `/admin/model`).
+2. `npm run model:sync` (aggiorna il modellatore in `/admin/model` e `docs/DOMAIN.md`, la descrizione del dominio
+   generata dal metamodello).
 3. Codice: tipi (`supabase gen types` o lo script dell'app), query, form e pagine che usano la struttura nuova.
 4. Applica la migrazione al database locale (`supabase db reset` o `supabase migration up`) e
    `npm run model:drift` finché risponde "metamodel and database are aligned".
 5. Typecheck, lint e test dell'app.
 
-Logica che il metamodello non esprime (workflow, regole, pagine speciali) è una personalizzazione: va in
-`docs/customizations.md` e nel codice con `CUSTOM(<id>)`.
+Le regole di dominio dichiarative stanno in `rules` del metamodello (package o classe) e compaiono in
+`docs/DOMAIN.md`; il codice che le applica è una personalizzazione (`docs/customizations.md`, `CUSTOM(<id>)`),
+come ogni logica che il metamodello non esprime (workflow, pagine speciali).
 
 Resoconto: il metamodello in Emfatic, le ipotesi fatte, la migrazione e cosa cambia nell'applicazione.
