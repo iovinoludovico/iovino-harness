@@ -1,5 +1,5 @@
 # Handoff — sviluppo dell'harness iovino-harness
-_Aggiornato: 2026-10-16 · branch `main`_
+_Aggiornato: 2026-10-16 (sera, dopo la PR #9) · branch `main`_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code, installabile su ogni computer con `./install.sh`:
@@ -8,8 +8,8 @@ Si raffina un pezzo alla volta applicando le note raccolte nei progetti (`NOTES.
 poi arriveranno i plugin `research` e `mde`.
 
 ## Stato
-- Pubblicato su `origin/main` con la PR #8 (`3033016`): **core 0.8.0, modeler 0.12.1**. Nessun branch aperto, né locale né remoto.
-- PR #1–#8 (15–16 ottobre):
+- Pubblicato su `origin/main` con la PR #9 (`5500386`): **core 0.9.0, modeler 0.12.1**. Nessun branch aperto, né locale né remoto.
+- PR #1–#9 (15–16 ottobre):
   - **#1** `model:pull` senza DSN: lo ricava dal progetto collegato con `supabase link` (`supabase/.temp/pooler-url`
     o `project-ref`) o da `MODELER_PROD_DB` (`remote_dsn` in `plugins/modeler/scripts/metamodel/cli.py`);
     versione installata nella barra dell'editor (`install` sostituisce `__MODELER_VERSION__` in
@@ -45,21 +45,40 @@ poi arriveranno i plugin `research` e `mde`.
     (app ex appforge) dà stato `clash` in `docs_status`; `sync` (anche `--force`), `install` e `apply` non scrivono
     `DOMAIN.md` e dicono di rinominarlo o cancellarlo, l'hook di sessione lo segnala. `BOX_W` tolta dal kit;
     `tests/lint.test.mjs` fallisce su ogni costante maiuscola del kit mai usata (toglie l'avviso di eslint nelle app).
+  - **#9** (revisione delle note del 2026-10-16, da order-management) due skill di `core`: `core:deploy`
+    (`plugins/core/skills/deploy/SKILL.md`): i passi di produzione generalizzati dai `docs/deploy.md` di
+    guest-invitations-af, kura e order-management (Supabase cloud, GitHub/GHCR, DNS, Docker Manager di Hostinger con
+    progetto a nome stabile e `DATABASE_URL` unico segreto nel pannello, proxy host di Nginx Proxy Manager con i
+    buffer per i cookie di Supabase Auth, verifica, rollback con `APP_TAG`, diagnosi del PAT scaduto e di Watchtower);
+    `core:security-audit` (`plugins/core/skills/security-audit/SKILL.md`): audit in sola lettura in sei blocchi A–F
+    (login e dominio, database, piattaforma Supabase, app pubblica, GitHub/GHCR, coerenza del deploy) con rapporto per
+    controllo e correzioni solo dopo conferma. Riga Web di `conventions.md` riscritta (Docker Manager, mai `.env` via
+    SSH, rimandi alle due skill); `ship` §5 e `db-push` §5 rimandano a `core:deploy` e propongono l'audit.
 - Flusso delle proposte di produzione (skill `modeler:apply`): `npm run model:pull` → `npm run model:apply`
   (poi `-- --write`) → migrazione e codice → `/core:db-push` → deploy → `npm run model:done -- --write`.
-- `NOTES.md`: nessuna nota da valutare (le due del 2026-10-16 applicate con #8). Rinviate: il bus dell'editor; le proposte di produzione in
-  `modeler proposals` (ora fattibile con `_prod_query`, in sola lettura); il controllo di `origin/main`
-  nell'hook di sessione.
-- Verificato (2026-10-16, prima del merge di #8): `python3 -m unittest discover -s tests` → 23 OK;
+- `NOTES.md`: nessuna nota da valutare (le quattro del 2026-10-16 applicate con #8 e #9). Rinviate: il bus dell'editor
+  per molte sorgenti (la condizione è avverata: order-management ha 10 riferimenti verso `User`, da riprendere in una
+  sessione sul modeler, test `todo` in `tests/layout.test.mjs`); le proposte di produzione in `modeler proposals`
+  (fattibile con `_prod_query`, in sola lettura); il controllo di `origin/main` nell'hook di sessione.
+- Verificato (2026-10-16, prima del merge di #9): `python3 -m unittest discover -s tests` → 23 OK;
   `python3 -m unittest discover -s plugins/modeler/tests` → 56 OK (5 skip senza `MODELER_PG`; con `MODELER_PG`
-  sul container `postgres:16` dedicato verificato prima di #5); `node --test plugins/modeler/tests/layout.test.mjs
+  sul container `postgres:16` dedicato verificato prima di #5); `claude plugin validate .` → passed. Prima di #8:
+  `node --test plugins/modeler/tests/layout.test.mjs
   plugins/modeler/tests/diff.test.mjs plugins/modeler/tests/lint.test.mjs` → 93 pass, 1 todo (il bus); `node --test`
-  sulla cartella non funziona con questo Node, vanno elencati i file; `claude plugin validate .` → passed. Prova
+  sulla cartella non funziona con questo Node, vanno elencati i file. Prova
   manuale di #7 in un'app temporanea: `install` → nota a mano → `docs` → `sync` (rifiuta) → `sync --force`
   (backup e rigenera); revisione `core:code-reviewer` applicata.
 - Non committato: nulla.
 
 ## Decisioni
+- Deploy e audit come **skill** (`core:deploy`, `core:security-audit`), non come file in `plugins/core/context/`: solo
+  la descrizione di una skill entra in ogni sessione e fa scattare la lettura quando l'utente chiede del server o
+  del proxy; un file di contesto non verrebbe trovato. Il costo è una riga di descrizione per skill a sessione.
+- `core:security-audit` è solo letture, nessuna correzione senza conferma; i controlli dello scaffold
+  (`app_settings`, `before_user_created_hook`) valgono «se l'app li ha». L'attivazione dell'hook Before User Created
+  non si legge dall'API: resta un test manuale con un account di un altro dominio.
+- Il bus dell'editor resta rinviato anche se order-management lo giustifica: è lavoro sul modeler, separato dalla
+  revisione di `core`.
 - Le migliorie all'harness si annotano nella sessione dell'app (`/core:harness-note`) e si applicano in una
   sessione aperta nell'harness — solo lì è caricato il suo `CLAUDE.md` (branch, test, release), e il clone
   installato in place non va condiviso tra sessioni (oggi è comparso un commit estraneo su un branch e
@@ -95,19 +114,23 @@ poi arriveranno i plugin `research` e `mde`.
   speciale; dashboard, ricerca, breadcrumb, redirect e riferimenti portano ancora alla vista generica).
 
 ## Prossimi passi
-1. In guest-invitations-af e order-management: `/reload-plugins` e `/modeler:install` (la barra dell'editor deve
+1. In order-management: `/reload-plugins`, poi `/core:security-audit` sulla produzione appena messa in piedi (è il
+   caso che ha generato la skill: prima prova vera, correggere la skill se un comando non torna) e allineare
+   `docs/deploy.md` ai passi di `core:deploy` (proxy host completo con i buffer, DNS); lo stesso allineamento in
+   guest-invitations-af (`docs/deploy.md` §3 ha solo una riga sul proxy) e kura.
+2. In guest-invitations-af e order-management: `/reload-plugins` e `/modeler:install` (la barra dell'editor deve
    mostrare `v0.12.1`, `npm run lint` senza l'avviso su `BOX_W`; scrive `docs/DOMAIN.md`, da aggiungere a
    `.prettierignore` se l'app formatta `docs/`; in guest-invitations-af `docs/domain.md` è già stato rinominato
    `docs/behavior.md`);
    aprire `docs/DOMAIN.md` su GitHub e provare una nota a mano → `npm run model:docs` → `/modeler:metamodel`;
    in guest-invitations-af chiudere la parte app della nota sulle viste sostituite.
-2. Aggiungere a `~/.pgpass` la riga `<host del pooler>:5432:postgres:postgres.<ref>:<password>` e `chmod 600` (la CLI
+3. Aggiungere a `~/.pgpass` la riga `<host del pooler>:5432:postgres:postgres.<ref>:<password>` e `chmod 600` (la CLI
    stampa la riga esatta se manca), poi `npm run model:done -- --write`; verificare che le righe passino ad
    `applied` e spariscano da `/admin/model` in produzione.
-3. Alla prossima proposta: tutto il flusso pull → apply → done, controllando che `git diff domain.ecore.yaml` mostri
+4. Alla prossima proposta: tutto il flusso pull → apply → done, controllando che `git diff domain.ecore.yaml` mostri
    solo le righe cambiate.
-4. Sugli altri computer: `claude plugin update core@iovino-harness` e `claude plugin update modeler@iovino-harness`.
-5. Facoltativi: proposte di produzione in `modeler proposals`, `drift --linked`; poi plugin `mde` e `research`.
+5. Sugli altri computer: `claude plugin update core@iovino-harness` (0.9.0: le due skill nuove) e `claude plugin update modeler@iovino-harness`.
+6. Facoltativi: il bus dell'editor (vedi NOTES.md), proposte di produzione in `modeler proposals`, `drift --linked`; poi plugin `mde` e `research`.
 
 ## Per riprendere
 `cd <clone> && claude` — i plugin si caricano da questa cartella: dopo una modifica usa `/reload-plugins`.
@@ -118,4 +141,5 @@ File da leggere per primi: `CLAUDE.md`, `NOTES.md`, `plugins/modeler/skills/appl
 `plugins/modeler/scripts/metamodel/cli.py` (`cmd_apply`, `cmd_pull`, `cmd_done`, `remote_dsn`, `_prod_query`,
 `docs_status`, `docs_clash`, `sync`, `cmd_docs`), `plugins/modeler/scripts/metamodel/ecore.py` (`to_markdown`, `markdown_changes`),
 `plugins/modeler/skills/metamodel/SKILL.md` (passo 0),
-`plugins/core/scripts/hook.py` (`guard_harness_edit`), `plugins/core/context/conventions.md`.
+`plugins/core/scripts/hook.py` (`guard_harness_edit`), `plugins/core/context/conventions.md`,
+`plugins/core/skills/deploy/SKILL.md`, `plugins/core/skills/security-audit/SKILL.md`.
