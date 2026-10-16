@@ -49,6 +49,8 @@ e `gh pr merge`: è voluto).
 - Nel resoconto, per ciò che resta da fare sul server (variabili del pannello, proxy host, rollback, Watchtower che
   non aggiorna) rimanda ai passi della skill `core:deploy` e al `docs/deploy.md` dell'app: non inventare
   istruzioni SSH o un `.env` da copiare.
+- Se il merge avvia il primo deploy, o la PR tocca Auth, dominio o infrastruttura (proxy, compose, workflow),
+  proponi `/core:security-audit` appena la produzione è aggiornata.
 
 ## Non fare
 - Merge senza conferma, `gh pr merge --admin`, `--no-verify`, `git push --force`, merge di PR altrui.

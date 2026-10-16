@@ -2,7 +2,7 @@
   "name": "core",
   "displayName": "Core harness",
   "version": "0.8.0",
-  "description": "Convenzioni di lavoro caricate a ogni sessione, guardrail su segreti e git, formattazione automatica, agenti di revisione e debug, skill per inizializzare progetti, commit, migrazioni sul Supabase cloud e passaggi di consegne.",
+  "description": "Convenzioni di lavoro caricate a ogni sessione, guardrail su segreti e git, formattazione automatica, agenti di revisione e debug, skill per inizializzare progetti, commit, migrazioni sul Supabase cloud, deploy e audit di sicurezza della produzione, passaggi di consegne.",
   "author": { "name": "Ludovico Iovino" },
   "license": "MIT",
   "keywords": ["harness", "conventions", "guardrails"],
