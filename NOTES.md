@@ -107,7 +107,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: in `install` (e in `sync`/`docs`) cercare in `docs/` un file il cui nome, senza distinguere maiuscole e minuscole, è `domain.md` ma non è esattamente `DOMAIN.md` (`os.listdir`, non `Path.exists`): se c'è, fermarsi senza scrivere e dire di rinominarlo (es. `docs/behavior.md`) o di confermare che va sostituito; aggiornare poi i riferimenti in `CLAUDE.md`/README. Nella skill `install`, passo 3, una riga su questo caso. Test con una cartella che contiene `domain.md` (risultato indipendente dal file system). Vale soprattutto per le app ex appforge, che generavano `docs/domain.md`: priorità bassa se appforge non si usa più.
 - **Plugin**: modeler
 - **Tipo**: altro
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-10-16: `docs_clash` in `plugins/modeler/scripts/metamodel/cli.py` (legge `docs/` con `os.listdir`, non `exists()`); `docs_status` risponde `clash` prima di ogni altro controllo, `sync` (anche con `--force`), `install` e `apply` non scrivono `DOMAIN.md` e stampano cosa fare (rinominare, es. `docs/behavior.md`, aggiornando i riferimenti, o cancellare), `sync` e `docs` escono 1, l'hook di sessione lo segnala; riga nella skill `install` passo 3 e nel README; test `test_install_stops_on_a_docs_domain_md_with_other_case` e caso nel test dell'hook.
 
 ## 2026-10-16 — Editor del modellatore: costante `BOX_W` inutilizzata, avviso di lint nelle app
 - **Progetto**: order-management (modeler 0.11.3 e 0.12.0)
@@ -115,4 +115,4 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: togliere `BOX_W` dalla riga 28 (o usarla dove serve una larghezza minima del riquadro); aggiungere ai test del plugin un controllo che il kit non abbia identificatori inutilizzati (es. `eslint --rule 'no-unused-vars: error'` su `kit/metamodel-editor.js` in `tests/`), così l'avviso non torna nelle app. Rilascio con bump della versione; le app si aggiornano con `/modeler:install`.
 - **Plugin**: modeler
 - **Tipo**: altro
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-10-16: `BOX_W` tolta da `plugins/modeler/kit/metamodel-editor.js`; test `plugins/modeler/tests/lint.test.mjs` (senza dipendenze: ogni costante maiuscola dichiarata con `const` nel kit deve essere usata almeno una volta; sul kit precedente segnala `BOX_W`). Le app si aggiornano con `/modeler:install` dopo la release.
