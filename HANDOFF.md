@@ -1,5 +1,5 @@
 # Handoff — sviluppo dell'harness iovino-harness
-_Aggiornato: 2026-10-15 · branch `main`_
+_Aggiornato: 2026-10-16 · branch `main`_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code, installabile su ogni computer con `./install.sh`:
@@ -8,9 +8,8 @@ Si raffina un pezzo alla volta applicando le note raccolte nei progetti (`NOTES.
 poi arriveranno i plugin `research` e `mde`.
 
 ## Stato
-- Pubblicato su `origin/main` (`3ffbb42`): **core 0.7.1, modeler 0.11.2**. Nessun branch remoto aperto; resta solo
-  il branch locale `fix/modeler-wrapper-react-lint`, fermo su `8b70469` e senza commit propri (cancellabile).
-- Oggi (PR #1–#5):
+- Pubblicato su `origin/main` con la PR #7: **core 0.8.0, modeler 0.12.0**. Nessun branch aperto, né locale né remoto.
+- PR #1–#7 (15–16 ottobre):
   - **#1** `model:pull` senza DSN: lo ricava dal progetto collegato con `supabase link` (`supabase/.temp/pooler-url`
     o `project-ref`) o da `MODELER_PROD_DB` (`remote_dsn` in `plugins/modeler/scripts/metamodel/cli.py`);
     versione installata nella barra dell'editor (`install` sostituisce `__MODELER_VERSION__` in
@@ -27,15 +26,33 @@ poi arriveranno i plugin `research` e `mde`.
   - **#5** `_prod_query` (usato da `pull` e `done --write`) si ferma prima di collegarsi se non c'è password né
     terminale, con la riga di `~/.pgpass` da aggiungere (`_pgpass_line`); senza terminale `psql -w`; le skill
     `modeler:apply` e `core:db-push` non suggeriscono più `! …` per i comandi che chiedono la password.
+  - **#6** `Layout.freeSpot(occupied, size, start, view)` in `kit/metamodel-editor.js` (pura, testata in
+    `tests/layout.test.mjs`): «+ Classe»/«+ Enum» mettono il riquadro nuovo su spazio libero, con le misure reali
+    dei riquadri. Riga in `conventions.md` e punto "Punti d'ingresso" nel `code-reviewer`: una pagina che
+    sostituisce una vista generica si collega da un'unica funzione con la mappa delle viste sostituite.
+  - **#7** `docs/DOMAIN.md` generato dal metamodello (`to_markdown`/`markdown_document` in `ecore.py`): intestazione,
+    diagramma Mermaid, una sezione per classe (attributi, riferimenti, regole), enum con etichette, nella lingua del
+    metamodello. Nuova chiave `rules` (`[{id, text}]`) su package e classi: validata, in `diff` (CLI ed editor),
+    scritta riga per riga da `apply`, annotazione `rules` in Ecore; nessun effetto sul database. Il file è l'inbox
+    delle note a mano: `npm run model:docs` (`cmd_docs`) elenca le sezioni toccate con un estratto di diff;
+    `npm run model:sync` (`sync`, `docs_status`) rigenera solo se `missing`/`aligned`/`stale` e rifiuta con exit 1
+    se `edited`, `-- --force` fa il backup in `.modeler/backups/DOMAIN.md.<ts>` e riscrive. Le note si misurano
+    contro `.modeler/DOMAIN.generated.md` (copia di ciò che `sync` ha scritto l'ultima volta), non contro la
+    generazione attuale. `/modeler:metamodel` passo 0 traduce le note (struttura → metamodello e migrazione,
+    vincoli esprimibili → chiavi, il resto → `rules`); l'hook di sessione segnala `edited`/`stale`/`missing`;
+    `install` scrive il file e `show --format markdown` lo stampa senza marker.
 - Flusso delle proposte di produzione (skill `modeler:apply`): `npm run model:pull` → `npm run model:apply`
   (poi `-- --write`) → migrazione e codice → `/core:db-push` → deploy → `npm run model:done -- --write`.
 - `NOTES.md`: nessuna nota da valutare. Rinviate: il bus dell'editor; le proposte di produzione in
   `modeler proposals` (ora fattibile con `_prod_query`, in sola lettura); il controllo di `origin/main`
   nell'hook di sessione.
-- Verificato (2026-10-15, su `main` prima del merge di #5): `python3 -m unittest discover -s tests` → 23 OK;
-  `python3 -m unittest discover -s plugins/modeler/tests` → 48 OK (5 skip senza `MODELER_PG`; 48 OK con
-  `MODELER_PG` sul container `postgres:16` dedicato); `claude plugin validate .` → passed.
-- Non committato: nulla (salvo questo `HANDOFF.md`).
+- Verificato (2026-10-16, prima del merge di #7): `python3 -m unittest discover -s tests` → 23 OK;
+  `python3 -m unittest discover -s plugins/modeler/tests` → 55 OK (5 skip senza `MODELER_PG`; con `MODELER_PG`
+  sul container `postgres:16` dedicato verificato prima di #5); `node --test plugins/modeler/tests/layout.test.mjs
+  plugins/modeler/tests/diff.test.mjs` → 92 pass, 1 todo (il bus); `claude plugin validate .` → passed. Prova
+  manuale di #7 in un'app temporanea: `install` → nota a mano → `docs` → `sync` (rifiuta) → `sync --force`
+  (backup e rigenera); revisione `core:code-reviewer` applicata.
+- Non committato: nulla.
 
 ## Decisioni
 - Le migliorie all'harness si annotano nella sessione dell'app (`/core:harness-note`) e si applicano in una
@@ -50,6 +67,11 @@ poi arriveranno i plugin `research` e `mde`.
 - Il `diagram` della proposta non entra nel repository; niente riscrittura completa silenziosa di
   `domain.ecore.yaml`.
 - Controllo di `origin/main` come regola in `conventions.md`, non nell'hook — l'hook chiederebbe la rete a ogni avvio.
+- `docs/DOMAIN.md`: fonte di verità il metamodello, il file è generato e serve da inbox (modifiche a mano
+  rilevate e tradotte da `/modeler:metamodel`, poi rigenerato) — un file scritto a mano andrebbe fuori sincrono.
+  `rules` solo `{id, text}`, senza `sql` → CHECK (scartato per ora). Diagramma Mermaid in cima. Le note a mano si
+  confrontano con la copia generata, non con la generazione attuale: altrimenti con metamodello cambiato e nota
+  insieme il report le mescolava (trovato dalla revisione). Riformattazioni (Prettier) non contano come modifiche.
 
 ## Problemi aperti
 - `model:pull` e `model:done --write` non ancora riusciti su un progetto cloud reale: in guest-invitations-af
@@ -58,9 +80,17 @@ poi arriveranno i plugin `research` e `mde`.
 - `supabase link`/`supabase db push` lanciati con `! …` non provati: le skill comunque non li suggeriscono più così.
 - La guardia di #4 copre solo Edit/Write, non le scritture fatte con comandi della shell.
 - Le app nate con appforge citano ancora appforge.
+- `docs/DOMAIN.md` non ancora visto in un'anteprima Markdown/GitHub (tabelle, blocco Mermaid) né provato il passo 0
+  di `/modeler:metamodel` con note vere in un'app.
+- Parte app della nota sulle viste sostituite, ancora da fare in guest-invitations-af: `listHref` nel modello
+  dell'app o redirect in `src/proxy.ts` da `/e/economic_rate` a `/x/economic_rate` (oggi solo il menu ha il caso
+  speciale; dashboard, ricerca, breadcrumb, redirect e riferimenti portano ancora alla vista generica).
 
 ## Prossimi passi
-1. In guest-invitations-af: `/modeler:install` (la barra dell'editor deve mostrare `v0.11.2`) e `/reload-plugins`.
+1. In guest-invitations-af e order-management: `/reload-plugins` e `/modeler:install` (la barra dell'editor deve
+   mostrare `v0.12.0`; scrive `docs/DOMAIN.md`, da aggiungere a `.prettierignore` se l'app formatta `docs/`);
+   aprire `docs/DOMAIN.md` su GitHub e provare una nota a mano → `npm run model:docs` → `/modeler:metamodel`;
+   in guest-invitations-af chiudere la parte app della nota sulle viste sostituite.
 2. Aggiungere a `~/.pgpass` la riga `<host del pooler>:5432:postgres:postgres.<ref>:<password>` e `chmod 600` (la CLI
    stampa la riga esatta se manca), poi `npm run model:done -- --write`; verificare che le righe passino ad
    `applied` e spariscano da `/admin/model` in produzione.
@@ -75,5 +105,7 @@ Test con database: `docker run -d --rm --name modeler-pg-test -e POSTGRES_PASSWO
 poi `MODELER_PG=postgresql://postgres:pg@localhost:55499/postgres python3 -m unittest discover -s plugins/modeler/tests`
 e `docker stop modeler-pg-test` (non usare il database Supabase di un'app per i test).
 File da leggere per primi: `CLAUDE.md`, `NOTES.md`, `plugins/modeler/skills/apply/SKILL.md`,
-`plugins/modeler/scripts/metamodel/cli.py` (`cmd_apply`, `cmd_pull`, `cmd_done`, `remote_dsn`, `_prod_query`),
+`plugins/modeler/scripts/metamodel/cli.py` (`cmd_apply`, `cmd_pull`, `cmd_done`, `remote_dsn`, `_prod_query`,
+`docs_status`, `sync`, `cmd_docs`), `plugins/modeler/scripts/metamodel/ecore.py` (`to_markdown`, `markdown_changes`),
+`plugins/modeler/skills/metamodel/SKILL.md` (passo 0),
 `plugins/core/scripts/hook.py` (`guard_harness_edit`), `plugins/core/context/conventions.md`.
