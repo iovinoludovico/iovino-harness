@@ -8,8 +8,8 @@ Si raffina un pezzo alla volta applicando le note raccolte nei progetti (`NOTES.
 poi arriveranno i plugin `research` e `mde`.
 
 ## Stato
-- Pubblicato su `origin/main` con la PR #7: **core 0.8.0, modeler 0.12.0**. Nessun branch aperto, né locale né remoto.
-- PR #1–#7 (15–16 ottobre):
+- Pubblicato su `origin/main` con la PR #8 (`3033016`): **core 0.8.0, modeler 0.12.1**. Nessun branch aperto, né locale né remoto.
+- PR #1–#8 (15–16 ottobre):
   - **#1** `model:pull` senza DSN: lo ricava dal progetto collegato con `supabase link` (`supabase/.temp/pooler-url`
     o `project-ref`) o da `MODELER_PROD_DB` (`remote_dsn` in `plugins/modeler/scripts/metamodel/cli.py`);
     versione installata nella barra dell'editor (`install` sostituisce `__MODELER_VERSION__` in
@@ -41,15 +41,20 @@ poi arriveranno i plugin `research` e `mde`.
     generazione attuale. `/modeler:metamodel` passo 0 traduce le note (struttura → metamodello e migrazione,
     vincoli esprimibili → chiavi, il resto → `rules`); l'hook di sessione segnala `edited`/`stale`/`missing`;
     `install` scrive il file e `show --format markdown` lo stampa senza marker.
+  - **#8** (revisione delle note del 2026-10-16) `docs_clash` in `cli.py`: un `docs/domain.md` con altre maiuscole
+    (app ex appforge) dà stato `clash` in `docs_status`; `sync` (anche `--force`), `install` e `apply` non scrivono
+    `DOMAIN.md` e dicono di rinominarlo o cancellarlo, l'hook di sessione lo segnala. `BOX_W` tolta dal kit;
+    `tests/lint.test.mjs` fallisce su ogni costante maiuscola del kit mai usata (toglie l'avviso di eslint nelle app).
 - Flusso delle proposte di produzione (skill `modeler:apply`): `npm run model:pull` → `npm run model:apply`
   (poi `-- --write`) → migrazione e codice → `/core:db-push` → deploy → `npm run model:done -- --write`.
-- `NOTES.md`: nessuna nota da valutare. Rinviate: il bus dell'editor; le proposte di produzione in
+- `NOTES.md`: nessuna nota da valutare (le due del 2026-10-16 applicate con #8). Rinviate: il bus dell'editor; le proposte di produzione in
   `modeler proposals` (ora fattibile con `_prod_query`, in sola lettura); il controllo di `origin/main`
   nell'hook di sessione.
-- Verificato (2026-10-16, prima del merge di #7): `python3 -m unittest discover -s tests` → 23 OK;
-  `python3 -m unittest discover -s plugins/modeler/tests` → 55 OK (5 skip senza `MODELER_PG`; con `MODELER_PG`
+- Verificato (2026-10-16, prima del merge di #8): `python3 -m unittest discover -s tests` → 23 OK;
+  `python3 -m unittest discover -s plugins/modeler/tests` → 56 OK (5 skip senza `MODELER_PG`; con `MODELER_PG`
   sul container `postgres:16` dedicato verificato prima di #5); `node --test plugins/modeler/tests/layout.test.mjs
-  plugins/modeler/tests/diff.test.mjs` → 92 pass, 1 todo (il bus); `claude plugin validate .` → passed. Prova
+  plugins/modeler/tests/diff.test.mjs plugins/modeler/tests/lint.test.mjs` → 93 pass, 1 todo (il bus); `node --test`
+  sulla cartella non funziona con questo Node, vanno elencati i file; `claude plugin validate .` → passed. Prova
   manuale di #7 in un'app temporanea: `install` → nota a mano → `docs` → `sync` (rifiuta) → `sync --force`
   (backup e rigenera); revisione `core:code-reviewer` applicata.
 - Non committato: nulla.
@@ -80,6 +85,9 @@ poi arriveranno i plugin `research` e `mde`.
 - `supabase link`/`supabase db push` lanciati con `! …` non provati: le skill comunque non li suggeriscono più così.
 - La guardia di #4 copre solo Edit/Write, non le scritture fatte con comandi della shell.
 - Le app nate con appforge citano ancora appforge.
+- Un'altra sessione ha committato una nota direttamente su `main` locale (`9651a19`, non pushato): il branch della
+  revisione l'ha portata nella PR #8 e `main` è stato riallineato con `git reset --hard origin/main`. Le note vanno
+  committate nell'harness solo dalla sessione aperta qui, o lasciate nel working tree.
 - `docs/DOMAIN.md` non ancora visto in un'anteprima Markdown/GitHub (tabelle, blocco Mermaid) né provato il passo 0
   di `/modeler:metamodel` con note vere in un'app.
 - Parte app della nota sulle viste sostituite, ancora da fare in guest-invitations-af: `listHref` nel modello
@@ -88,7 +96,9 @@ poi arriveranno i plugin `research` e `mde`.
 
 ## Prossimi passi
 1. In guest-invitations-af e order-management: `/reload-plugins` e `/modeler:install` (la barra dell'editor deve
-   mostrare `v0.12.0`; scrive `docs/DOMAIN.md`, da aggiungere a `.prettierignore` se l'app formatta `docs/`);
+   mostrare `v0.12.1`, `npm run lint` senza l'avviso su `BOX_W`; scrive `docs/DOMAIN.md`, da aggiungere a
+   `.prettierignore` se l'app formatta `docs/`; in guest-invitations-af `docs/domain.md` è già stato rinominato
+   `docs/behavior.md`);
    aprire `docs/DOMAIN.md` su GitHub e provare una nota a mano → `npm run model:docs` → `/modeler:metamodel`;
    in guest-invitations-af chiudere la parte app della nota sulle viste sostituite.
 2. Aggiungere a `~/.pgpass` la riga `<host del pooler>:5432:postgres:postgres.<ref>:<password>` e `chmod 600` (la CLI
@@ -106,6 +116,6 @@ poi `MODELER_PG=postgresql://postgres:pg@localhost:55499/postgres python3 -m uni
 e `docker stop modeler-pg-test` (non usare il database Supabase di un'app per i test).
 File da leggere per primi: `CLAUDE.md`, `NOTES.md`, `plugins/modeler/skills/apply/SKILL.md`,
 `plugins/modeler/scripts/metamodel/cli.py` (`cmd_apply`, `cmd_pull`, `cmd_done`, `remote_dsn`, `_prod_query`,
-`docs_status`, `sync`, `cmd_docs`), `plugins/modeler/scripts/metamodel/ecore.py` (`to_markdown`, `markdown_changes`),
+`docs_status`, `docs_clash`, `sync`, `cmd_docs`), `plugins/modeler/scripts/metamodel/ecore.py` (`to_markdown`, `markdown_changes`),
 `plugins/modeler/skills/metamodel/SKILL.md` (passo 0),
 `plugins/core/scripts/hook.py` (`guard_harness_edit`), `plugins/core/context/conventions.md`.
