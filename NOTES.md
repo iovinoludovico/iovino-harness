@@ -108,3 +108,11 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Plugin**: modeler
 - **Tipo**: altro
 - **Stato**: da valutare
+
+## 2026-10-16 — Editor del modellatore: costante `BOX_W` inutilizzata, avviso di lint nelle app
+- **Progetto**: order-management (modeler 0.11.3 e 0.12.0)
+- **Cosa è successo**: dopo il fix di `freeSpot` (le misure dei riquadri vengono da `boxSize`), `BOX_W` in `plugins/modeler/kit/metamodel-editor.js:28` non è più usata. Nelle app l'editor installato in `public/modeler/` fa uscire da `npm run lint` l'avviso `'BOX_W' is assigned a value but never used` (`@typescript-eslint/no-unused-vars`); la copia nell'app non si corregge a mano.
+- **Proposta**: togliere `BOX_W` dalla riga 28 (o usarla dove serve una larghezza minima del riquadro); aggiungere ai test del plugin un controllo che il kit non abbia identificatori inutilizzati (es. `eslint --rule 'no-unused-vars: error'` su `kit/metamodel-editor.js` in `tests/`), così l'avviso non torna nelle app. Rilascio con bump della versione; le app si aggiornano con `/modeler:install`.
+- **Plugin**: modeler
+- **Tipo**: altro
+- **Stato**: da valutare
