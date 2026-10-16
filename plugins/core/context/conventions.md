@@ -38,7 +38,7 @@
 - File generati non si modificano a mano: si cambia la sorgente e si rigenera. Il modellatore installato (`public/modeler/`, `src/components/modeler/`, `src/lib/modeler/metamodel-actions.ts`, `tools/modeler/`) si aggiorna con `/modeler:install`, non a mano.
 
 ## Stack ricorrente
-- Web: Next.js + Supabase (RLS, logica nel database), Docker, GitHub Actions → GHCR, deploy su VPS (Hostinger) con docker compose e Watchtower.
+- Web: Next.js + Supabase cloud (RLS, logica nel database), Docker, GitHub Actions → GHCR (immagini private). Produzione: VPS Hostinger gestito dal **Docker Manager** del pannello (un progetto per app con nome stabile, compose di `deploy/` incollato invariato, `DATABASE_URL` unico segreto e solo nelle variabili del pannello) dietro Nginx Proxy Manager, aggiornato da Watchtower; mai un `.env` da copiare via SSH. I passi di server, proxy, rollback e diagnosi sono nella skill `core:deploy`: non inventarli.
 - App model-based (plugin modeler): metamodello `domain.ecore.yaml` dal prompt (`/modeler:metamodel`) o dal database (`/modeler:install`); il modellatore web fa parte dell'app e salva proposte che si applicano con `/modeler:apply`.
 - Ricerca MDE: Eclipse/EMF, Epsilon (ETL, EOL, EVL), Java/Spring Boot, metamodelli Ecore/Emfatic.
 
