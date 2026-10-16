@@ -42,6 +42,7 @@ Struttura suggerita, omettendo le sezioni vuote:
 - Fonte di verità: <domain.ecore.yaml | altro modello del progetto | "Nessun modello: sviluppo diretto sul codice">
 - Ogni modifica parte dal modello; il codice si rigenera o si allinea (<comando: npm run model:sync / model:drift, …>).
 - Personalizzazioni: solo se il modello non le esprime, registrate in `docs/customizations.md` e marcate `CUSTOM(<id>)` nel codice.
+- Descrizione del dominio: `docs/DOMAIN.md`, generata da `npm run model:sync`; appunti e regole scritti a mano lì vanno tradotti nel metamodello (/modeler:metamodel).
 
 ## Regole specifiche del progetto
 - <vincoli non deducibili dal codice: file generati, migrazioni, servizi esterni, dati sensibili>

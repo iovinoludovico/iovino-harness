@@ -26,6 +26,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]            # modeler.py, metam
 KIT_DIR = SCRIPTS_DIR.parent / "kit"                          # only in the plugin, not in the vendored copy
 STATE_DIR = ".modeler"                                        # proposals and backups, in the app repository
 METAMODEL_JSON = Path("src/lib/modeler/metamodel.json")       # what the admin page reads
+DOMAIN_MD = Path("docs/DOMAIN.md")                            # the domain explained, generated; hand notes allowed
+DOMAIN_COPY = Path(STATE_DIR) / "DOMAIN.generated.md"         # what sync wrote last: hand edits are measured against it
 EDITOR_JS = Path("public/modeler/metamodel-editor.js")
 TOOLS_DIR = Path("tools/modeler")
 LOCAL_SUPABASE_PORT = 54322
@@ -35,6 +37,7 @@ NPM_SCRIPTS = {
     "model:validate": "python3 tools/modeler/modeler.py validate",
     "model:show": "python3 tools/modeler/modeler.py show",
     "model:sync": "python3 tools/modeler/modeler.py sync",
+    "model:docs": "python3 tools/modeler/modeler.py docs",
     "model:drift": "python3 tools/modeler/modeler.py drift",
     "model:proposals": "python3 tools/modeler/modeler.py proposals",
     "model:pull": "python3 tools/modeler/modeler.py pull",
@@ -147,6 +150,8 @@ def cmd_show(a) -> int:
         print(E.to_emfatic(meta), end="")
     elif a.format == "mermaid":
         print(E.to_mermaid(meta), end="")
+    elif a.format == "markdown":
+        print(E.to_markdown(meta), end="")
     elif a.format == "json":
         print(json.dumps(E.runtime_json(meta), ensure_ascii=False, indent=2))
     elif a.format == "storage":
@@ -285,6 +290,8 @@ def cmd_apply(a) -> int:
             dst = dst.with_name(f"{dst.stem}-1{dst.suffix}")
         moved.append(f.rename(dst))
     sync(meta_path.parent)
+    if docs_status(meta_path.parent)["state"] == "edited":
+        print(docs_report(docs_status(meta_path.parent), diff=False))
     print(f"\nwrote {meta_path}")
     print("next: `npm run model:migrate -- --write` drafts the migration; resolve its TODO(modeler) lines, "
           "apply it locally, then `npm run model:drift`")
@@ -616,20 +623,96 @@ def cmd_drift(a) -> int:
 # --------------------------------------------------------------------------- #
 # The modeler inside the application
 # --------------------------------------------------------------------------- #
-def sync(root: Path) -> list[str]:
-    """Refreshes what the admin page reads (metamodel.json) from domain.ecore.yaml."""
+def sync(root: Path, force: bool = False) -> list[str]:
+    """Refreshes what is generated from domain.ecore.yaml: metamodel.json (the admin page) and docs/DOMAIN.md.
+    A DOMAIN.md with hand edits is kept (notes for /modeler:metamodel) unless `force`, which backs it up first."""
     meta = root / E.METAMODEL_FILE
     if not meta.exists():
         return []
-    _write_json(root / METAMODEL_JSON, E.runtime_json(E.load(meta)))
-    return [str(METAMODEL_JSON)]
+    raw = E.load(meta)
+    _write_json(root / METAMODEL_JSON, E.runtime_json(raw))
+    written = [str(METAMODEL_JSON)]
+    st = docs_status(root, raw)
+    if st["state"] != "edited" or force:
+        if st["state"] == "edited":
+            bak = root / STATE_DIR / "backups" / f"DOMAIN.md.{dt.datetime.now():%Y%m%d-%H%M%S}"
+            bak.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(root / DOMAIN_MD, bak)
+        write_docs(root, raw)
+        written.append(str(DOMAIN_MD))
+    return written
+
+
+def docs_status(root: Path, raw: dict[str, Any] | None = None) -> dict[str, Any]:
+    """docs/DOMAIN.md against the metamodel: `missing`, `aligned`, `stale` (the metamodel changed: regenerate)
+    or `edited` (hand notes to translate into the metamodel, listed by section with a short diff)."""
+    path = root / DOMAIN_MD
+    if not path.exists():
+        return {"state": "missing", "sections": []}
+    raw = raw if raw is not None else E.load(root / E.METAMODEL_FILE)
+    generated = E.markdown_document(raw)
+    actual = path.read_text(encoding="utf-8-sig")
+    norm = E.markdown_normalize
+    if norm(actual) == norm(generated):
+        return {"state": "aligned", "sections": []}
+    copy_path = root / DOMAIN_COPY
+    previous = copy_path.read_text(encoding="utf-8") if copy_path.exists() else None
+    if previous is not None:
+        untouched = norm(actual) == norm(previous)
+    else:                                            # no copy (older install): the marker's checksum decides
+        checksum, body = E.markdown_split(actual)
+        untouched = checksum is not None and checksum == E.markdown_checksum(body)
+    if untouched:
+        return {"state": "stale", "sections": []}
+    # hand notes are what differs from the file sync wrote, not from the metamodel of today
+    return {"state": "edited", "sections": E.markdown_changes(previous if previous is not None else generated, actual),
+            "metamodel_changed": previous is not None and norm(previous) != norm(generated)}
+
+
+def write_docs(root: Path, raw: dict[str, Any]) -> Path:
+    path = root / DOMAIN_MD
+    text = E.markdown_document(raw)
+    for p in (path, root / DOMAIN_COPY):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    return path
+
+
+def docs_report(st: dict[str, Any], diff: bool = True) -> str:
+    state = st["state"]
+    if state == "missing":
+        return f"{DOMAIN_MD} missing: `npm run model:sync` writes it"
+    if state == "stale":
+        return f"{DOMAIN_MD} out of date (the metamodel changed): `npm run model:sync`"
+    if state == "aligned":
+        return f"{DOMAIN_MD} aligned with the metamodel"
+    lines = [f"{DOMAIN_MD} has edits not in the metamodel: {', '.join(x['name'] for x in st['sections'])}"]
+    if diff:
+        for x in st["sections"]:
+            lines += [f"  [{x['name']}]"] + [f"    {line}" for line in x["diff"]]
+    if st.get("metamodel_changed"):
+        lines.append(f"(the metamodel changed too since {DOMAIN_MD} was written: the sections above are only the hand edits)")
+    lines.append("translate them with /modeler:metamodel (structure, or `rules` for what the notation cannot express), "
+                 "then `npm run model:sync -- --force` regenerates the file (a copy goes to .modeler/backups/)")
+    return "\n".join(lines)
 
 
 def cmd_sync(a) -> int:
     root = find_metamodel(a.path).parent
-    for w in sync(root):
+    for w in sync(root, force=getattr(a, "force", False)):
         print(f"wrote {w}")
+    st = docs_status(root)
+    if st["state"] == "edited":
+        print(docs_report(st), file=sys.stderr)
+        return 1
     return 0
+
+
+def cmd_docs(a) -> int:
+    root = find_metamodel(a.path).parent
+    st = docs_status(root)
+    print(docs_report(st))
+    return 0 if st["state"] == "aligned" else 1
 
 
 def install(target: Path, with_migration: bool = True) -> list[str]:
@@ -705,6 +788,8 @@ def cmd_install(a) -> int:
         print(f"  + {w}")
     if not (target / E.METAMODEL_FILE).exists():
         print(f"no {E.METAMODEL_FILE} yet: derive it with `reverse --db <DSN> -o {E.METAMODEL_FILE}`, then `sync`")
+    elif docs_status(target)["state"] == "edited":
+        print(docs_report(docs_status(target), diff=False))
     print("next: adapt src/lib/modeler/access.ts to the app's admin check, add the admin page and the link "
           "in the admin navigation (see the install skill)")
     return 0
@@ -725,7 +810,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("show", help="print the metamodel")
     s.add_argument("path", nargs="?")
-    s.add_argument("--format", choices=["yaml", "emfatic", "mermaid", "json", "storage"], default="emfatic")
+    s.add_argument("--format", choices=["yaml", "emfatic", "mermaid", "markdown", "json", "storage"], default="emfatic")
     s.set_defaults(fn=cmd_show)
 
     s = sub.add_parser("export", help="write the metamodel as an Ecore XMI file (Eclipse EMF, Epsilon)")
@@ -792,9 +877,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--exclude", help="comma separated tables (or table.column) to ignore (default: MODELER_EXCLUDE)")
     s.set_defaults(fn=cmd_drift)
 
-    s = sub.add_parser("sync", help=f"refresh {METAMODEL_JSON} from the metamodel")
+    s = sub.add_parser("sync", help=f"refresh {METAMODEL_JSON} and {DOMAIN_MD} from the metamodel")
     s.add_argument("path", nargs="?")
+    s.add_argument("--force", action="store_true",
+                   help=f"rewrite {DOMAIN_MD} even if it has hand edits (a copy goes to {STATE_DIR}/backups/)")
     s.set_defaults(fn=cmd_sync)
+
+    s = sub.add_parser("docs", help=f"state of {DOMAIN_MD}: aligned, out of date, or hand edits to translate into the metamodel")
+    s.add_argument("path", nargs="?")
+    s.set_defaults(fn=cmd_docs)
 
     s = sub.add_parser("install", help="make the web modeler part of a Next.js + Supabase app (or upgrade it)")
     s.add_argument("app", nargs="?", default=".")

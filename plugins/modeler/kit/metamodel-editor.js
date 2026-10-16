@@ -382,6 +382,15 @@
   const multSuffix = (lo, up) => lo === 0 && up === 1 ? "" : lo === 0 && up === -1 ? "[*]" : lo === 1 && up === -1 ? "[+]"
     : lo === up ? `[${lo}]` : `[${lo}..${up === -1 ? "*" : up}]`;
   const sameGroup = (g, h) => JSON.stringify(g) === JSON.stringify(h);
+  // domain rules ({id, text} on the package or a class): the same lines as ecore.diff
+  const ruleLines = (prefix, old, neu) => {
+    const o = Object.fromEntries((old || []).map((r) => [r.id, r.text])), n = Object.fromEntries((neu || []).map((r) => [r.id, r.text]));
+    const out = [];
+    for (const k of Object.keys(n)) if (!(k in o)) out.push(`+ ${prefix}rule ${k}`);
+    for (const k of Object.keys(n)) if (k in o && o[k] !== n[k]) out.push(`~ ${prefix}rule ${k} changed`);
+    for (const k of Object.keys(o)) if (!(k in n)) out.push(`- ${prefix}rule ${k}`);
+    return out;
+  };
   const diff = (oldMm, newMm) => {
     const a = Layout.normalize(oldMm), b = Layout.normalize(newMm);
     const out = [];
@@ -392,6 +401,7 @@
       for (const n of lits(a.enums[en])) if (!lits(b.enums[en]).includes(n)) out.push(`- literal ${en}.${n}`);
     }
     for (const en of Object.keys(a.enums)) if (!b.enums[en]) out.push(`- enum ${en}`);
+    out.push(...ruleLines("", a.rules, b.rules));
     for (const [cn, c] of Object.entries(b.classes)) {
       const oc = a.classes[cn];
       if (!oc) {
@@ -401,12 +411,14 @@
         for (const [rn, r] of Object.entries(c.references)) {
           out.push(`  + ${cn}.${rn} -> ${r.type}${multSuffix(r.lower, r.upper)}${r.containment ? " containment" : ""}${r.opposite ? ` opposite ${r.opposite}` : ""}`);
         }
+        for (const r of c.rules || []) out.push(`  + ${cn}: rule ${r.id}`);
         continue;
       }
       if (oc.abstract !== c.abstract) out.push(`~ class ${cn}: abstract ${pyRepr(oc.abstract)} -> ${pyRepr(c.abstract)}`);
       if (!sameGroup(oc.supertypes, c.supertypes)) out.push(`~ class ${cn}: supertypes ${pyRepr(oc.supertypes)} -> ${pyRepr(c.supertypes)}`);
       for (const g of c.unique || []) if (!(oc.unique || []).some((h) => sameGroup(g, h))) out.push(`+ ${cn}: unique (${g.join(", ")})`);
       for (const g of oc.unique || []) if (!(c.unique || []).some((h) => sameGroup(g, h))) out.push(`- ${cn}: unique (${g.join(", ")})`);
+      out.push(...ruleLines(`${cn}: `, oc.rules, c.rules));
       for (const kind of ["attributes", "references"]) {
         for (const [fn, f] of Object.entries(c[kind])) {
           const renamed = f.renamed_from;

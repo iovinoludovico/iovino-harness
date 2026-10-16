@@ -36,6 +36,8 @@ const variants = {
   "enums": (m) => { m.enums.Ruolo = ["ADMIN", "OSPITE"]; m.enums.Stato = ["APERTO"]; },
   "unique groups": (m) => { m.classes.Persona.unique = [["nome", "nascita"]]; },
   "type and default": (m) => { m.classes.Persona.attributes.nome = { type: "Text", lower: 1, default: "x" }; },
+  "rules added": (m) => { m.rules = [{ id: "a", text: "t" }]; m.classes.Persona.rules = [{ id: "b", text: "u" }];
+                          m.classes.Nuova = { attributes: { x: "EString" }, rules: [{ id: "c", text: "v" }] }; },
 };
 
 for (const [name, change] of Object.entries(variants)) {
@@ -47,6 +49,18 @@ for (const [name, change] of Object.entries(variants)) {
     assert.deepEqual(Layout.diff(old, next), diff);
   });
 }
+
+test("same lines as the CLI: rules changed and removed", () => {
+  const old = structuredClone(base);
+  old.rules = [{ id: "a", text: "t" }, { id: "z", text: "w" }];
+  old.classes.Persona.rules = [{ id: "b", text: "u" }];
+  const neu = structuredClone(old);
+  neu.rules = [{ id: "a", text: "t2" }];
+  delete neu.classes.Persona.rules;
+  const { old: o, new: n, diff } = cli(old, neu);
+  assert.deepEqual(diff, ["~ rule a changed", "- rule z", "- Persona: rule b"]);
+  assert.deepEqual(Layout.diff(o, n), diff);
+});
 
 test("no changes, no lines", () => {
   const { old } = cli(base, base);

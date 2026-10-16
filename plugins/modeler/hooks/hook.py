@@ -53,6 +53,12 @@ def post(data: dict) -> int:
                                     f"{root / METAMODEL_FILE}. Update the metamodel in the same change, then "
                                     "`npm run model:sync` and, after applying the migration locally, `npm run model:drift`.")
         return 0
+    if path.name == "DOMAIN.md" and path.parent.name == "docs" and _app_root(path.parent.parent):
+        _context("PostToolUse", "modeler: docs/DOMAIN.md is generated from domain.ecore.yaml (`npm run model:sync`). "
+                                "If this is the user's note to translate, leave it; otherwise the change belongs in "
+                                "domain.ecore.yaml (structure, or `rules` for constraints), then "
+                                "`npm run model:sync -- --force` regenerates the file.")
+        return 0
     if path.name != METAMODEL_FILE:
         return 0
     sys.path.insert(0, str(SCRIPTS))
@@ -69,7 +75,8 @@ def post(data: dict) -> int:
     _context("PostToolUse", "modeler: metamodel valid. Next, in the same change: the migration "
                             "(`npm run model:migrate -- --name <name> --write`, then resolve its TODO(modeler) lines), "
                             "`npm run model:sync` "
-                            "(refreshes the admin modeler), the code that uses the new structure, `npm run model:drift`.")
+                            "(refreshes the admin modeler and docs/DOMAIN.md), the code that uses the new structure, "
+                            "`npm run model:drift`.")
     return 0
 
 
@@ -96,6 +103,15 @@ def session(data: dict) -> int:
             lines.append(f"{len(pending)} proposal(s) saved by the admin modeler and not applied yet "
                          f"(.modeler/proposals/: {', '.join(p.name for p in pending[:5])}): tell the user and "
                          "propose /modeler:apply. Production proposals: `pull`.")
+        docs = cli.docs_status(root)
+        if docs["state"] == "edited":
+            lines.append("docs/DOMAIN.md has hand edits to translate into the metamodel (sections: "
+                         f"{', '.join(s['name'] for s in docs['sections'][:6])}): tell the user and propose "
+                         "/modeler:metamodel; `npm run model:docs` shows the diff.")
+        elif docs["state"] == "stale":
+            lines.append("docs/DOMAIN.md is out of date (the metamodel changed): `npm run model:sync`.")
+        elif docs["state"] == "missing" and installed is not None:
+            lines.append("docs/DOMAIN.md missing: `npm run model:sync` writes it.")
         dsn = os.environ.get("MODELER_DRIFT_DB")
         if dsn:
             from metamodel import dbschema as D, ecore as E  # noqa: E402

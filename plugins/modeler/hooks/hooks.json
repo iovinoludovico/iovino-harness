@@ -1,5 +1,5 @@
 {
-  "description": "modeler: validates domain.ecore.yaml when it changes, reminds to align metamodel and migrations, reports the state of the app at session start",
+  "description": "modeler: validates domain.ecore.yaml when it changes, reminds to align metamodel, migrations and docs/DOMAIN.md, reports the state of the app at session start",
   "hooks": {
     "PostToolUse": [
       {

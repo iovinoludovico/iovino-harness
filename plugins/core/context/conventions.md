@@ -18,6 +18,7 @@
 - Nei progetti con modello, il modello guida lo sviluppo: la struttura del dominio sta nel metamodello `domain.ecore.yaml` (notazione Ecore). Ogni modifica di schema parte dal metamodello e va, nella stessa modifica, con la migrazione e il codice che la usa; mai il contrario.
 - Il metamodello resta allineato al database: `npm run model:drift` deve rispondere "aligned" (plugin `modeler`, che installa nell'app il modellatore web `/admin/model` e la CLI `tools/modeler/`).
 - Prima di scrivere codice a mano verifica se il metamodello può esprimere la richiesta; se può, cambia il metamodello.
+- `docs/DOMAIN.md` è generato dal metamodello (`npm run model:sync`): è dove dettagli e regole del dominio si scrivono a mano per essere tradotti nel metamodello (`rules` o struttura, con `/modeler:metamodel`), mai dove si modifica a mano la struttura.
 - Una tabella di lookup su più dimensioni (riferimenti o enum, con una riga di default come fallback) ha la combinazione unica nel metamodello (`unique` di classe, nulls not distinct) e si gestisce come matrice che mostra valori propri, ereditati dal default e mancanti, non riga per riga.
 - Le personalizzazioni (ciò che il modello non esprime) sono ammesse solo se chiarite in modo esplicito:
   - registrate in `docs/customizations.md` con: identificativo, motivo per cui il modello non basta, elementi del modello coinvolti, file in cui vivono, come si verificano;

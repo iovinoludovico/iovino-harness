@@ -19,6 +19,8 @@ classes:
       indirizzi: {type: Indirizzo, upper: -1, containment: true, opposite: persona}
       gruppi: {type: Gruppo, upper: -1, opposite: membri}
       utente: User
+    rules:
+      - {id: indirizzo_attivo, text: Una persona attiva ha almeno un indirizzo}
   Account:
     attributes:
       email: {type: Email, lower: 1, unique: true}
@@ -40,3 +42,6 @@ enums:
     - ADMIN
     - STAFF
     - {name: OSPITE, label: {it: Ospite esterno, en: External guest}}
+
+rules:
+  - {id: email_unica, text: Un account per persona con email unica nel sistema}
