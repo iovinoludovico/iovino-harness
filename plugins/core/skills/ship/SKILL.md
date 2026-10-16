@@ -46,6 +46,11 @@ e `gh pr merge`: è voluto).
 - Chiedi la conferma con AskUserQuestion (merge / non ora). Senza un sì esplicito non fare il merge.
 - `gh pr merge <n> --squash --delete-branch` (o `--merge` se richiesto), poi `git switch main && git pull --ff-only`.
 - Se l'app ha migrazioni nuove non ancora in produzione, ricorda `/core:db-push` prima del merge, non dopo.
+- Nel resoconto, per ciò che resta da fare sul server (variabili del pannello, proxy host, rollback, Watchtower che
+  non aggiorna) rimanda ai passi della skill `core:deploy` e al `docs/deploy.md` dell'app: non inventare
+  istruzioni SSH o un `.env` da copiare.
+- Se il merge avvia il primo deploy, o la PR tocca Auth, dominio o infrastruttura (proxy, compose, workflow),
+  proponi `/core:security-audit` appena la produzione è aggiornata.
 
 ## Non fare
 - Merge senza conferma, `gh pr merge --admin`, `--no-verify`, `git push --force`, merge di PR altrui.

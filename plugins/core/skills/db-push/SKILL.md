@@ -53,7 +53,9 @@ l'utente in un suo terminale).
   non applicano migrazioni).
 - App con il modellatore: proponi `MODELER_DB=<DSN di produzione> npm run model:drift` solo se l'utente fornisce il
   DSN (è un segreto: non salvarlo).
-- Resoconto: progetto, migrazioni applicate, esito della verifica, prossimo passo.
+- Resoconto: progetto, migrazioni applicate, esito della verifica, prossimo passo. Se il database remoto era vuoto
+  (primo deploy), il prossimo passo è il deploy con i passi della skill `core:deploy` (Supabase Auth, pannello,
+  proxy): rimanda a quelli, non inventare istruzioni per il server; a deploy fatto, `/core:security-audit`.
 
 ## Regole
 - Mai `supabase db reset --linked`, mai `supabase migration repair`, mai `--include-all` senza richiesta esplicita.
