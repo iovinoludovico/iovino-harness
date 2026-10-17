@@ -1,85 +1,56 @@
-# Handoff — comportamento nel modellatore web e bus dei connettori (plugin modeler)
-_Aggiornato: 2026-10-17 · branch `main` (PR #11 unita, `d2c3b6a`)_
+# Handoff — workflow nel modellatore (satellite, livelli di coinvolgimento) e sandbox eseguibile
+_Aggiornato: 2026-10-17 · branch `feat/modeler-workflow-satellite` (8 commit avanti a `origin/main`, non pushato)_
 
 ## Obiettivo
-Marketplace personale di plugin per Claude Code (`core`, `modeler`), installato con `./install.sh`. Questa sessione
-è stata una `/core:harness-review`: le due note aperte di `NOTES.md` sono state applicate nel modeler, che ora mostra
-il modello di comportamento (`behavior.yaml`) accanto alla struttura nel modellatore web e disegna un bus quando molte
-classi puntano alla stessa.
+Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: (1) la sandbox
+`~/Documents/GitHub/modeler-sandbox` è diventata un sistema eseguibile (PostgreSQL in Docker con schema e motore
+generati, UI generica dai due modelli) per provare dominio e cambi di stato in piccolo; (2) nel modellatore il
+workflow è disegnato accanto alla classe (satellite «workflow») e il diagramma distingue le classi con workflow,
+quelle coinvolte dal comportamento e quelle solo strutturali.
 
 ## Stato
-- `origin/main` è alla PR #11 (`d2c3b6a`, squash dei commit sotto): **core 0.9.1, modeler 0.14.0**. Nessun branch remoto aperto.
-- La PR #11 ha portato (release `1a50ab3`, **modeler 0.14.0**):
-  - `cbe096d` comportamento nel modellatore web: l'editor (`plugins/modeler/kit/metamodel-editor.js`) accetta la
-    proprietà `behavior` (`src/lib/modeler/behavior.json`): attributi derivati `/nome` con formula nel tooltip e nel
-    pannello, attributo di stato `⟳` con conteggio di stati e transizioni, transizioni nel pannello, evento `select`
-    (`Layout.rowItems`, puro, testato). Nuova `kit/next/behavior-view.tsx` (installata in
-    `src/components/modeler/`): ruoli, workflow con stati e transizioni, derivazioni, eventi, reazioni,
-    sottoscrizioni in sola lettura sotto l'editor, classe selezionata evidenziata. Prop opzionale `behavior` del
-    wrapper, import documentato (commentato) in `kit/next/page.tsx`, `cli.behavior_page_hint` stampato da `install`
-    quando `behavior.yaml` c'è e la pagina admin non passa `behavior=`.
-  - `c2713d8` bus: da 4 riferimenti semplici che entrano nello stesso lato di una classe, una porta e una freccia,
-    tronco a `BUS_GAP` dal lato, un ramo per sorgente (`branchRoute`), punti di giunzione, una sola etichetta se i
-    riferimenti si leggono uguali; gli altri riferimenti verso quella classe si uniscono al bus se il ramo non
-    attraversa box. Nel risultato di `routeEdges` un bus è un edge con `pts` (stub), `trunk`, `branches`.
-  - `686bcdb` `NOTES.md`: nota del 2026-10-17 in parte applicata, nota del 2026-10-14 (bus) applicata.
-- Verificato (2026-10-17, su `1a50ab3`):
-  - `python3 -m unittest discover -s tests` → 23 OK
-  - `python3 -m unittest discover -s plugins/modeler/tests` → 91 OK (8 skip senza `MODELER_PG`)
-  - `node --test plugins/modeler/tests/layout.test.mjs plugins/modeler/tests/diff.test.mjs plugins/modeler/tests/lint.test.mjs`
-    → 134 pass, 0 todo (hub(8) a ogni dimensione: un bus di 8, una freccia, un'etichetta)
-  - typecheck di `metamodel-modeler.tsx` e `behavior-view.tsx` con `tsc` (strict, stub di `metamodel-actions`) → ok
-  - `claude plugin validate .` → passed; `python3 scripts/release.py` → fatto (`--write`, modeler 0.14.0)
-- Non committato: nulla.
+- `origin/main` è alla PR #12 (`e8a90a8`): **core 0.9.1, modeler 0.14.1**. Nessun branch remoto aperto.
+- Il branch locale `feat/modeler-workflow-satellite` contiene (release `95866f8` **modeler 0.15.0**, `112ecf8` **core 0.9.2**):
+  - `6b8e061` fix: `<entity>_available_transitions` restituiva righe avvolte in `{"jsonb_build_object": …}`; ora un array di oggetti (`engine.py`, test del testo SQL).
+  - `5d30f7d` `uses` in `behavior.json`: `expr.py` annota ogni passo di un path con la classe proprietaria (`hops`, `hops_used`); `behavior.uses(b, e)` → `{Class: {attributes, references, class: [{kind, of}]}}` (derivation, when, guard, at, by, owner, editable_by, revert, notify, scope); `BEHAVIOR.md` ha «Classi coinvolte nel comportamento». Test `test_uses`.
+  - `f1c7613` editor (`kit/metamodel-editor.js`): `Layout.workflowLayout` (porting di `workflow-layout.ts` + `state-path.ts` di invitations-af), `workflowModel`, `satelliteOf`/`satRect`/`footSize`/`satObstacle`, `routeEdges(mm, size, {extra, uses})`, `FRACS` (tratto centrale delle Z a più frazioni), testata «workflow» (`STEREO_H`), marcatori ` ·ƒ`/`ƒ`, legenda, toggle `⟳ Workflow`, satellite trascinabile con la classe, hover `wf:<Class>:<transition>`. `behavior-view.tsx`: tabella «Classi coinvolte». Test: `workflowLayout` su invitations (11 stati, bus `cancel`, `visit_ended` a tempo) e su 4 stati; satellite in tela; righe marcate.
+  - `fc169c2` `NOTES.md`: nota 2026-10-17 (behaviour nel web) completata salvo le proposte dal web; nuova nota sul limite del layout masonry.
+  - `fbc76d5` skill `core:diagrams`: il riferimento d'implementazione è anche `Layout.workflowLayout`.
+- Sandbox (`~/Documents/GitHub/modeler-sandbox`, 6 commit, non ha remoto): `db/bootstrap.sql`, `db/seed.sql`, `scripts/db.sh` (container `modeler-sandbox-pg`, 127.0.0.1:55432, `db:start|reset|migrate|engine|seed|psql`), `src/lib/db` (`pool`, `withUser` → `set_config('app.profile_id')`, `dbError`), `src/lib/model` (naming del plugin, `ClassDef`/`FieldDef`, query), pagine `/e/[entity]` (lista, dettaglio con transizioni/revert/storia/eventi, nuovo, modifica), `/events`, `/scheduler`, selettore «agisci come», home e README. Modeler installato 0.15.0.
+- Verificato (2026-10-17):
+  - harness: `unittest` core 23 OK, modeler 92 OK (8 skip senza `MODELER_PG`); `node --test` 138 pass; `tsc` sui TSX del kit ok; `claude plugin validate .` passed.
+  - sandbox: `tsc --noEmit` e `lint` puliti; scenario end-to-end eseguito (UI + psql): guardia `ready`, permessi per ruolo/assegnatario, destinatari delle reazioni (manager all'avvio, owner al completamento), commento obbligatorio, `expire` a tempo con `task.expired`, reminder dopo invecchiamento, revert, blocco dell'update diretto dello stato.
+  - browser su `/admin/model`: satellite sotto `Task` (todo→doing→done, `expire` tratteggiata ⏱, `cancelled`), `ƒ` su `Project`, ` ·ƒ` su `tasks 0..*`, legenda, toggle, hover.
+- Non committato: nulla (solo questo `HANDOFF.md`).
 
 ## Decisioni
-- Il comportamento nel web è **solo lettura**: le proposte dal modellatore restano sul metamodello; `behavior.yaml`
-  si modifica con `/modeler:metamodel`. Prima si vede, poi si deciderà se proporre modifiche dal web.
-- Gli stati del workflow sono una **tabella**, non un diagramma: il diagramma degli stati in SVG (layout puro e
-  testato, regole `core:diagrams`) è rinviato, registrato come "Da fare" nella nota del 2026-10-17.
-- Il flag `derived` (prefisso `/`) viene dal metamodello, quindi si vede anche senza `behavior.json`; la formula
-  arriva dal behavior, altrimenti "calcolato nel codice", come in `docs/BEHAVIOR.md`.
-- La pagina admin è dell'app: `install` non la riscrive, stampa l'avviso (`behavior.yaml found: …`) finché non
-  passa `behavior=` nel JSX (regex su `<MetamodelModeler … behavior=`, non sul testo, perché il template lo cita
-  in un commento).
-- Bus: etichetta unica solo se tutti i riferimenti si leggono uguali (nome e molteplicità), altrimenti una
-  etichetta per sorgente alla porta di uscita; bus instradati prima dei connettori singoli.
+- Satellite derivato dalla posizione della classe, mai salvato in `mm.diagram`: `domain.ecore.yaml` resta pulito.
+- `uses` calcolato in Python (conosce la semantica delle espressioni); il JS lo legge soltanto.
+- Satellite compatto: le tabelle sotto l'editor restano per owner, reminder, chi e guardie.
+- Sandbox senza Supabase: Postgres nudo in Docker, utente corrente da cookie → `app.profile_id` (il fallback del motore); la connessione superuser bypassa RLS (detto nel README).
+- Il bug del layout masonry su modelli grandi non è stato affrontato qui: nota in `NOTES.md`, test del satellite limitato alle sue invarianti.
 
 ## Problemi aperti
-- Il repository non ha CI (`.github/workflows` assente): i controlli sono quelli locali. `gh` 2.102 è installato
-  e autenticato (account iovinoludovico): `/core:ship` funziona da qui.
-- La vista del comportamento e il bus non sono ancora stati visti in un'app reale (solo test di layout e tsc):
-  da controllare in guest-invitations-af dopo `/modeler:install` (0.14.0), con `behavior.yaml` e la pagina che passa
-  `behavior={behavior}`.
-- Ereditati, ancora validi: il motore generato (`model:engine`) non provato su un'app reale; `test_behavior.py` e
-  `test_modeler.py` con `MODELER_PG` richiedono `psql` sul PATH (shim in «Per riprendere»); `model:pull`/`model:done
-  --write` mai riusciti su un progetto cloud reale (`fe_sendauth: no password supplied`, manca la riga del pooler in
-  `~/.pgpass`); `guard_harness_edit` copre solo Edit/Write; `docs/DOMAIN.md` non visto in anteprima GitHub; parte app
-  della nota sulle viste sostituite in guest-invitations-af (`listHref` o redirect `/e/economic_rate` → `/x/economic_rate`).
-- `NOTES.md`: nessuna nota da valutare; la nota del 2026-10-17 è in parte applicata (resta il diagramma degli stati
-  grafico e le proposte sul behavior dal web).
+- Layout masonry: sul fixture `invitations.ecore.yaml` 22 dimensioni su 39 hanno un connettore che attraversa una classe, anche senza satelliti (nota 2026-10-17 in `NOTES.md`; script di misura: `tests/` non ancora, vedi la nota).
+- Il satellite di un workflow con 11 stati è largo ~1060 px: domina la colonna e `_fit` riduce lo zoom (accettato; il toggle lo nasconde).
+- Proposte sul `behavior.yaml` dal modellatore web: non ancora fatte (resto della nota 2026-10-17).
+- Ereditati: motore generato non provato su un'app vera (la sandbox sì); `psql` assente sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. Sugli altri computer `claude plugin update modeler@iovino-harness` (0.14.0).
-2. In guest-invitations-af: `/reload-plugins`, `/modeler:install` (barra dell'editor `v0.14.0`); se manca,
-   `behavior.yaml` da `plugins/modeler/tests/fixtures/invitations.behavior.yaml` e `derived: true` sugli attributi
-   calcolati; nella pagina admin togliere il commento a `import behavior from "@/lib/modeler/behavior.json"` e passare
-   `behavior={behavior}`; aprire `/admin/model` e controllare `/attributi`, `⟳ state`, la sezione sotto l'editor e
-   l'evidenziazione selezionando `Invitation`.
-3. Sempre lì: `npm run model:validate`, `npm run model:sync`, `npm run model:behavior -- --format sql` contro le
-   clausole in produzione, `npm run model:drift`; poi il motore (`npm run model:engine -- --write`,
-   `supabase db reset`, test dell'app).
-4. In order-management: `/modeler:install` e verifica del bus sui 10 riferimenti verso la stessa classe (etichette,
-   nessun tratto sovrapposto); poi `/core:security-audit` e `docs/deploy.md` allineato a `core:deploy`.
-5. Quando torna utile: diagramma degli stati in SVG nella `behavior-view` (nota 2026-10-17, "Da fare").
+1. `/core:ship` del branch (push, PR, merge dopo conferma); poi sugli altri computer `claude plugin update modeler@iovino-harness` (0.15.0) e `core@iovino-harness` (0.9.2).
+2. Nella sandbox: provare lo scenario dalla UI con i quattro utenti (README «Scenario da provare»); modificare `behavior.yaml` (es. nuovo stato o reazione), `npm run model:sync && npm run model:engine -- --write && npm run db:engine` e vedere satellite, tabelle e motore seguire.
+3. In invitations-af: `/modeler:install` (0.15.0), passare `behavior={behavior}` nella pagina admin e guardare il satellite a 11 stati su un'app vera.
+4. Nota sul layout masonry: misurare e intervenire su `autoLayout`/router (vedi `NOTES.md`).
+5. Proposte sul comportamento dal web (resto della nota 2026-10-17).
 
 ## Per riprendere
 `cd <clone> && claude` — i plugin si caricano da questa cartella: dopo una modifica usa `/reload-plugins`.
 Test senza database: `python3 -m unittest discover -s tests && python3 -m unittest discover -s plugins/modeler/tests && node --test plugins/modeler/tests/layout.test.mjs plugins/modeler/tests/diff.test.mjs plugins/modeler/tests/lint.test.mjs && claude plugin validate .`
+Sandbox: `cd ~/Documents/GitHub/modeler-sandbox && npm run db:start && PORT=3077 npm run dev` (se il DB è nuovo: `npm run db:reset`);
+reinstallare il modellatore dal clone: `python3 plugins/modeler/scripts/modeler.py install ~/Documents/GitHub/modeler-sandbox --no-migration`.
 Test con database (anche il motore end-to-end):
 ```bash
 docker run -d --rm --name modeler-pg-test -e POSTGRES_PASSWORD=pg -p 55499:5432 postgres:16
-# senza psql locale: shim in una cartella sul PATH
 mkdir -p /tmp/pgbin && cat > /tmp/pgbin/psql <<'PY'
 #!/usr/bin/env python3
 import subprocess, sys
@@ -90,10 +61,9 @@ chmod +x /tmp/pgbin/psql
 PATH=/tmp/pgbin:$PATH MODELER_PG=postgresql://postgres:pg@localhost:55499/postgres python3 -m unittest discover -s plugins/modeler/tests
 docker stop modeler-pg-test
 ```
-Typecheck dei TSX del kit (fuori dal repository): cartella con `npm i --legacy-peer-deps typescript @types/react react react-dom next`,
-copia di `kit/next/metamodel-modeler.tsx` e `behavior-view.tsx` in `src/`, stub di `@/lib/modeler/metamodel-actions`
-(`PendingProposal`, `listMetamodelProposals`, `rejectMetamodelProposal`) via `paths`, `tsc --noEmit`.
-File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultime due note), `plugins/modeler/kit/metamodel-editor.js`
-(`rowItems`, `branchRoute`, `routeEdges`, `_behaviorPanel`), `plugins/modeler/kit/next/behavior-view.tsx`,
-`plugins/modeler/kit/next/metamodel-modeler.tsx`, `plugins/modeler/scripts/metamodel/cli.py` (`behavior_page_hint`,
-`install`), `plugins/modeler/tests/layout.test.mjs` (test del bus e dei marcatori), `plugins/modeler/skills/install/SKILL.md` (§3, §4).
+Typecheck dei TSX del kit: cartella fuori dal repository con `npm i --legacy-peer-deps typescript @types/react react react-dom next`,
+copia di `kit/next/*.tsx` in `src/`, stub di `@/lib/modeler/metamodel-actions` via `paths`, `tsc --noEmit`.
+File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultime tre note), `plugins/modeler/kit/metamodel-editor.js`
+(`workflowLayout`, `satelliteOf`, `routeEdges`, `_drawSatellite`, `_satellite`), `plugins/modeler/scripts/metamodel/behavior.py`
+(`uses`), `expr.py` (`_navigate`, `hops_used`), `plugins/modeler/tests/layout.test.mjs`, e nella sandbox `README.md`,
+`src/lib/db/with-user.ts`, `src/lib/model/model.ts`, `src/app/e/[entity]/[id]/page.tsx`, `scripts/db.sh`.
