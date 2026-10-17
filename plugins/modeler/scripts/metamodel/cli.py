@@ -244,8 +244,12 @@ def cmd_behavior(a) -> int:
     return 0
 
 
+def _migration_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_") or "model_change"
+
+
 def _write_migration(meta_path: Path, name: str, sql: str) -> Path:
-    name = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_") or "model_change"
+    name = _migration_name(name)
     mig = meta_path.parent / "supabase" / "migrations"
     mig.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -282,12 +286,20 @@ def cmd_engine(a) -> int:
             print(f"note: {n}", file=sys.stderr)
         print(f"(dry run: --write saves it in supabase/migrations/; {todos} TODO(modeler) to review)", file=sys.stderr)
         return 0
-    out = _write_migration(meta_path, a.name or "behavior_engine", sql)
+    # one engine migration per release: the previous one with this name goes away, the new one takes a later
+    # timestamp (the engine is idempotent: the database re-runs it after the schema migrations)
+    name = a.name or "behavior_engine"
+    previous = sorted((meta_path.parent / "supabase" / "migrations").glob(f"*_{_migration_name(name)}.sql"))
+    out = _write_migration(meta_path, name, sql)
+    for f in previous:
+        if f != out:
+            f.unlink()
+            print(f"replaced {f}")
     print(f"wrote {out}")
     for n in notes:
         print(f"note: {n}")
     print(f"{todos} TODO(modeler) to review; then apply it locally (supabase db reset) and `npm run model:drift`. "
-          "Regenerate it after every change of the behaviour (the file is replaced: keep one engine migration per release).")
+          "Regenerate it after every change of the behaviour (the previous engine migration is replaced: one per release).")
     return 0
 
 
