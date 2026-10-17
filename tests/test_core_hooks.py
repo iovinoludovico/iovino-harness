@@ -1,5 +1,7 @@
 """Tests of the core plugin hooks: python3 -m unittest discover -s tests"""
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess
