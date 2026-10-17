@@ -21,6 +21,7 @@ from . import behavior as B
 from . import core as M
 from . import dbschema as D
 from . import ecore as E
+from . import engine as N
 from . import expr as X
 from . import sqlgen as G
 
@@ -49,6 +50,7 @@ NPM_SCRIPTS = {
     "model:apply": "python3 tools/modeler/modeler.py apply",
     "model:migrate": "python3 tools/modeler/modeler.py migrate",
     "model:behavior": "python3 tools/modeler/modeler.py behavior",
+    "model:engine": "python3 tools/modeler/modeler.py engine",
 }
 
 
@@ -239,6 +241,53 @@ def cmd_behavior(a) -> int:
         except X.ExprError as exc:
             print(f"a guard the engine cannot evaluate as clauses: {exc}", file=sys.stderr)
             return 1
+    return 0
+
+
+def _write_migration(meta_path: Path, name: str, sql: str) -> Path:
+    name = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_") or "model_change"
+    mig = meta_path.parent / "supabase" / "migrations"
+    mig.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
+    latest = max((f.name[:14] for f in mig.glob("*.sql") if f.name[:14].isdigit()), default="")
+    if latest >= stamp:   # keep the order of the existing migrations
+        stamp = str(int(latest) + 1)
+    out = mig / f"{stamp}_{name}.sql"
+    out.write_text(sql, encoding="utf-8")
+    return out
+
+
+def cmd_engine(a) -> int:
+    """The SQL engine of the behaviour: one idempotent migration, printed or saved in supabase/migrations/."""
+    meta_path = find_metamodel(a.path)
+    bpath = behavior_file(meta_path, a.behavior)
+    if bpath is None:
+        print(f"no {B.BEHAVIOR_FILE} next to {meta_path}", file=sys.stderr)
+        return 1
+    raw, meta = B.load(bpath), E.load(meta_path)
+    rep = E.validate(meta)
+    brep = B.validate(raw, meta) if rep.ok else None
+    if not rep.ok or not brep.ok:
+        print((rep if not rep.ok else brep).render(), file=sys.stderr)
+        return 1
+    try:
+        sql, notes = N.engine_sql(raw, meta, a.schema)
+    except X.ExprError as exc:
+        print(f"cannot generate the engine: {exc}", file=sys.stderr)
+        return 1
+    todos = sql.count(f"-- {N.TODO}")
+    if not a.write:
+        print(sql, end="")
+        for n in notes:
+            print(f"note: {n}", file=sys.stderr)
+        print(f"(dry run: --write saves it in supabase/migrations/; {todos} TODO(modeler) to review)", file=sys.stderr)
+        return 0
+    out = _write_migration(meta_path, a.name or "behavior_engine", sql)
+    print(f"wrote {out}")
+    for n in notes:
+        print(f"note: {n}")
+    print(f"{todos} TODO(modeler) to review; then apply it locally (supabase db reset) and `npm run model:drift`. "
+          "Regenerate it after every change of the behaviour (the file is replaced: keep one engine migration per release).")
     return 0
 
 
@@ -950,6 +999,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "sql: derivations and guards as PostgreSQL; engine: the workflow versions as the runtime engine stores them")
     s.add_argument("--lang", choices=sorted(E.LANGUAGES))
     s.set_defaults(fn=cmd_behavior)
+
+    s = sub.add_parser("engine", help=f"the SQL engine of the behaviour ({B.BEHAVIOR_FILE}): functions and triggers, one idempotent migration")
+    s.add_argument("path", nargs="?")
+    s.add_argument("--behavior", help=f"the behaviour model (default: {B.BEHAVIOR_FILE} next to the metamodel)")
+    s.add_argument("--schema", default="public")
+    s.add_argument("--name", help="name of the migration file (default: behavior_engine)")
+    s.add_argument("--write", action="store_true", help="save it in supabase/migrations/ (otherwise print it)")
+    s.set_defaults(fn=cmd_engine)
 
     s = sub.add_parser("export", help="write the metamodel as an Ecore XMI file (Eclipse EMF, Epsilon)")
     s.add_argument("path", nargs="?")

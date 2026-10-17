@@ -870,3 +870,209 @@ class WorkflowDatabaseTests(unittest.TestCase):
             self.assertIn("TRANSITION invitation.approve: guard database []", found[0])
             self.psql(self.dsn, "drop table public.workflow_transitions, public.workflow_states, public.workflow_versions;")
             self.assertIsNone(D.workflow_catalog(self.dsn))
+
+
+class EngineTests(unittest.TestCase):
+    def test_engine_sql_text(self):
+        from metamodel import engine as N
+        sql, notes = N.engine_sql(behavior(), meta())
+        for frag in ["create or replace function public.invitation_principals(r public.invitations)",
+                     "case when r.issuer = public.current_profile_id() then 'field:issuer' end",
+                     "case when public.has_role('director', r.department) then 'director' end",
+                     "create or replace function public.invitation_recipients(r public.invitations, p_to text[], p_template text)",
+                     "select p.email as email, 'director' as kind from public.role_members('director', r.department) m join public.profiles p on p.id = m where 'director' = any (p_to)",
+                     "select x1.email as email, 'field:guest.email' as kind from public.guests x1 where x1.id = r.guest and 'field:guest.email' = any (p_to)",
+                     "select p.email as email, 'field:issuer' as kind from public.profiles p where 'field:issuer' = any (p_to) and p.id = r.issuer",
+                     "if p_type = 'invitation.transitioned' and coalesce((p_extra -> 'transition' ->> 'key') in ('submit', 'resubmit'), false) then",
+                     "v := v || public.invitation_recipients(r, array['director']::text[], 'invitation_submitted');",
+                     "if p_type = 'invitation.reverted' and true then",
+                     "new.funds_total := (select coalesce(sum(x1.amount), 0) from public.invitation_funds x1 where x1.invitation = new.id);",
+                     "new.data_complete := coalesce((new.reason is not null and",
+                     "create trigger invitation_20_derive before insert or update on public.invitations",
+                     "create or replace function public.invitation_fund_refresh_invitation()",
+                     "update public.invitations x set id = x.id where x.id in (new.invitation, old.invitation);",
+                     "create or replace function public.invitation_reason_refresh_invitation()",
+                     "update public.invitations x set id = x.id where x.reason in (new.id, old.id);",
+                     "if new.state is null then new.state := 'draft'; end if;",
+                     "raise exception 'Transition not available: %', p_key;",
+                     "if p_key = 'approve' then\n    v_from := array['pending_director']::text[]; v_to := 'in_management'; v_allowed := array['director']::text[];",
+                     "v_cond := coalesce(not (r.agency_booking_required), false);",
+                     "v_guard := coalesce(r.data_complete, false); v_guard_text := 'dataComplete';",
+                     "elsif p_key = 'visit_ended' then", "v_timed := true;",
+                     "for v_id in select x.id from public.invitations x where x.state = any (array['in_management']::text[]) and x.end_date + interval '1 days' <= now() loop",
+                     "perform public.invitation_perform_transition(v_id, 'visit_ended', null, true);",
+                     "when 'awaiting_confirmation' then interval '7 days'", "when 'awaiting_confirmation' then 'visit_confirmation_reminder'",
+                     "create or replace function public.invitation_revert(p_id uuid, p_state text, p_comment text default null)",
+                     "create trigger invitation_90_lifecycle after insert or update or delete on public.invitations",
+                     "-- TODO(modeler): if the application keeps a catalogue of event types", "invitation.visit_ended",
+                     "select cron.schedule('invitation_timed'"]:
+            self.assertIn(frag, sql, frag)
+        self.assertNotIn("r.guest = public.current_profile_id()", sql)          # an email recipient is not an actor
+        self.assertEqual(N.engine_sql(behavior(), meta())[0].count("create or replace function"), sql.count("create or replace function"))
+        m = meta()
+        m["language"] = "it"
+        sql_it, _ = N.engine_sql(behavior(), m)
+        self.assertIn("raise exception 'Requisiti non soddisfatti: %', v_guard_text;", sql_it)
+        self.assertTrue(any("schedule public.invitation_run_timed_transitions()" in n for n in notes))
+        # a class with derivations but no workflow still gets its derive trigger, nothing else of the workflow
+        b = behavior()
+        b["derivations"]["Guest"] = {"fullName": "coalesce(lastName, '') + ' ' + coalesce(firstName, '')"}
+        m = meta()
+        m["classes"]["Guest"]["attributes"]["fullName"] = {"type": "EString", "derived": True}
+        with self.assertRaises(X.ExprError):                                     # no string arithmetic
+            N.engine_sql(b, m)
+        b["derivations"]["Guest"] = {"fullName": "if lastName.isSet() then lastName else firstName"}
+        sql, _ = N.engine_sql(b, m)
+        self.assertIn("create or replace function public.guest_derive()", sql)
+        self.assertNotIn("guest_perform_transition", sql)
+
+    def test_creator_needs_created_by(self):
+        b = behavior()
+        b["reactions"].append({"name": "x", "event": "Invitation.created", "notify": ["creator"], "template": "t"})
+        self.assertEqual(errors(b), [])
+        m = meta()
+        m["classes"]["Invitation"]["references"].pop("createdBy")
+        self.assertTrue(any("'creator' needs a reference createdBy: User on Invitation" in x for x in errors(b, m)))
+
+    def test_engine_command(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "domain.ecore.yaml").write_text(META.read_text())
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text())
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(["engine", str(root / "domain.ecore.yaml")])
+            self.assertEqual(code, 0)
+            self.assertIn("invitation_perform_transition", out.getvalue())
+            self.assertIn("dry run", err.getvalue())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = cli.main(["engine", str(root / "domain.ecore.yaml"), "--write", "--name", "Behaviour Engine"])
+            self.assertEqual(code, 0)
+            files = list((root / "supabase" / "migrations").glob("*_behaviour_engine.sql"))
+            self.assertEqual(len(files), 1)
+            self.assertIn("TODO(modeler) to review", out.getvalue())
+
+
+@unittest.skipUnless(os.environ.get("MODELER_PG"), "MODELER_PG not set")
+class EngineDatabaseTests(WorkflowDatabaseTests):
+    """The generated engine runs the guest-invitations workflow end to end on PostgreSQL."""
+
+    ISSUER = "00000000-0000-0000-0000-00000000000a"
+    DIRECTOR = "00000000-0000-0000-0000-00000000000b"
+    OFFICE = "00000000-0000-0000-0000-00000000000c"
+    OTHER = "00000000-0000-0000-0000-00000000000d"
+
+    def as_user(self, user, sql):
+        return subprocess.run(["psql", self.dsn, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c",
+                               f"set app.profile_id = '{user}'; {sql}"], capture_output=True, text=True)
+
+    def ok(self, user, sql):
+        out = self.as_user(user, sql)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip().split("\n")[-1] if out.stdout.strip() else ""
+
+    def system(self, sql):
+        """As the scheduler runs: no user in the session."""
+        out = subprocess.run(["psql", self.dsn, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", sql], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip()
+
+    def fails(self, user, sql, fragment):
+        out = self.as_user(user, sql)
+        self.assertNotEqual(out.returncode, 0, out.stdout)
+        self.assertIn(fragment, out.stderr)
+
+    def test_workflow_end_to_end(self):
+        from metamodel import engine as N
+        from metamodel import sqlgen as G
+        sql, _ = G.migration({"package": "invitations", "classes": {}}, meta(), "whole")
+        self.psql(self.dsn, "create table public.profiles (id uuid primary key default gen_random_uuid(), email text);"
+                            "create table public.user_roles (profile_id uuid references public.profiles (id), role text not null, scope_id uuid);"
+                            "do $r$ begin if not exists (select 1 from pg_roles where rolname = 'authenticated') then "
+                            "create role authenticated nologin; end if; end $r$;")
+        self.psql(self.dsn, sql)
+        engine, _ = N.engine_sql(behavior(), meta())
+        self.psql(self.dsn, engine)
+        self.psql(self.dsn, engine)                                                      # idempotent
+        self.psql(self.dsn, f"insert into public.profiles (id, email) values ('{self.ISSUER}', 'issuer@x.org'), ('{self.DIRECTOR}', 'dir@x.org'), "
+                            f"('{self.OFFICE}', 'office@x.org'), ('{self.OTHER}', 'other@x.org');"
+                            "insert into public.departments (code, name) values ('cs', 'CS');"
+                            f"insert into public.user_roles select '{self.DIRECTOR}', 'director', id from public.departments;"
+                            f"insert into public.user_roles values ('{self.OFFICE}', 'office', null);"
+                            "insert into public.invitation_reasons (code, label, compensation_type) values ('sem', 'Seminar', 'hourly');"
+                            "insert into public.guests (last_name, first_name, email, home_institution) values ('Doe', 'J', 'guest@y.org', 'Y');")
+        self.ok(self.ISSUER, "insert into public.invitations (code, start_date, end_date, hours, hourly_rate, meals_method, meals_amount, "
+                             "department, guest, reason, issuer, created_by) select 'INV-1', '2027-01-10', '2027-01-13', 2, 50, 'receipts', 80, "
+                             f"d.id, g.id, rz.id, '{self.ISSUER}', '{self.ISSUER}' from public.departments d, public.guests g, public.invitation_reasons rz;")
+        row = self.ok(self.ISSUER, "select state || '|' || compensation_type || '|' || compensation_amount || '|' || total_amount || '|' || funds_total "
+                                   "|| '|' || data_complete || '|' || meals_per_day from public.invitations;")
+        self.assertEqual(row, "draft|hourly|100.00|180.00|0|false|20.00")                   # the state and the derived attributes on insert
+        self.assertEqual(self.ok(self.ISSUER, "select count(*) from public.events where type = 'invitation.created';"), "1")
+        inv = "(select id from public.invitations)"
+        avail = self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});")
+        self.assertIn('"key": "submit"', avail)
+        self.assertIn('"guard_ok": false', avail)
+        self.assertNotIn('"key": "approve"', avail)
+        self.fails(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');", "Requirements not met: dataComplete")
+        self.fails(self.ISSUER, "update public.invitations set state = 'closed';", "The state changes only through the transitions")
+        # the funds complete the data: the child table refreshes the parent's derived attributes
+        self.ok(self.ISSUER, "with f as (insert into public.funds (name) values ('F1') returning id) "
+                             f"insert into public.invitation_funds (amount, invitation, fund, created_by) select 180, i.id, f.id, '{self.ISSUER}' "
+                             "from public.invitations i, f;")
+        self.assertEqual(self.ok(self.ISSUER, "select funds_total || '|' || data_complete from public.invitations;"), "180|true")
+        self.assertIn('"guard_ok": true', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
+        self.fails(self.OTHER, f"select public.invitation_perform_transition({inv}, 'submit');", "Operation not allowed")
+        self.assertEqual(self.ok(self.OTHER, f"select public.invitation_available_transitions({inv});"), "[]")
+        self.ok(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');")
+        self.assertEqual(self.ok(self.ISSUER, "select state from public.invitations;"), "pending_director")
+        self.assertEqual(self.ok(self.ISSUER, "select transition || '|' || from_state || '|' || to_state || '|' || actor_id from public.workflow_history;"),
+                         f"submit|draft|pending_director|{self.ISSUER}")
+        ev = self.ok(self.ISSUER, "select data from public.events where type = 'invitation.transitioned';")
+        self.assertIn('"key": "submit"', ev)
+        self.assertIn('"email": "dir@x.org"', ev)                                       # notify_submitted -> the director of the department
+        self.assertIn('"template": "invitation_submitted"', ev)
+        self.assertNotIn("office@x.org", ev)
+        # the director: the condition hides approve_bookings (no agency), reject needs a comment
+        self.fails(self.DIRECTOR, f"select public.invitation_perform_transition({inv}, 'approve_bookings');", "Transition not available: approve_bookings")
+        self.fails(self.DIRECTOR, f"select public.invitation_perform_transition({inv}, 'reject');", "Comment required")
+        self.fails(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'approve');", "Operation not allowed")
+        self.ok(self.DIRECTOR, f"select public.invitation_perform_transition({inv}, 'approve');")
+        ev = self.ok(self.ISSUER, "select data from public.events where type = 'invitation.transitioned' and data -> 'transition' ->> 'key' = 'approve';")
+        self.assertIn("office@x.org", ev)                                                # notify_to_manage
+        self.assertIn("issuer@x.org", ev)                                                # notify_approved
+        # the timed transition fires when the visit is over; the issuer and the guest are notified of the next steps
+        self.assertEqual(self.system("select public.invitation_run_timed_transitions();"), "0")
+        self.ok(self.OFFICE, "update public.invitations set end_date = '2020-01-13', start_date = '2020-01-10';")
+        self.fails(self.OFFICE, f"select public.invitation_perform_transition({inv}, 'visit_ended');", "Automatic transition")
+        self.assertEqual(self.system("select public.invitation_run_timed_transitions();"), "1")
+        self.assertEqual(self.ok(self.OFFICE, "select state from public.invitations;"), "awaiting_confirmation")
+        self.assertEqual(self.ok(self.OFFICE, "select count(*) from public.events where type = 'invitation.visit_ended';"), "1")
+        self.assertEqual(self.ok(self.OFFICE, "select kind from public.workflow_history order by created_at desc limit 1;"), "system")
+        # reminders: due after 7 days in the state, once per period
+        self.assertEqual(self.ok(self.OFFICE, "select public.invitation_run_reminders();"), "0")
+        self.ok(self.OFFICE, "update public.workflow_history set created_at = now() - interval '8 days';")
+        self.assertEqual(self.ok(self.OFFICE, "select public.invitation_run_reminders();"), "1")
+        self.assertEqual(self.ok(self.OFFICE, "select public.invitation_run_reminders();"), "0")
+        ev = self.ok(self.OFFICE, "select data from public.events where type = 'invitation.reminder';")
+        self.assertIn('"state": "awaiting_confirmation"', ev)
+        self.assertIn('"template": "visit_confirmation_reminder"', ev)
+        self.assertIn("issuer@x.org", ev)                                                # the owner of the state
+        # revert: only who may, only to a state the record has been in, with a comment
+        self.fails(self.ISSUER, f"select public.invitation_revert({inv}, 'in_management', 'back');", "Operation not allowed")
+        self.fails(self.OFFICE, f"select public.invitation_revert({inv}, 'payment', 'back');", "State not reachable: payment")
+        self.fails(self.OFFICE, f"select public.invitation_revert({inv}, 'in_management');", "Comment required")
+        self.ok(self.OFFICE, f"select public.invitation_revert({inv}, 'in_management', 'bookings changed');")
+        self.assertEqual(self.ok(self.OFFICE, "select state from public.invitations;"), "in_management")
+        ev = self.ok(self.OFFICE, "select data from public.events where type = 'invitation.reverted';")
+        self.assertIn("issuer@x.org", ev)                                                # notify_reverted
+        # cancel from a running state: office only, then the record is complete
+        self.ok(self.OFFICE, f"select public.invitation_perform_transition({inv}, 'cancel', 'no longer needed');")
+        self.assertEqual(self.ok(self.OFFICE, "select count(*) from public.events where type = 'invitation.completed';"), "1")
+        self.assertEqual(self.ok(self.OFFICE, "select public.invitation_can_edit(i) from public.invitations i;"), "f")
+        # the engine is not reported as drift
+        from metamodel import dbschema as D2
+        found = D2.drift(meta(), D2.catalog(self.dsn), {"events", "user_roles"})
+        self.assertEqual(found, [], found)

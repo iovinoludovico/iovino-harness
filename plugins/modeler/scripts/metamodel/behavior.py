@@ -286,6 +286,11 @@ def _scope_reference(e: dict[str, Any], cname: str, scope: str) -> list[str]:
 
 def _check_principal(b: dict[str, Any], e: dict[str, Any], cname: str, p: str, where: str, rep: M.Report,
                      notify: bool = False) -> None:
+    if p == "creator":
+        _, refs = E.features(e, cname) if cname in e["classes"] else ({}, {})
+        if not any(rn in ("createdBy", "created_by") and r["type"] in E.BUILTIN_CLASSES for rn, r in refs.items()):
+            rep.error(where, f"'creator' needs a reference createdBy: User on {cname} (who created the record)")
+        return
     if p in BUILTIN_PRINCIPALS:
         return
     if p.startswith("self.") or p == "self":
@@ -737,6 +742,11 @@ def runtime_json(raw: dict[str, Any], metamodel: dict[str, Any]) -> dict[str, An
 # The runtime workflow engine: principals, clauses, offsets, drift against the published version
 # --------------------------------------------------------------------------- #
 CLAUSE_OPS = {"=": "eq", "<>": "neq", "<": "lt", "<=": "lte", ">": "gt", ">=": "gte"}
+
+
+def json_text(value: Any) -> str:
+    import json
+    return json.dumps(value if isinstance(value, dict) else {}, ensure_ascii=False, sort_keys=True)
 
 
 def principal_key(p: str) -> str:

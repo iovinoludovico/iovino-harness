@@ -25,7 +25,8 @@ Riferimenti completi, da leggere prima di scrivere i file:
 Comandi utili (dal plugin `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/modeler.py" …`, nell'app `npm run model:*`):
 - `validate` (metamodello e, se c'è, `behavior.yaml` contro di esso), `show --format emfatic|mermaid|markdown|storage|json|yaml`,
   `behavior --format markdown|mermaid|json|sql|engine` (il comportamento spiegato, i diagrammi di stato, le
-  espressioni tipizzate con il loro SQL, le versioni del workflow come le memorizza il motore);
+  espressioni tipizzate con il loro SQL, le versioni del workflow come le memorizza il motore),
+  `engine [--write]` (la migrazione del motore SQL: funzioni e trigger generati dal comportamento);
 - `sync [--force]` (rigenera `metamodel.json` e `docs/DOMAIN.md`; con `behavior.yaml` anche `behavior.json` e
   `docs/BEHAVIOR.md`), `docs` (stato di `docs/DOMAIN.md`: allineato,
   da rigenerare, o modifiche a mano da tradurre nel metamodello);

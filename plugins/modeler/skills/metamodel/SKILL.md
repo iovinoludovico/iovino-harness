@@ -71,12 +71,15 @@ e sottoscrizioni webhook non vanno nel metamodello né direttamente nel codice: 
   in CI. Se un file non esiste ancora e l'app ha già workflow in codice, proponi di scriverlo a partire da ciò che
   il codice fa (`docs/behavior.md`, migrazioni), senza cambiare il comportamento.
 Dopo ogni modifica: `npm run model:sync` rigenera `docs/BEHAVIOR.md` e `src/lib/modeler/behavior.json`;
-`npm run model:behavior -- --format sql` dà le derivazioni e le guardie in SQL da portare nelle funzioni e nei
-trigger dell'app, `--format engine` la versione del workflow come la memorizzano le tabelle `workflow_*`;
-`npm run model:drift` confronta i workflow con la versione pubblicata nel database. Il motore (funzioni SQL,
-reazioni) resta codice dell'app finché il plugin non lo genera: una modifica di `behavior.yaml` va accompagnata
-dalla modifica corrispondente del codice (o da una nuova versione pubblicata del workflow) nella stessa modifica,
-finché `drift` non è allineato.
+`npm run model:engine -- --write` rigenera la migrazione del motore (funzioni e trigger: derivazioni,
+`<entità>_perform_transition`, `_available_transitions`, `_revert`, transizioni a tempo, solleciti, eventi con i
+destinatari; idempotente, una per rilascio, da rivedere nei `TODO(modeler)`: catalogo degli eventi, policy RLS con
+`<entità>_can_edit`, pg_cron), da applicare in locale e poi `npm run model:drift`. Il motore si appoggia a
+`current_profile_id`, `has_role`, `role_members`, `emit_entity_event` dell'app (fallback se mancano). In un'app
+nata con appforge le funzioni generate sostituiscono quelle di appforge con lo stesso nome: rivedi la migrazione
+prima di applicarla. Nelle app che tengono il motore a mano, `npm run model:behavior -- --format sql|engine` dà
+l'SQL e la versione del workflow da riportare nel codice, e `drift` confronta i workflow con la versione
+pubblicata: la modifica di `behavior.yaml` e quella del codice vanno nella stessa modifica.
 
 ## 4. Allineare l'applicazione (nella stessa modifica, su un branch)
 1. **Migrazione**: `npm run model:migrate` mostra la bozza generata dal confronto tra il metamodello committato

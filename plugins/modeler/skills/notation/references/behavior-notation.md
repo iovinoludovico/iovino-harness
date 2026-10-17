@@ -8,7 +8,8 @@ the behaviour against the metamodel, the PostToolUse hook does it after every ed
 reports a proposal that breaks it, and CI runs the same check. A domain change that breaks a guard, a
 recipient or a derivation is therefore found before the database is. From the model, `sync` generates
 `docs/BEHAVIOR.md` and `src/lib/modeler/behavior.json`, `behavior --format sql|engine` the SQL and the workflow
-versions of the runtime engine, and `drift` compares the workflows with the versions published in the database.
+versions of the runtime engine, `drift` compares the workflows with the versions published in the database, and
+**`engine`** generates the SQL engine itself: the functions and triggers that run the behaviour in PostgreSQL.
 
 ## Syntax
 ```yaml
@@ -148,6 +149,37 @@ breaks the behaviour and where.
   their principals and reminders; transitions, allowed principals, trigger, offset, comment, clauses, emitted
   events; labels, colours and notifications are not compared). An app without workflow tables (its workflows are
   code) gets a note, not a drift.
+
+## The SQL engine (`npm run model:engine -- --write`)
+One idempotent migration (`create or replace`, `create … if not exists`), regenerated after every change of the
+behaviour and applied like any other, that runs the behaviour inside the database. For every class with a
+workflow, derivations or reactions (`<entity>` = the snake_case of the class, `invitation`):
+- `<entity>_principals(r)`: who the current user is for the record (`all`, `admin`, `creator`, the roles held in
+  the record's scope, `field:<path>` for the users it points to); `<entity>_can_edit(r)`: may they edit it in
+  its state (`editable_by`), for the application's update policies.
+- Derived attributes: `<entity>_derive()` computes them before insert and update, in dependency order; a change
+  of a referenced row (the funds of an invitation, its reason) refreshes them through a trigger on that table
+  (one hop: a deeper navigation, a many-to-many reference or a user profile does not refresh them, noted in the
+  output).
+- Workflow: the state is set to the initial one on insert and **changes only through
+  `<entity>_perform_transition(id, key, comment)`**, which checks the current state, who performs it, the `when`
+  (hidden: "not available"), the `guard` (blocked: "requirements not met: <guard>"), the comment, writes
+  `workflow_history`, emits `<entity>.transitioned` (`.completed` in a final state, plus the transition's
+  `emits`). `<entity>_available_transitions(id)` lists what the current user may do now, each with `guard_ok`.
+  `<entity>_revert(id, state, comment)` goes back to a state in the record's history (`revert.by`,
+  `final_by`). `<entity>_run_timed_transitions()` fires the `at` transitions that are due and
+  `<entity>_run_reminders()` emits `<entity>.reminder` to the owners of a state after its `reminder.after` (once
+  per period, `workflow_reminders`): schedule both with pg_cron (the lines are at the end of the file).
+- Events: `<entity>_emit(type, r, extra)` adds `recipients` (`[{email, principal, template}]`, from the reactions
+  whose `event` and `when` match, resolved by `<entity>_recipients`) and calls the application's
+  `emit_entity_event`; a lifecycle trigger emits `created`, `updated`, `deleted`.
+- Contract: the engine calls `current_profile_id()`, `is_admin()`, `has_role(role, scope)`,
+  `role_members(role, scope)` and `emit_entity_event(entity, id, type, extra)`. The migration creates a fallback
+  only where the application has none: the profile from the setting `app.profile_id`, roles from a `user_roles`
+  table when it exists (else a stub that raises), an `events` outbox table. Messages are in the language of the
+  metamodel. `workflow_history` and `workflow_reminders` belong to the engine (`drift` ignores them).
+- In an app born with appforge the generated functions replace the appforge behaviour layer (same names): review
+  the migration before applying it, and `npm run model:drift` must stay aligned afterwards.
 
 ## From the user's words to the behaviour model
 | the user says | behaviour model |

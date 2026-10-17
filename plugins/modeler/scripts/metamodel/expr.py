@@ -644,24 +644,49 @@ def _is_set(value: str, t: str) -> str:
     return f"nullif(trim({value}), '') is not null" if t in TEXTUAL else f"{value} is not null"
 
 
-def _path_sql(node: dict[str, Any], ctx: SqlContext) -> str:
+@dataclass
+class PathSql:
+    """A path compiled on a row: where its rows come from (`frm`/`where`, empty while still on the row itself),
+    the alias of the last rows, the scalar `value` reached (and its type), whether the path is a collection, and
+    the foreign-key column of the last hop when it sits on the row before (`last_fk`)."""
+    alias: str
+    frm: list[str]
+    where: list[str]
+    value: str | None
+    value_t: str | None
+    many: bool
+    last_fk: str | None
+
+    @property
+    def sub(self) -> str:
+        return f"from {' '.join(self.frm)} where {' and '.join(self.where)}" if self.frm else ""
+
+    def ids(self) -> str:
+        """SQL for the id(s) of the rows reached (a reference path): the FK itself when it is on the row."""
+        if self.last_fk is not None and len(self.frm) == 1:
+            return self.last_fk
+        return f"(select {self.alias}.id {self.sub})" if self.frm else f"{self.alias}.id"
+
+    def members(self, expr: str) -> str:
+        """`expr` is one of the rows reached (a collection of User, say): an EXISTS test."""
+        if not self.frm:
+            return f"{expr} = {self.alias}.id"
+        return f"exists (select 1 {self.sub} and {self.alias}.id = {expr})"
+
+
+def compile_path(node: dict[str, Any], ctx: SqlContext) -> PathSql:
     segs: list[str] = node["segs"]
-    call = node["call"]
-    if segs and node.get("ref") and node["ref"][0].startswith("@"):
-        if segs[0] not in ctx.variables:
-            raise ExprError(f"no SQL for the variable '{segs[0]}' here", node["pos"])
-        return ctx.variables[segs[0]]
     store = ref_store(ctx.e)
     e = ctx.e
     cname = ctx.cls
-    alias = ctx.alias                    # alias of the current row(s)
-    frm: list[str] = []                  # FROM and JOIN clauses of the subquery (empty: still on the row itself)
+    alias = ctx.alias
+    frm: list[str] = []
     where: list[str] = []
     many = False
     value: str | None = None
     value_t: str | None = None
-    last_fk: str | None = None           # `alias.column` of the last hop when it is a foreign key on the row before
-    for i, seg in enumerate(segs):
+    last_fk: str | None = None
+    for seg in segs:
         if cname in E.BUILTIN_CLASSES:                       # User: only email
             value, value_t = f"{alias}.email", "email"
             continue
@@ -692,27 +717,37 @@ def _path_sql(node: dict[str, Any], ctx: SqlContext) -> str:
         if not frm:
             frm, where = tables, [cond]
         else:
-            frm.append(f"join {tables[0]} on {cond}" if len(tables) == 1
-                       else f"join {tables[0]} on {cond} {tables[1]}")
+            frm.append(f"join {tables[0]} on {cond}" if len(tables) == 1 else f"join {tables[0]} on {cond} {tables[1]}")
         alias, cname = x, target
-    sub = f"from {' '.join(frm)} where {' and '.join(where)}" if frm else ""
+    return PathSql(alias, frm, where, value, value_t, many, last_fk)
+
+
+def _path_sql(node: dict[str, Any], ctx: SqlContext) -> str:
+    segs: list[str] = node["segs"]
+    call = node["call"]
+    if segs and node.get("ref") and node["ref"][0].startswith("@"):
+        if segs[0] not in ctx.variables:
+            raise ExprError(f"no SQL for the variable '{segs[0]}' here", node["pos"])
+        return ctx.variables[segs[0]]
+    p = compile_path(node, ctx)
+    sub = p.sub
     if call is None:
-        if value is None:
+        if p.value is None:
             raise ExprError("a reference has no SQL value: navigate to an attribute or use isSet()", node["pos"])
-        return value if not frm else f"(select {value} {sub})"
+        return p.value if not p.frm else f"(select {p.value} {sub})"
     if call == "sum":
-        return f"(select coalesce(sum({value}), 0) {sub})"
+        return f"(select coalesce(sum({p.value}), 0) {sub})"
     if call == "size":
         return f"(select count(*) {sub})"
     if call == "notEmpty":
         return f"exists (select 1 {sub})"
-    if call == "isEmpty" and many:
+    if call == "isEmpty" and p.many:
         return f"not exists (select 1 {sub})"
     # a single value: an attribute, or a reference (set = the row exists)
-    if value is not None:
-        test = _is_set(value if not frm else f"(select {value} {sub})", value_t or "")
-    elif last_fk is not None and len(frm) == 1:
-        test = f"{last_fk} is not null"
+    if p.value is not None:
+        test = _is_set(p.value if not p.frm else f"(select {p.value} {sub})", p.value_t or "")
+    elif p.last_fk is not None and len(p.frm) == 1:
+        test = f"{p.last_fk} is not null"
     else:
         test = f"exists (select 1 {sub})"
     return test if call == "isSet" else f"not ({test})"

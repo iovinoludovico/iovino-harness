@@ -16,7 +16,7 @@ from . import core as M
 
 # tables never described by the metamodel: the users (the built-in User) and the modeler's own proposals;
 # the app's other infrastructure tables are excluded with --exclude (`table.column` excludes one technical column)
-INTERNAL_TABLES = {"profiles", "model_change_requests", "schema_migrations"}
+INTERNAL_TABLES = {"profiles", "model_change_requests", "schema_migrations", "workflow_history", "workflow_reminders"}
 STANDARD_COLUMNS = E.STANDARD_COLUMNS
 USER_TABLES = {("public", "profiles"), ("auth", "users")}
 
