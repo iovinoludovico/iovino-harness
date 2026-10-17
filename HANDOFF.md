@@ -46,8 +46,8 @@ classi puntano alla stessa.
   etichetta per sorgente alla porta di uscita; bus instradati prima dei connettori singoli.
 
 ## Problemi aperti
-- Il branch non è ancora su GitHub: niente PR, niente CI. Su questo computer `gh` non è installato: `/core:ship`
-  da un computer con `gh` oppure PR a mano dal browser dopo il push.
+- Il branch non è ancora su GitHub: niente PR, niente CI. `gh` 2.102 è installato e autenticato (account
+  iovinoludovico): `/core:ship` funziona da qui.
 - La vista del comportamento e il bus non sono ancora stati visti in un'app reale (solo test di layout e tsc):
   da controllare in guest-invitations-af dopo `/modeler:install` (0.14.0), con `behavior.yaml` e la pagina che passa
   `behavior={behavior}`.
@@ -60,8 +60,7 @@ classi puntano alla stessa.
   grafico e le proposte sul behavior dal web).
 
 ## Prossimi passi
-1. Pubblicare: `/core:ship` (da un computer con `gh`) o `git push -u origin feat/modeler-behavior-view` + PR dal
-   browser; merge su `main` solo dopo conferma. Dopo il merge, sugli altri computer
+1. Pubblicare con `/core:ship` (push, PR, CI); merge su `main` solo dopo conferma. Dopo il merge, sugli altri computer
    `claude plugin update modeler@iovino-harness` (0.14.0).
 2. In guest-invitations-af: `/reload-plugins`, `/modeler:install` (barra dell'editor `v0.14.0`); se manca,
    `behavior.yaml` da `plugins/modeler/tests/fixtures/invitations.behavior.yaml` e `derived: true` sugli attributi
