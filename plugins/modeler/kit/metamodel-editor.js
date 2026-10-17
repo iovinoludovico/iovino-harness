@@ -6,9 +6,12 @@
  *
  *   const el = document.querySelector("metamodel-editor");
  *   el.metamodel = json;            // canonical form: src/lib/modeler/metamodel.json (`npm run model:sync`)
+ *   el.behavior = json;             // optional: src/lib/modeler/behavior.json (behavior.yaml as the app reads it);
+ *                                   // derived attributes show their formula, the state attribute its workflow
  *   el.readonly = false;
  *   el.addEventListener("change", (e) => e.detail.metamodel);
  *   el.addEventListener("save", (e) => { e.detail.metamodel; e.detail.note; });
+ *   el.addEventListener("select", (e) => e.detail.name);   // the class or enum selected (null: none)
  *
  * Attributes: lang="it|en", save-label="…", readonly.
  * The diagram positions are kept in metamodel.diagram ({Class: {x, y}}).
@@ -39,25 +42,28 @@
   const LANES = [0, 8, -8, 16, -16, 24, -24, 32, -32];
 
   const Layout = (() => {
-    const rowsOf = (c, allAttrs = false, more = "more") => {
-      // attribute lines of a class box: all of them, or the first ones plus "+N more"
-      const lines = Object.entries(c.attributes).map(([an, a]) => {
+    const rowItems = (c, allAttrs = false, more = "more", state = null) => {
+      // attribute lines of a class box: all of them, or the first ones plus "+N more". `🔑` marks the id,
+      // `/name` a derived attribute (UML), `⟳` the state attribute of the workflow (`state` of behavior.yaml)
+      const items = Object.entries(c.attributes).map(([an, a]) => {
         const m = a.lower === 0 && a.upper === 1 ? "" : ` [${multText(a.lower, a.upper)}]`;
-        return `${a.id ? "🔑 " : ""}${an}: ${a.type}${m}`;
+        const mark = a.id ? "🔑 " : an === state ? "⟳ " : "";
+        return { text: `${mark}${a.derived ? "/" : ""}${an}: ${a.type}${m}`, attr: an, derived: !!a.derived, state: an === state };
       });
       // references to the application users have no box to point to: listed in the class, dimmed
       for (const [rn, r] of Object.entries(c.references)) {
-        if (r.type === "User") lines.push(`↗ ${rn}: User${r.lower === 0 && r.upper === 1 ? "" : ` [${multText(r.lower, r.upper)}]`}`);
+        if (r.type === "User") items.push({ text: `↗ ${rn}: User${r.lower === 0 && r.upper === 1 ? "" : ` [${multText(r.lower, r.upper)}]`}`, ref: rn, muted: true });
       }
-      if (allAttrs || lines.length <= MAX_ROWS) return lines;
-      return [...lines.slice(0, MAX_ROWS - 1), `… +${lines.length - MAX_ROWS + 1} ${more}`];
+      if (allAttrs || items.length <= MAX_ROWS) return items;
+      return [...items.slice(0, MAX_ROWS - 1), { text: `… +${items.length - MAX_ROWS + 1} ${more}`, muted: true }];
     };
+    const rowsOf = (c, allAttrs, more, state) => rowItems(c, allAttrs, more, state).map((r) => r.text);
 
     const boxSize = (mm, name, opts = {}) => {
       const c = mm.classes[name];
       const width = (texts, min) => Math.round(Math.max(min, Math.min(380, Math.max(...texts.map((x) => x.length)) * CHAR_W + 24)));
       if (c) {
-        const rows = rowsOf(c, opts.allAttrs, opts.more);
+        const rows = rowsOf(c, opts.allAttrs, opts.more, opts.state);
         return { w: width([name, ...rows], 160), h: HEAD_H + Math.max(1, rows.length) * ROW_H + PAD };
       }
       const e = mm.enums[name];
@@ -371,7 +377,7 @@
       return { x: Math.round(start.x), y: Math.round(bottom) };
     };
 
-    return { rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot };
+    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -458,6 +464,8 @@
       dropClass: "classe rimossa: la tabella e i suoi dati andranno eliminati",
       dropFeature: "rimosso: la colonna e i suoi dati andranno eliminati",
       dropLiteral: "letterale rimosso: i record con questo valore vanno migrati",
+      behavior: "Comportamento", workflow: "Workflow", states: "stati", transitions: "transizioni",
+      derived: "calcolato", inCode: "calcolato nel codice", formula: "formula",
     },
     en: {
       addClass: "Class", addEnum: "Enum", layout: "Layout", fit: "Fit", save: "Save", note: "Change note",
@@ -474,6 +482,8 @@
       dropClass: "class removed: its table and data will be dropped",
       dropFeature: "removed: the column and its data will be dropped",
       dropLiteral: "literal removed: records with this value must be migrated",
+      behavior: "Behaviour", workflow: "Workflow", states: "states", transitions: "transitions",
+      derived: "derived", inCode: "computed in code", formula: "formula",
     },
   };
 
@@ -516,6 +526,10 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .x { padding:0 4px; border:none; background:none; color:var(--muted); }
 .x:hover { color:var(--err); }
 .hint { color:var(--muted); font-size:12px; }
+.formula { margin:-2px 0 8px 8px; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted); white-space:pre-wrap; word-break:break-word; }
+.wf { margin:0 0 4px; font-size:12px; }
+.wf .hint { display:block; margin-left:8px; }
+.box text.state { fill:var(--accent); }
 .issues { position:absolute; right:8px; top:8px; max-width:420px; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:8px 10px; font-size:12px; box-shadow:0 4px 16px rgba(0,0,0,.12); z-index:2; }
 .issues div { color:var(--err); }
 .box rect.body { fill:var(--bg); stroke:var(--line); }
@@ -576,6 +590,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
       this._allAttrs = false;      // boxes show every attribute instead of the first MAX_ROWS
       this._showIssues = false;
       this._hover = null;          // key of the connector under the mouse: highlighted, the others dimmed
+      this._bh = null;             // behavior.json (optional): formulas of the derived attributes, workflows
+      this._lastSel = undefined;   // the selection last announced with the `select` event
       this.attachShadow({ mode: "open" });
     }
 
@@ -599,6 +615,11 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
       requestAnimationFrame(() => this._fit());
     }
     get metamodel() { return clone(this._mm); }
+    // the behaviour model (src/lib/modeler/behavior.json): read only, shown next to the structure it refers to
+    set behavior(b) { this._bh = b && typeof b === "object" ? b : null; if (this.isConnected) this._render(); }
+    get behavior() { return this._bh; }
+    _workflow(cn) { return this._bh?.workflows?.[cn] || null; }
+    _formula(cn, an) { return this._bh?.derivations?.[cn]?.[an]?.text ?? null; }
     // the changes from the metamodel the editor was opened with (the running one) to `mm`, as `modeler diff`
     changesTo(mm) { return Layout.diff(this._orig || {}, mm); }
     getMetamodel() { return this.metamodel; }
@@ -781,8 +802,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
     }
 
     /* ------------------------------------------------------------------ layout */
-    _rows(c) { return Layout.rowsOf(c, this._allAttrs, this.t.more); }
-    _boxSize(name) { return Layout.boxSize(this._mm, name, { allAttrs: this._allAttrs, more: this.t.more }); }
+    _rows(cn) { return Layout.rowItems(this._mm.classes[cn], this._allAttrs, this.t.more, this._workflow(cn)?.state || null); }
+    _boxSize(name) { return Layout.boxSize(this._mm, name, { allAttrs: this._allAttrs, more: this.t.more, state: this._workflow(name)?.state || null }); }
+    _workflowText(cn) {
+      const w = this._workflow(cn), t = this.t;
+      return w ? `${t.workflow}: ${Object.keys(w.states || {}).length} ${t.states}, ${Object.keys(w.transitions || {}).length} ${t.transitions}` : "";
+    }
     _autoLayout(force) {
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
       const pos = Layout.autoLayout(this._mm, (n) => this._boxSize(n),
@@ -885,6 +910,11 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
       ].filter(Boolean));
       this._renderDiagram();
       this._renderSide();
+      const selName = this._sel?.name ?? null;
+      if (selName !== this._lastSel) {   // the page follows the selection (e.g. the behaviour of the class)
+        this._lastSel = selName;
+        this.dispatchEvent(new CustomEvent("select", { detail: { kind: this._sel?.kind ?? null, name: selName } }));
+      }
       const canvas = root.querySelector(".canvas");
       canvas.querySelector(".issues")?.remove();
       if (this._showIssues && (issues.length || warns.length)) {
@@ -1021,13 +1051,13 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
           svg("rect", { class: "head", width: s.w - 2, x: 1, y: 1, height: hh - 2, rx: 5 }),
           svg("text", { x: s.w / 2, y: 21, "text-anchor": "middle", class: `title${c.abstract ? " abstract" : ""}` }, cn));
         let y = hh + 14;
-        const rows = this._rows(c);
+        const rows = this._rows(cn);
         if (!rows.length) b.append(svg("text", { x: 8, y, class: "muted" }, "—"));
-        rows.forEach((line, i) => {
-          const muted = line.startsWith("↗ ") || (!this._allAttrs && i === MAX_ROWS - 1 && line.startsWith("…"));
-          b.append(svg("text", { x: 8, y, class: muted ? "muted" : null }, line));
+        for (const r of rows) {
+          const tip = r.derived ? `/${r.attr} = ${this._formula(cn, r.attr) ?? this.t.inCode}` : r.state ? this._workflowText(cn) : null;
+          b.append(svg("text", { x: 8, y, class: r.muted ? "muted" : r.state ? "state" : null }, r.text, tip ? svg("title", {}, tip) : null));
           y += ROW_H;
-        });
+        }
         boxes.append(b);
       }
       for (const [en, e] of Object.entries(mm.enums)) {
@@ -1105,12 +1135,14 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
         el("div", { class: "field" }, el("label", {}, t.doc), el("textarea", { rows: 2, disabled: ro, onchange: (ev) => { const v = ev.target.value.trim(); if (v) c.doc = v; else delete c.doc; commit(); } }, c.doc || "")),
         el("h3", {}, t.attributes),
         el("div", { class: "row attr hint" }, el("span", {}, t.name), el("span", {}, t.type), el("span", {}, t.mult), el("span", { title: "iD" }, t.id), el("span")),
-        ...Object.entries(c.attributes).map(([an, a]) => el("div", { class: "row attr" },
-          el("input", { value: an, disabled: ro, onchange: (ev) => { this._renameFeature(cn, "attributes", an, ev.target.value.trim()); commit(); } }),
+        ...Object.entries(c.attributes).flatMap(([an, a]) => [el("div", { class: "row attr" },
+          el("input", { value: an, disabled: ro, title: a.derived ? `${t.derived} (/${an})` : null, onchange: (ev) => { this._renameFeature(cn, "attributes", an, ev.target.value.trim()); commit(); } }),
           el("select", { disabled: ro, onchange: (ev) => { a.type = ev.target.value; delete a.default; commit(); } }, typeOptions(a.type)),
           this._multSelect(a, commit, ro),
           el("input", { type: "checkbox", checked: !!a.id, disabled: ro, title: "iD (unique key)", onchange: (ev) => { if (ev.target.checked) a.id = true; else delete a.id; commit(); } }),
-          ro ? el("span") : el("button", { class: "x", title: t.del, onclick: () => { delete c.attributes[an]; commit(); } }, "×"))),
+          ro ? el("span") : el("button", { class: "x", title: t.del, onclick: () => { delete c.attributes[an]; commit(); } }, "×")),
+          // a derived attribute: its formula from behavior.yaml (read only here), or "computed in code"
+          a.derived ? el("div", { class: "formula", title: t.formula }, `= ${this._formula(cn, an) ?? t.inCode}`) : null]),
         ro ? null : el("button", { onclick: () => { c.attributes[this._uniqueName("attribute", Object.keys(c.attributes))] = { type: "EString", lower: 0, upper: 1 }; commit(); } }, `+ ${t.add}`),
         el("h3", {}, t.references),
         ...Object.entries(c.references).flatMap(([rn, r]) => {
@@ -1134,8 +1166,23 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
           c.references[this._uniqueName(target[0].toLowerCase() + target.slice(1), [...Object.keys(c.references), ...Object.keys(c.attributes)])] = { type: target, lower: 0, upper: 1, containment: false };
           commit();
         } }, `+ ${t.add}`),
+        ...this._behaviorPanel(cn),
         el("h3", {}, ""),
         ro ? null : el("button", { class: "danger", onclick: () => { if (confirm(`${t.confirmDelete} ${cn}?`)) { this._deleteClass(cn); commit(); } } }, `${t.del} ${cn}`));
+    }
+
+    // the workflow of the selected class (behavior.yaml), read only: state attribute, states, transitions
+    _behaviorPanel(cn) {
+      const w = this._workflow(cn), t = this.t;
+      if (!w) return [];
+      const lang = (this.getAttribute("lang") || "it").slice(0, 2);
+      const label = (spec, key) => (typeof spec?.label === "string" ? spec.label : spec?.label?.[lang]) || key;
+      return [
+        el("h3", {}, t.behavior),
+        el("div", { class: "wf" }, `⟳ ${w.state} · ${this._workflowText(cn).replace(`${t.workflow}: `, "")}`),
+        ...Object.entries(w.transitions || {}).map(([tn, tr]) => el("div", { class: "wf" },
+          label(tr, tn), el("span", { class: "hint" }, `${(tr.from || []).join(", ")} → ${tr.to}${tr.at != null ? ` · ${tr.at}` : ""}`))),
+      ];
     }
   }
 

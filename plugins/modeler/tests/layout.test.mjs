@@ -125,3 +125,35 @@ for (const [name, raw] of [["anagrafica", () => fixture("anagrafica.ecore.yaml")
     }
   });
 }
+
+// Behaviour next to the structure: `/` marks a derived attribute (flag of the metamodel), `⟳` the state attribute
+// of the workflow (behavior.json: `workflows.<Class>.state`), in the rows the box is sized on
+const behaviorFixture = (meta, beh) => JSON.parse(execFileSync("python3", ["-c",
+  "import json, sys; sys.path.insert(0, sys.argv[1]); from metamodel import behavior as B, ecore as E; " +
+  "print(json.dumps(B.runtime_json(B.load(sys.argv[3]), E.load(sys.argv[2]))))",
+  path.join(here, "../scripts"), path.join(here, "fixtures", meta), path.join(here, "fixtures", beh)], { encoding: "utf8" }));
+
+test("derived attributes and the workflow state are marked in the rows of a class", () => {
+  const mm = Layout.normalize(fixture("invitations.ecore.yaml"));
+  const bh = behaviorFixture("invitations.ecore.yaml", "invitations.behavior.yaml");
+  const state = bh.workflows.Invitation.state;
+  const rows = Layout.rowItems(mm.classes.Invitation, true, "more", state);
+  const derived = rows.filter((r) => r.derived);
+  assert.ok(derived.length >= 5, "the fixture has derived attributes");
+  for (const r of derived) {
+    assert.ok(r.text.includes(`/${r.attr}:`), r.text);
+    assert.ok(bh.derivations.Invitation[r.attr]?.text, `formula of ${r.attr} in behavior.json`);
+  }
+  const st = rows.find((r) => r.state);
+  assert.equal(st.attr, state);
+  assert.ok(st.text.startsWith("⟳ "), st.text);
+  assert.ok(!rows.some((r) => !r.derived && r.text.includes("/")), "only derived attributes carry the slash");
+  // the texts of the same items size the box; the marks change the width a little, never the height
+  assert.deepEqual(Layout.rowsOf(mm.classes.Invitation, true, "more", state), rows.map((r) => r.text));
+  const marked = Layout.boxSize(mm, "Invitation", { allAttrs: true, state });
+  const plain = Layout.boxSize(mm, "Invitation", { allAttrs: true });
+  assert.equal(marked.h, plain.h);
+  assert.ok(marked.w >= plain.w && marked.w <= 380);
+  // without a behaviour nothing is marked as state
+  assert.ok(!Layout.rowItems(mm.classes.Invitation, true).some((r) => r.state));
+});
