@@ -425,7 +425,7 @@
           const of = oc[kind][fn] || (renamed ? oc[kind][renamed] : null);
           if (!of) { out.push(`+ ${cn}.${fn}: ${f.type}${multSuffix(f.lower, f.upper)}`); continue; }
           if (renamed && !oc[kind][fn]) out.push(`~ ${cn}.${renamed} renamed to ${fn}`);
-          for (const k of ["type", "lower", "upper", "containment", "opposite", "default", "id", "changeable"]) {
+          for (const k of ["type", "lower", "upper", "containment", "opposite", "default", "id", "changeable", "derived"]) {
             if (JSON.stringify(of[k] ?? null) !== JSON.stringify(f[k] ?? null)) out.push(`~ ${cn}.${fn}: ${k} ${pyRepr(of[k])} -> ${pyRepr(f[k])}`);
           }
         }

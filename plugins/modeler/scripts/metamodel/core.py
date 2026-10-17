@@ -28,10 +28,10 @@ class Report:
     def ok(self) -> bool:
         return not self.errors
 
-    def render(self) -> str:
+    def render(self, ok_text: str = "Metamodel OK") -> str:
         lines = [f"ERROR   {e}" for e in self.errors] + [f"WARNING {w}" for w in self.warnings]
         if not lines:
-            return "Metamodel OK"
+            return ok_text
         return "\n".join(lines + [f"{len(self.errors)} error(s), {len(self.warnings)} warning(s)"])
 
 

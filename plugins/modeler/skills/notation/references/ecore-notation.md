@@ -3,7 +3,9 @@
 The metamodel describes the **structure** of the domain of a Next.js + Supabase application. It is the source
 of truth of the database schema: written from the prompt (`/modeler:metamodel`), edited in the web modeler that
 lives inside the app (`/admin/model`, saves proposals), or derived from an existing database (`reverse`).
-Behaviour (workflows, permissions, pages) is code; the metamodel is checked against the database with `drift`.
+Behaviour (roles, workflows, guards, events, reactions) is the behaviour model `behavior.yaml` next to it, written on
+the metamodel's concepts and checked against it (see `behavior-notation.md`); the metamodel is checked against the
+database with `drift`.
 
 ## Syntax
 ```yaml
@@ -76,8 +78,13 @@ default row cannot be repeated either. Subclasses inherit the groups of their su
 use `unique: true` on it.
 
 ### Attribute keys
-`type lower upper default id unique changeable(false = readonly) doc label help list min max max_length
+`type lower upper default id unique changeable(false = readonly) derived doc label help list min max max_length
 renamed_from column`
+
+`derived: true`: the value is computed, never typed (read only, not in forms; the database computes it). Its
+formula is written in `behavior.yaml` under `derivations` with the expression language of the guards
+(`dataComplete: reason.isSet() and fundsTotal = totalAmount`); a derived attribute without a formula is computed
+in code (a customization, reported as a warning).
 
 ### Reference keys
 `type lower upper containment opposite doc label help list on_delete(restrict|set_null|cascade) unique
@@ -150,8 +157,9 @@ room_id}`), `join_table:` names an existing join table, `table:` an existing tab
 | "identificato da", "codice univoco" | `id: true` (or `unique: true`) |
 | "una sola X per ogni combinazione di A e B", "la tariffa per voce e motivo, con un default" | class `unique: [a, b]` (a lookup on several dimensions) |
 | "un utente", "chi ha creato", "il responsabile" (a person who logs in) | reference to `User` |
-| "si chiude/approva/passa da … a …" | the states are an enum attribute (`stato: StatoOrdine`); the rules of the workflow are code |
-| "non può", "deve sempre", "al massimo uno per…", "si calcola come…" (what no key expresses) | a rule in `rules` of the class or package (`{id, text}`), shown in `docs/DOMAIN.md` |
+| "si chiude/approva/passa da … a …" | the states are an enum (or EString) attribute (`stato: StatoOrdine`); states, transitions, who and when are the workflow in `behavior.yaml` |
+| "si calcola come…", "è completo quando…" | the attribute is `derived: true`; its formula is a derivation in `behavior.yaml` |
+| "non può", "deve sempre", "al massimo uno per…" (what no key expresses) | a rule in `rules` of the class or package (`{id, text}`), shown in `docs/DOMAIN.md` |
 
 ## Ambiguities to settle with the user (ask, do not guess, when they matter)
 1. **Multiplicity** of each end: `[0..1]`, `[1]`, `[*]`.

@@ -23,6 +23,7 @@ from typing import Any
 from . import core as M
 
 METAMODEL_FILE = "domain.ecore.yaml"
+BEHAVIOR_FILE = "behavior.yaml"     # the behaviour model (behavior.py), next to the metamodel
 CLASS_NAME = re.compile(r"^[A-Z][A-Za-z0-9]{1,39}$")
 FEATURE_NAME = re.compile(r"^[a-z][A-Za-z0-9_]{0,39}$")
 LITERAL_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
@@ -46,7 +47,7 @@ CUSTOM_DATATYPES = {"Text": "java.lang.String", "Email": "java.lang.String", "UR
                     "DateTime": "java.util.Date", "JSON": "java.lang.String"}
 
 CLASS_KEYS = {"abstract", "supertypes", "doc", "label", "plural", "table", "unique", "attributes", "references", "rules"}
-ATTRIBUTE_KEYS = {"type", "lower", "upper", "default", "id", "unique", "changeable", "doc", "label", "help",
+ATTRIBUTE_KEYS = {"type", "lower", "upper", "default", "id", "unique", "changeable", "derived", "doc", "label", "help",
                   "list", "min", "max", "max_length", "renamed_from", "column"}
 REFERENCE_KEYS = {"type", "lower", "upper", "containment", "opposite", "doc", "label", "help", "list",
                   "on_delete", "unique", "renamed_from", "column", "join_table"}
@@ -476,7 +477,8 @@ def validate(raw: dict[str, Any]) -> M.Report:
     unknown = set(raw) - TOP_KEYS
     if unknown:
         rep.error("metamodel", f"unknown top-level keys: {', '.join(sorted(map(str, unknown)))} "
-                  "(the metamodel describes structure only: workflows, permissions and pages live in the code)")
+                  "(the metamodel describes structure only: workflows, derivations, events and reactions live in "
+                  f"{BEHAVIOR_FILE})")
     e = expand(raw)
     _check_rules(e["rules"], "rules", rep)
     if e["language"] not in LANGUAGES:
@@ -535,6 +537,11 @@ def validate(raw: dict[str, Any]) -> M.Report:
             if a.get("default") is not None and t in e["enums"]:
                 if str(a["default"]) not in [lit["name"] for lit in e["enums"][t]["literals"]]:
                     rep.error(fw, f"default '{a['default']}' is not a literal of {t}")
+            if a.get("derived"):
+                if a.get("id"):
+                    rep.error(fw, "a derived attribute cannot be the id")
+                if a.get("changeable") is True:
+                    rep.error(fw, "a derived attribute is read only: drop changeable: true")
         for rn, r in c["references"].items():
             fw = f"{where}.references.{rn}"
             _check_feature_name(rn, fw, rep)
@@ -870,7 +877,8 @@ def to_emfatic(raw: dict[str, Any]) -> str:
             head += " extends " + ", ".join(c["supertypes"])
         out.append(head + " {")
         for an, a in c["attributes"].items():
-            flags = ("id " if a.get("id") else "") + ("readonly " if a.get("changeable") is False else "")
+            flags = (("id " if a.get("id") else "") + ("derived " if a.get("derived") else "")
+                     + ("readonly " if a.get("changeable") is False and not a.get("derived") else ""))
             d = a.get("default")
             dflt = "" if d is None else f" = {str(d).lower()}" if isinstance(d, bool) else f" = {d}" if isinstance(d, (int, float)) else f" = \"{d}\""
             out.append(f"  {flags}attr {a['type']}{_mult(a['lower'], a['upper'])} {an}{dflt};")
@@ -934,7 +942,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "name": "Nome", "type": "Tipo", "mult": "Molteplicità", "constraints": "Vincoli", "description": "Descrizione",
         "to": "Verso", "notes": "Note", "literal": "Letterale", "label": "Etichetta",
         "id": "identificativo", "unique": "unico", "default": "default {v}", "max_length": "max {n} caratteri",
-        "min": "min {v}", "max": "max {v}", "readonly": "sola lettura", "containment": "contenimento",
+        "min": "min {v}", "max": "max {v}", "readonly": "sola lettura", "derived": "calcolato", "containment": "contenimento",
         "opposite": "opposto `{name}`", "on_delete": "alla cancellazione: {v}",
     },
     "en": {
@@ -947,7 +955,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "name": "Name", "type": "Type", "mult": "Multiplicity", "constraints": "Constraints", "description": "Description",
         "to": "To", "notes": "Notes", "literal": "Literal", "label": "Label",
         "id": "identifier", "unique": "unique", "default": "default {v}", "max_length": "max {n} characters",
-        "min": "min {v}", "max": "max {v}", "readonly": "read only", "containment": "containment",
+        "min": "min {v}", "max": "max {v}", "readonly": "read only", "derived": "derived", "containment": "containment",
         "opposite": "opposite `{name}`", "on_delete": "on delete: {v}",
     },
 }
@@ -990,7 +998,9 @@ def _constraints(a: dict[str, Any], t: dict[str, str]) -> str:
         out.append(t["min"].format(v=a["min"]))
     if a.get("max") is not None:
         out.append(t["max"].format(v=a["max"]))
-    if a.get("changeable") is False:
+    if a.get("derived"):
+        out.append(t["derived"])
+    elif a.get("changeable") is False:
         out.append(t["readonly"])
     return ", ".join(out)
 
@@ -1209,7 +1219,7 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
                     continue
                 if renamed and fn not in oc[kind]:
                     out.append(f"~ {cn}.{renamed} renamed to {fn}")
-                for k in ("type", "lower", "upper", "containment", "opposite", "default", "id", "changeable"):
+                for k in ("type", "lower", "upper", "containment", "opposite", "default", "id", "changeable", "derived"):
                     if of.get(k) != f.get(k):
                         out.append(f"~ {cn}.{fn}: {k} {of.get(k)} -> {f.get(k)}")
             for fn in oc[kind]:
@@ -1291,6 +1301,8 @@ def export_ecore(raw: dict[str, Any]) -> str:
                 f.set("iD", "true")
             if a.get("changeable") is False:
                 f.set("changeable", "false")
+            if a.get("derived"):
+                f.set("derived", "true")
             _annot(f, GENMODEL_SRC, {"documentation": a.get("doc")})
             _annot(f, MODELER_SRC, {k: a.get(k) for k in ("label", "help", "list", "min", "max", "max_length", "unique", "renamed_from")})
         for rn, r in c["references"].items():
@@ -1394,6 +1406,8 @@ def import_ecore(text: str) -> dict[str, Any]:
                         spec["id"] = True
                     if f.get("changeable") == "false":
                         spec["changeable"] = False
+                    if f.get("derived") == "true":
+                        spec["derived"] = True
                     attrs[f.get("name")] = spec
                 else:
                     if f.get("containment") == "true":

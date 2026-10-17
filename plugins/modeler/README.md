@@ -29,8 +29,14 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   author, note, the changes as `modeler diff` prints them), where it can be opened or rejected, and the session
   start reminds the developer of the proposals in `.modeler/proposals/`.
 - `drift` compares the metamodel with a live database (local Supabase by default): "aligned" is the invariant.
-- Behaviour (workflows, permissions, pages) is code; what the metamodel cannot express is a customization
-  listed in `docs/customizations.md` and marked `CUSTOM(<id>)`.
+- Behaviour is the second model, **`behavior.yaml`** next to the metamodel: roles, derivations of the attributes
+  marked `derived: true`, workflows (states, transitions, guards, timed transitions), events, reactions (who is
+  notified when) and webhook subscriptions, written on the metamodel's concepts with typed expressions
+  (`guard: dataComplete`, `when: reason.compensationType = hourly and hours > 0`, `notify: [director, self.issuer]`).
+  `validate` checks it against the metamodel, the hook does it after every edit of either file (a domain change
+  that breaks a guard, a recipient or a derivation is reported at once), `apply` reports a proposal that breaks
+  it. The engine that runs it is still the app's code; what neither model expresses is a customization listed in
+  `docs/customizations.md` and marked `CUSTOM(<id>)`.
 
 ## Install
 From the harness clone: `./install.sh` (installs `core` and `modeler`). From GitHub:
@@ -44,15 +50,17 @@ From the harness clone: `./install.sh` (installs `core` and `modeler`). From Git
 | `/modeler:metamodel <description> \| show` | metamodel from natural language, then migration, code, drift |
 | `/modeler:apply [proposal] \| pull [DSN]` | applies the proposals saved by the modeler |
 
-Knowledge skill loaded automatically: `notation` (syntax, storage mapping, ambiguities to settle).
+Knowledge skill loaded automatically: `notation` (syntax of both models, storage mapping, ambiguities to settle).
 
-Hooks: validate `domain.ecore.yaml` after every edit (PostToolUse, errors go back to Claude); remind to update
+Hooks: validate `domain.ecore.yaml` after every edit, and `behavior.yaml` against it when either changes
+(PostToolUse, errors go back to Claude); remind to update
 the metamodel when a migration changes; at session start describe the app's metamodel, report a vendored
 modeler older than the plugin and, with `MODELER_DRIFT_DB`, the drift from the database.
 
 ## CLI
 ```bash
 python3 scripts/modeler.py validate tests/fixtures/anagrafica.ecore.yaml
+python3 scripts/modeler.py validate tests/fixtures/invitations.ecore.yaml --behavior tests/fixtures/invitations.behavior.yaml
 python3 scripts/modeler.py show tests/fixtures/anagrafica.ecore.yaml --format storage   # emfatic|mermaid|markdown|json|yaml
 python3 scripts/modeler.py reverse --db postgresql://postgres:postgres@127.0.0.1:54322/postgres -o domain.ecore.yaml
 python3 scripts/modeler.py install ~/code/my-app

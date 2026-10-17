@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from . import behavior as B
 from . import core as M
 from . import dbschema as D
 from . import ecore as E
@@ -135,13 +136,42 @@ def _load_any(path: Path) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Commands on the metamodel
 # --------------------------------------------------------------------------- #
+def behavior_file(meta_path: Path, explicit: str | None = None) -> Path | None:
+    """The behaviour model to check with a metamodel: the one given, else behavior.yaml next to the metamodel."""
+    if explicit:
+        return Path(explicit)
+    p = B.behavior_path(meta_path)
+    return p if p.exists() else None
+
+
+def validate_behavior(meta_raw: dict[str, Any], bpath: Path) -> M.Report:
+    try:
+        return B.validate(B.load(bpath), meta_raw)
+    except M.ModelError as exc:
+        rep = M.Report()
+        rep.error(str(bpath), str(exc))
+        return rep
+
+
 def cmd_validate(a) -> int:
-    rep = E.validate(E.load(find_metamodel(a.path)))
+    meta_path = find_metamodel(a.path)
+    raw = E.load(meta_path)
+    rep = E.validate(raw)
+    bpath = behavior_file(meta_path, a.behavior)
+    brep = validate_behavior(raw, bpath) if bpath and rep.ok else None
     if a.json:
-        print(json.dumps({"ok": rep.ok, "errors": rep.errors, "warnings": rep.warnings}, indent=2))
+        out: dict[str, Any] = {"ok": rep.ok and (brep is None or brep.ok), "errors": rep.errors, "warnings": rep.warnings}
+        if brep is not None:
+            out["behavior"] = {"file": str(bpath), "ok": brep.ok, "errors": brep.errors, "warnings": brep.warnings}
+        print(json.dumps(out, indent=2))
     else:
         print(rep.render())
-    return 0 if rep.ok else 1
+        if brep is not None:
+            print(f"--- {bpath.name} against the metamodel")
+            print(brep.render(ok_text="Behaviour OK"))
+        elif bpath and not rep.ok:
+            print(f"{bpath.name}: not checked (the metamodel must be valid first)")
+    return 0 if rep.ok and (brep is None or brep.ok) else 1
 
 
 def cmd_show(a) -> int:
@@ -247,6 +277,11 @@ def cmd_apply(a) -> int:
     if not rep.ok:
         print("\nThe proposal is not a valid metamodel: nothing was written.")
         return 1
+    bpath = behavior_file(meta_path)
+    if bpath is not None:
+        brep = validate_behavior(new, bpath)
+        if not brep.ok:
+            print(f"\nThe proposal breaks {bpath.name} (fix the behaviour in the same change):\n" + brep.render())
     included, others = _other_proposals(meta_path, src, old, new)
     if included:
         print("\nIncluded in this proposal (archived with it):")
@@ -825,8 +860,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("validate", help="validate the metamodel")
+    s = sub.add_parser("validate", help=f"validate the metamodel (and {B.BEHAVIOR_FILE} next to it, if any)")
     s.add_argument("path", nargs="?")
+    s.add_argument("--behavior", help=f"the behaviour model to check against the metamodel (default: {B.BEHAVIOR_FILE} next to it)")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_validate)
 
