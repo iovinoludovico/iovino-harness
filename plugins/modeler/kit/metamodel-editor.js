@@ -40,36 +40,47 @@
   const LABEL_CHAR_W = 6.6, LABEL_H = 14;
   const PORT_STAGGER = 4;                  // incoming ports sit a few px off the outgoing ones
   const LANES = [0, 8, -8, 16, -16, 24, -24, 32, -32];
+  const FRACS = [0.5, 0.3, 0.7, 0.15, 0.85, 0.05, 0.95];   // where the middle run of a Z sits between the two boxes
   const BUS_MIN = 4;                       // references entering the same side of a class that share a bus
   const BUS_GAP = 28;                      // distance of the trunk of a bus from the side of the class
+  const STEREO_H = 12;                     // extra head height of a box with a stereotype line («enumeration», «workflow»)
+  // the state diagram of a workflow drawn as a satellite under its class (compact: smaller than the app's diagrams)
+  const WF = { font: 10, keyFont: 9, labelFont: 9, minBox: 72, maxBox: 150, minGap: 44, maxLabel: 90, margin: 6,
+    lane: 7, laneInset: 9, channel: 22, sinkSources: 3, pad: 5, arrow: 7, lOffset: 3, head: 16,
+    satGap: 18, satRatio: 2.5, satMax: 560, color: "#64748b", charW: 0.56 };
 
   const Layout = (() => {
-    const rowItems = (c, allAttrs = false, more = "more", state = null) => {
+    const rowItems = (c, allAttrs = false, more = "more", state = null, uses = null) => {
       // attribute lines of a class box: all of them, or the first ones plus "+N more". `🔑` marks the id,
-      // `/name` a derived attribute (UML), `⟳` the state attribute of the workflow (`state` of behavior.yaml)
+      // `/name` a derived attribute (UML), `⟳` the state attribute of the workflow (`state` of behavior.yaml),
+      // ` ·ƒ` a feature the behaviour uses (`uses` of behavior.json for this class: formulas, guards, principals…)
       const items = Object.entries(c.attributes).map(([an, a]) => {
         const m = a.lower === 0 && a.upper === 1 ? "" : ` [${multText(a.lower, a.upper)}]`;
         const mark = a.id ? "🔑 " : an === state ? "⟳ " : "";
-        return { text: `${mark}${a.derived ? "/" : ""}${an}: ${a.type}${m}`, attr: an, derived: !!a.derived, state: an === state };
+        const used = uses?.attributes?.[an] || null;
+        return { text: `${mark}${a.derived ? "/" : ""}${an}: ${a.type}${m}${used ? " ·ƒ" : ""}`, attr: an, derived: !!a.derived, state: an === state, used };
       });
       // references to the application users have no box to point to: listed in the class, dimmed
       for (const [rn, r] of Object.entries(c.references)) {
-        if (r.type === "User") items.push({ text: `↗ ${rn}: User${r.lower === 0 && r.upper === 1 ? "" : ` [${multText(r.lower, r.upper)}]`}`, ref: rn, muted: true });
+        if (r.type !== "User") continue;
+        const used = uses?.references?.[rn] || null;
+        items.push({ text: `↗ ${rn}: User${r.lower === 0 && r.upper === 1 ? "" : ` [${multText(r.lower, r.upper)}]`}${used ? " ·ƒ" : ""}`, ref: rn, muted: true, used });
       }
       if (allAttrs || items.length <= MAX_ROWS) return items;
       return [...items.slice(0, MAX_ROWS - 1), { text: `… +${items.length - MAX_ROWS + 1} ${more}`, muted: true }];
     };
-    const rowsOf = (c, allAttrs, more, state) => rowItems(c, allAttrs, more, state).map((r) => r.text);
+    const rowsOf = (c, allAttrs, more, state, uses) => rowItems(c, allAttrs, more, state, uses).map((r) => r.text);
 
     const boxSize = (mm, name, opts = {}) => {
       const c = mm.classes[name];
       const width = (texts, min) => Math.round(Math.max(min, Math.min(380, Math.max(...texts.map((x) => x.length)) * CHAR_W + 24)));
       if (c) {
-        const rows = rowsOf(c, opts.allAttrs, opts.more, opts.state);
-        return { w: width([name, ...rows], 160), h: HEAD_H + Math.max(1, rows.length) * ROW_H + PAD };
+        const rows = rowsOf(c, opts.allAttrs, opts.more, opts.state, opts.uses);
+        // a class with a workflow has a «workflow» stereotype line in its head, like an enum has «enumeration»
+        return { w: width([name, ...rows], 160), h: HEAD_H + (opts.workflow ? STEREO_H : 0) + Math.max(1, rows.length) * ROW_H + PAD };
       }
       const e = mm.enums[name];
-      return { w: width([name, ...e.literals.map((l) => l.name)], 120), h: HEAD_H + 12 + Math.max(1, e.literals.length) * ROW_H + PAD };
+      return { w: width([name, ...e.literals.map((l) => l.name)], 120), h: HEAD_H + STEREO_H + Math.max(1, e.literals.length) * ROW_H + PAD };
     };
 
     const normalize = (mm) => {
@@ -193,18 +204,19 @@
       return false;
     };
 
-    const route = (p1, sa, p2, sb, lane, self, detour = 0) => {
+    const route = (p1, sa, p2, sb, lane, self, detour = 0, frac = 0.5) => {
       const h1 = horizontal(sa), h2 = horizontal(sb);
       const step = 28 + detour * 10;   // connectors going around the boxes get a lane each
       if (self) { const x = p1.x + step; return [p1, { x, y: p1.y }, { x, y: p2.y }, p2]; }
       if (h1 && h2) {
         const facing = out[sa][0] !== out[sb][0] && (out[sa][0] > 0 ? p2.x > p1.x : p2.x < p1.x);
-        const x = facing ? (p1.x + p2.x) / 2 + lane : (out[sa][0] > 0 ? Math.max(p1.x, p2.x) + step : Math.min(p1.x, p2.x) - step);
+        // facing sides: a Z whose middle run sits at `frac` of the way (so it can pass between other boxes)
+        const x = facing ? p1.x + (p2.x - p1.x) * frac + lane : (out[sa][0] > 0 ? Math.max(p1.x, p2.x) + step : Math.min(p1.x, p2.x) - step);
         return Math.abs(p1.y - p2.y) < 1 && facing ? [p1, p2] : [p1, { x, y: p1.y }, { x, y: p2.y }, p2];
       }
       if (!h1 && !h2) {
         const facing = out[sa][1] !== out[sb][1] && (out[sa][1] > 0 ? p2.y > p1.y : p2.y < p1.y);
-        const y = facing ? (p1.y + p2.y) / 2 + lane : (out[sa][1] > 0 ? Math.max(p1.y, p2.y) + step : Math.min(p1.y, p2.y) - step);
+        const y = facing ? p1.y + (p2.y - p1.y) * frac + lane : (out[sa][1] > 0 ? Math.max(p1.y, p2.y) + step : Math.min(p1.y, p2.y) - step);
         return Math.abs(p1.x - p2.x) < 1 && facing ? [p1, p2] : [p1, { x: p1.x, y }, { x: p2.x, y }, p2];
       }
       // one horizontal and one vertical side: an L, or (detour) out of both boxes and around, when the L crosses one
@@ -232,10 +244,342 @@
       return [pa, o, v ? { x: J.x, y: o.y } : { x: o.x, y: J.y }];
     };
 
-    const edgesOf = (mm) => {
+    /* ------------------------------------------------------------------ workflow (state diagram) layout
+     * Port of src/lib/workflow-layout.ts and state-path.ts (mainPath) of guest-invitations-af, the reference of the
+     * skill core:diagrams: states in columns by distance from the initial one (the main path on the first row),
+     * final states reached from many states on a bottom row with their transitions as a bus, orthogonal connectors
+     * each in its own lane (between columns) and channel (between rows), labels where they cover the least. */
+    const wfCharW = (font, bold = false) => font * (bold ? WF.charW + 0.04 : WF.charW);
+    const wfTextWidth = (s, font, bold = false) => s.length * wfCharW(font, bold);
+    const wfWrap = (text, maxWidth, font, maxLines, bold = false) => {
+      const max = Math.max(4, Math.floor(maxWidth / wfCharW(font, bold)));
+      const lines = [];
+      let cur = "";
+      for (const word of String(text).split(/\s+/).filter(Boolean)) {
+        const next = cur ? `${cur} ${word}` : word;
+        if (next.length <= max) cur = next;
+        else { if (cur) lines.push(cur); cur = word; }
+      }
+      if (cur) lines.push(cur);
+      const out = lines.slice(0, maxLines).map((l) => (l.length > max ? `${l.slice(0, max - 1)}…` : l));
+      if (lines.length > maxLines) {
+        const last = out[maxLines - 1];
+        out[maxLines - 1] = last.length >= max ? `${last.slice(0, max - 1)}…` : `${last}…`;
+      }
+      return out.length ? out : [""];
+    };
+    // the longest simple path from the initial state to a final one: the "normal" flow of the workflow
+    const mainPath = (states, out) => {
+      const initial = (states.find((s) => s.kind === "initial") || states[0]).key;
+      const final = new Set(states.filter((s) => s.kind === "final").map((s) => s.key));
+      let best = [initial], bestEndsFinal = final.has(initial), visits = 0;
+      const walk = (path) => {
+        if (++visits > 20000) return;
+        const last = path[path.length - 1], endsFinal = final.has(last);
+        if ((endsFinal && (!bestEndsFinal || path.length > best.length)) || (!bestEndsFinal && !endsFinal && path.length > best.length)) {
+          best = [...path]; bestEndsFinal = endsFinal;
+        }
+        if (endsFinal) return;
+        for (const next of out.get(last) || []) if (!path.includes(next)) walk([...path, next]);
+      };
+      walk([initial]);
+      return best;
+    };
+    const wfLabel = (spec, key, lang) => (typeof spec?.label === "string" ? spec.label : spec?.label?.[lang]) || key;
+    // a workflow of behavior.json as the layout reads it
+    const workflowModel = (w, lang = "it") => ({
+      states: Object.entries(w?.states || {}).map(([key, s]) => ({ key, label: wfLabel(s, key, lang), color: s.color || WF.color, kind: s.initial ? "initial" : s.final ? "final" : "state" })),
+      transitions: Object.entries(w?.transitions || {}).map(([key, t]) => ({ key, label: wfLabel(t, key, lang), from: t.from || [], to: t.to, timed: t.at != null })),
+    });
+    const wfArrowAt = (pts) => {
+      const b = pts[pts.length - 1];
+      let i = pts.length - 2;
+      while (i > 0 && pts[i].x === b.x && pts[i].y === b.y) i--;
+      const a = pts[i];
+      const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+      const base = { x: b.x - ux * WF.arrow, y: b.y - uy * WF.arrow };
+      return [b, base, { x: base.x - uy * 4, y: base.y + ux * 4 }, { x: base.x + uy * 4, y: base.y - ux * 4 }];
+    };
+    const wfSimplify = (pts) => {
+      const out = [];
+      for (const p of pts) {
+        if (out.length && Math.abs(out[out.length - 1].x - p.x) < 0.01 && Math.abs(out[out.length - 1].y - p.y) < 0.01) continue;
+        if (out.length >= 2) {
+          const a = out[out.length - 2], b = out[out.length - 1];
+          if ((Math.abs(a.x - b.x) < 0.01 && Math.abs(b.x - p.x) < 0.01) || (Math.abs(a.y - b.y) < 0.01 && Math.abs(b.y - p.y) < 0.01)) { out[out.length - 1] = p; continue; }
+        }
+        out.push(p);
+      }
+      return out;
+    };
+    const wfEmptyLabel = (tr, width) => {
+      const lines = wfWrap(`${tr.timed ? "⏱ " : ""}${tr.label}`, width - 8, WF.labelFont, 3);
+      const w = Math.max(...lines.map((l) => wfTextWidth(l, WF.labelFont))) + 8;
+      return { x: 0, y: 0, w, h: lines.length * (WF.labelFont + 2) + 5, lines };
+    };
+    const wfOverlapArea = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    // each label on its own connector, where it covers the fewest boxes, labels and other connectors
+    const wfPlaceLabels = (edges, boxes, bounds) => {
+      const placed = [];
+      const segs = edges.flatMap((e) => e.paths.flatMap((p) => p.slice(1).map((b, i) => ({ id: e.id, a: p[i], b }))));
+      const crosses = (r, id) => segs.filter((s) => s.id !== id
+        && Math.max(s.a.x, s.b.x) >= r.x && Math.min(s.a.x, s.b.x) <= r.x + r.w
+        && Math.max(s.a.y, s.b.y) >= r.y && Math.min(s.a.y, s.b.y) <= r.y + r.h).length;
+      const order = [...edges].sort((a, b) => a.paths.flat().length - b.paths.flat().length);
+      for (const e of order) {
+        const { w, h } = e.label;
+        let best = null, bestScore = Infinity;
+        for (const p of e.paths) for (let i = 1; i < p.length; i++) {
+          const a = p[i - 1], b = p[i];
+          const len = Math.hypot(b.x - a.x, b.y - a.y);
+          if (len < 6) continue;
+          const horizontal = Math.abs(a.y - b.y) < 0.01;
+          const shifts = [0, -w / 2 + 3, w / 2 - 3];
+          if (horizontal) shifts.push(Math.min(a.x, b.x) + w / 2 - (a.x + b.x) / 2, Math.max(a.x, b.x) - w / 2 - (a.x + b.x) / 2);
+          for (const t of [0.5, 0.3, 0.7, 0.15, 0.85]) for (const dx of t === 0.5 ? shifts : shifts.slice(0, 3)) for (const dy of [0, -h / 2 - 2, h / 2 + 2]) {
+            const cx = a.x + (b.x - a.x) * t + dx, cy = a.y + (b.y - a.y) * t + dy;
+            const r = { x: Math.min(Math.max(cx - w / 2, bounds.x), bounds.x + bounds.w - w), y: Math.min(Math.max(cy - h / 2, bounds.y), bounds.y + bounds.h - h), w, h };
+            const score = boxes.reduce((sum, bx) => sum + wfOverlapArea(r, bx) * 40, 0) + placed.reduce((sum, l) => sum + wfOverlapArea(r, l) * 8, 0)
+              + crosses(r, e.id) * 60 + (horizontal ? (len >= w + 8 ? 0 : 20) : 35) + Math.abs(t - 0.5) * 10 + (dx ? 6 : 0) + (dy ? 6 : 0);
+            if (score < bestScore) { bestScore = score; best = r; }
+          }
+        }
+        if (best) { Object.assign(e.label, best); placed.push(best); }
+      }
+    };
+    // { width, height, boxes: [{key,label,color,kind,x,y,w,h,lines}], edges: [{id,key,color,timed,paths,arrow,dots,label}] }
+    const workflowLayout = (states, transitions, width) => {
+      if (!states.length) return { width, height: 0, boxes: [], edges: [] };
+      const byKey = new Map(states.map((s) => [s.key, s]));
+      const pairs = transitions.flatMap((tr) => tr.from.filter((f) => f !== tr.to && byKey.has(f) && byKey.has(tr.to)).map((f) => ({ tr, f })));
+      const out = new Map(), sources = new Map();
+      for (const { tr, f } of pairs) {
+        out.set(f, [...new Set([...(out.get(f) || []), tr.to])]);
+        sources.set(tr.to, new Set([...(sources.get(tr.to) || []), f]));
+      }
+      // columns: breadth-first distance from the initial state; unreachable states last
+      const initial = states.find((s) => s.kind === "initial") || states[0];
+      const level = new Map([[initial.key, 0]]);
+      const queue = [initial.key];
+      while (queue.length) {
+        const cur = queue.shift();
+        for (const next of out.get(cur) || []) if (!level.has(next)) { level.set(next, level.get(cur) + 1); queue.push(next); }
+      }
+      const lastLevel = Math.max(0, ...level.values()) + 1;
+      for (const s of states) if (!level.has(s.key)) level.set(s.key, lastLevel);
+      // sinks: final states reached from many states, drawn on a bottom row
+      const sinks = new Set(states.filter((s) => s.kind === "final" && s.key !== initial.key && (sources.get(s.key)?.size || 0) >= WF.sinkSources).map((s) => s.key));
+      const regular = states.filter((s) => !sinks.has(s.key));
+      const levels = [...new Set(regular.map((s) => level.get(s.key)))].sort((a, b) => a - b);
+      const col = new Map(regular.map((s) => [s.key, levels.indexOf(level.get(s.key))]));
+      const nCols = Math.max(1, levels.length);
+      // rows: the main path first, then the others by the mean row of their neighbours in earlier columns
+      const main = mainPath(states, out);
+      const neighbours = new Map();
+      for (const { tr, f } of pairs) {
+        neighbours.set(f, [...(neighbours.get(f) || []), tr.to]);
+        neighbours.set(tr.to, [...(neighbours.get(tr.to) || []), f]);
+      }
+      const row = new Map();
+      for (let c = 0; c < nCols; c++) {
+        const inCol = regular.filter((s) => col.get(s.key) === c);
+        const onMain = inCol.filter((s) => main.includes(s.key)).sort((a, b) => main.indexOf(a.key) - main.indexOf(b.key));
+        const bary = (key) => {
+          const rs = (neighbours.get(key) || []).filter((n) => row.has(n)).map((n) => row.get(n));
+          return rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : Infinity;
+        };
+        const others = inCol.filter((s) => !main.includes(s.key)).sort((a, b) => bary(a.key) - bary(b.key));
+        [...onMain, ...others].forEach((s, i) => row.set(s.key, i));
+      }
+      const nRegRows = Math.max(1, ...regular.map((s) => row.get(s.key) + 1));
+      const sinkRow = nRegRows;
+      const taken = new Set();
+      for (const key of sinks) {   // each sink under the mean column of its sources, on a free column
+        const cs = [...(sources.get(key) || [])].filter((f) => col.has(f)).map((f) => col.get(f));
+        const base = Math.round(cs.length ? cs.reduce((a, b) => a + b, 0) / cs.length : 0);
+        const free = Array.from({ length: nCols }, (_, c) => c).filter((c) => !taken.has(c)).sort((a, b) => Math.abs(a - base) - Math.abs(b - base) || b - a);
+        const c = free.length ? free[0] : base;
+        taken.add(c); col.set(key, c); row.set(key, sinkRow);
+      }
+      const nRows = nRegRows + (sinks.size ? 1 : 0);
+      // routing requests: ports on box sides, lanes in the gaps between columns, segments in the channels between rows
+      const ports = [], lanes = [], hsegs = [];
+      const port = (owner, side, order) => { const p = { owner, side, order }; ports.push(p); return p; };
+      const lane = (gap, order, kind) => { const l = { gap, order, kind }; lanes.push(l); return l; };   // kind: 0 left stub, 1 both, 2 right
+      const hseg = (ch) => { const h = { ch, x1: 0, x2: 0 }; hsegs.push(h); return h; };
+      const ord = (key) => row.get(key) * 100 + col.get(key);
+      const normals = [], buses = [];
+      for (const tr of transitions) {
+        const fs = tr.from.filter((f) => f !== tr.to && byKey.has(f) && byKey.has(tr.to));
+        if (!fs.length) continue;
+        if (sinks.has(tr.to)) {
+          const srcs = fs.map((f) => ({ f, p: port(f, "R", 1e6 + ord(tr.to)) }));
+          const colLanes = new Map();
+          for (const { f } of srcs) if (!colLanes.has(col.get(f))) colLanes.set(col.get(f), lane(col.get(f) + 1, 1e6, 0));
+          buses.push({ tr, srcs, colLanes, tp: port(tr.to, "T", Math.min(...fs.map((f) => col.get(f)))), h: hseg(sinkRow) });
+          continue;
+        }
+        for (const f of fs) {
+          const cs = col.get(f), ct = col.get(tr.to), rs = row.get(f), rt = row.get(tr.to);
+          const forward = ct > cs;
+          const sp = port(f, forward || ct === cs ? "R" : "L", ord(tr.to));
+          const tp = port(tr.to, forward ? "L" : "R", ord(f));
+          const e = { tr, f, sp, tp };
+          const g1 = forward || ct === cs ? cs + 1 : cs, g2 = forward ? ct : ct + 1;
+          if (g1 === g2) e.l1 = lane(g1, rs * 10 + rt, forward ? 1 : ct === cs ? 0 : 1);
+          else {
+            e.l1 = lane(g1, rs, forward || ct === cs ? 0 : 2);
+            e.l2 = lane(g2, rt, forward ? 2 : 0);
+            const lo = Math.min(rs, rt), hi = Math.max(rs, rt) + 1;   // channel: above for backward edges, below for forward ones
+            let best = lo, bestCost = Infinity;
+            for (let ch = lo; ch <= hi; ch++) {
+              const cost = Math.abs(ch - rs - 0.5) + Math.abs(ch - rt - 0.5) + (forward ? (ch <= Math.min(rs, rt) ? 0.01 : 0) : (ch > Math.max(rs, rt) ? 0.01 : 0));
+              if (cost < bestCost) { bestCost = cost; best = ch; }
+            }
+            e.h = hseg(best);
+          }
+          normals.push(e);
+        }
+      }
+      // port positions along each side, ordered by where the other end is
+      const sideGroups = new Map();
+      for (const p of ports) sideGroups.set(`${p.owner}:${p.side}`, [...(sideGroups.get(`${p.owner}:${p.side}`) || []), p]);
+      for (const group of sideGroups.values()) {
+        group.sort((a, b) => a.order - b.order);
+        group.forEach((p, i) => { p.frac = (i + 1) / (group.length + 1); });
+      }
+      for (const e of normals) {   // adjacent boxes on the same row with ports at the same height: a straight line
+        if (e.l1 && !e.l2 && e.sp.side === "R" && e.tp.side === "L" && row.get(e.f) === row.get(e.tr.to) && e.sp.frac === e.tp.frac) {
+          lanes.splice(lanes.indexOf(e.l1), 1); e.l1 = undefined; e.tp.straight = true;
+        }
+      }
+      // widths: gaps sized by their lanes and by the longest word of a label, boxes fill the rest
+      const word = Math.max(0, ...transitions.flatMap((t) => t.label.split(/\s+/)).map((w) => wfTextWidth(w, WF.labelFont)));
+      const labelW = Math.min(WF.maxLabel, Math.max(WF.minGap - 4, word + 8));
+      const minGap = Math.max(WF.minGap, labelW + 4);
+      const gapLanes = Array.from({ length: nCols + 1 }, (_, g) => lanes.filter((l) => l.gap === g));
+      const gapNeed = gapLanes.map((ls, g) => {
+        const need = ls.length ? 2 * WF.laneInset + (ls.length - 1) * WF.lane : 0;
+        return g > 0 && g < nCols ? Math.max(minGap, need) : Math.max(WF.margin, need);
+      });
+      let box = (width - gapNeed.reduce((a, b) => a + b, 0)) / nCols;
+      const gaps = [...gapNeed];
+      if (box > WF.maxBox) {
+        const extra = (box - WF.maxBox) * nCols;
+        box = WF.maxBox;
+        if (nCols > 1) for (let g = 1; g < nCols; g++) gaps[g] += extra / (nCols - 1);
+        else { gaps[0] += extra / 2; gaps[1] += extra / 2; }
+      }
+      const stateWord = Math.max(0, ...states.flatMap((s) => s.label.split(/\s+/)).map((w) => wfTextWidth(w, WF.font, true)));
+      box = Math.max(Math.min(WF.maxBox, Math.max(WF.minBox, Math.ceil(stateWord + 2 * WF.pad))), Math.floor(box));
+      const colX = [];
+      let x = 0;
+      for (let c = 0; c < nCols; c++) { x += gaps[c]; colX.push(x); x += box; }
+      const totalW = Math.max(width, x + gaps[nCols]);
+      const gapX = (g) => (g === 0 ? 0 : colX[g - 1] + box);
+      gapLanes.forEach((ls, g) => {   // stubs towards the left column first, crossing lanes, then towards the right one
+        ls.sort((a, b) => a.kind - b.kind || a.order - b.order);
+        const span = (ls.length - 1) * WF.lane;
+        const x0 = g === 0 ? gaps[0] - WF.laneInset - span : g === nCols ? gapX(g) + WF.laneInset : gapX(g) + (gaps[g] - span) / 2;
+        ls.forEach((l, i) => { l.x = x0 + i * WF.lane; });
+      });
+      // box heights: the longest label decides, all boxes the same height
+      const lineH = WF.font + 3;
+      const boxLines = new Map(states.map((s) => [s.key, wfWrap(`${s.kind === "initial" ? "▶ " : ""}${s.label}`, box - 2 * WF.pad, WF.font, 3, true)]));
+      const maxLines = Math.max(...[...boxLines.values()].map((l) => l.length));
+      const boxH = 10 + maxLines * lineH + WF.keyFont + 8;
+      // channels: horizontal segments get their own height where their x ranges overlap
+      const portX = (p, key) => colX[col.get(key)] + box * (p.frac ?? 0.5);
+      for (const e of normals) if (e.h) { e.h.x1 = Math.min(e.l1.x, e.l2.x); e.h.x2 = Math.max(e.l1.x, e.l2.x); }
+      for (const b of buses) {
+        const xs = [...b.colLanes.values()].map((l) => l.x).concat(portX(b.tp, b.tr.to));
+        b.h.x1 = Math.min(...xs); b.h.x2 = Math.max(...xs);
+      }
+      const chLanes = new Array(nRows + 1).fill(0);
+      for (let ch = 0; ch <= nRows; ch++) {
+        const segs = hsegs.filter((h) => h.ch === ch).sort((a, b) => a.x1 - b.x1);
+        const ends = [];
+        for (const h of segs) {
+          let k = ends.findIndex((end) => end < h.x1 - 4);
+          if (k < 0) { k = ends.length; ends.push(0); }
+          ends[k] = h.x2;
+          h.y = k;
+        }
+        chLanes[ch] = ends.length;
+      }
+      const chH = chLanes.map((n, ch) => {
+        const need = n ? 2 * 8 + (n - 1) * WF.lane : 0;
+        return ch === 0 || ch === nRows ? Math.max(WF.margin, need) : Math.max(WF.channel, need + 6);
+      });
+      const rowY = [], chY = [];
+      let y = 0;
+      for (let r = 0; r <= nRows; r++) {
+        chY.push(y); y += chH[r];
+        if (r < nRows) { rowY.push(y); y += boxH; }
+      }
+      const height = y;
+      for (const h of hsegs) h.y = chY[h.ch] + (chH[h.ch] - (chLanes[h.ch] - 1) * WF.lane) / 2 + h.y * WF.lane;
+      const rectOf = (key) => ({ x: colX[col.get(key)], y: rowY[row.get(key)], w: box, h: boxH });
+      const boxes = states.map((s) => ({ ...s, ...rectOf(s.key), lines: boxLines.get(s.key) }));
+      const at = (p, key) => {   // ports entering from the left sit a little lower than those leaving to the right
+        const r = rectOf(key);
+        if (p.side === "T") return { x: r.x + r.w * p.frac, y: r.y };
+        return { x: p.side === "L" ? r.x : r.x + r.w, y: r.y + r.h * p.frac + (p.side === "L" && !p.straight ? WF.lOffset : 0) };
+      };
+      const color = (key) => byKey.get(key).color;
+      const edges = [];
+      for (const e of normals) {
+        const a = at(e.sp, e.f), b = at(e.tp, e.tr.to);
+        let pts;
+        if (!e.l1) pts = [a, b];
+        else if (!e.l2) pts = [a, { x: e.l1.x, y: a.y }, { x: e.l1.x, y: b.y }, b];
+        else pts = [a, { x: e.l1.x, y: a.y }, { x: e.l1.x, y: e.h.y }, { x: e.l2.x, y: e.h.y }, { x: e.l2.x, y: b.y }, b];
+        edges.push({ id: `${e.tr.key}:${e.f}`, key: e.tr.key, color: color(e.tr.to), timed: e.tr.timed, paths: [wfSimplify(pts)], arrow: wfArrowAt(pts), dots: [], label: wfEmptyLabel(e.tr, labelW) });
+      }
+      for (const b of buses) {
+        const paths = [], dots = [];
+        for (const [c, l] of b.colLanes) {
+          const here = b.srcs.filter((s) => col.get(s.f) === c).map((s) => at(s.p, s.f));
+          for (const p of here) { paths.push([p, { x: l.x, y: p.y }]); dots.push({ x: l.x, y: p.y }); }
+          paths.push([{ x: l.x, y: Math.min(...here.map((p) => p.y)) }, { x: l.x, y: b.h.y }]);
+          dots.push({ x: l.x, y: b.h.y });
+        }
+        const t = at(b.tp, b.tr.to);
+        paths.push([{ x: b.h.x1, y: b.h.y }, { x: b.h.x2, y: b.h.y }]);
+        const drop = [{ x: t.x, y: b.h.y }, t];
+        paths.push(drop);
+        const keep = dots.filter((d) => d.y !== b.h.y || (d.x > b.h.x1 + 0.5 && d.x < b.h.x2 - 0.5));
+        if (t.x > b.h.x1 + 0.5 && t.x < b.h.x2 - 0.5) keep.push({ x: t.x, y: b.h.y });
+        edges.push({ id: `${b.tr.key}:bus`, key: b.tr.key, color: color(b.tr.to), timed: b.tr.timed, paths, arrow: wfArrowAt(drop), dots: keep, label: wfEmptyLabel(b.tr, labelW) });
+      }
+      for (const e of edges) {   // the arrow head replaces the last few pixels of each connector
+        const last = e.paths[e.paths.length - 1];
+        last[last.length - 1] = e.arrow[1];
+      }
+      wfPlaceLabels(edges, boxes, { x: 0, y: 0, w: totalW, h: height });
+      return { width: totalW, height, boxes, edges };
+    };
+    // the satellite of a class with a workflow: its state diagram, drawn under the class box (same x, `dy` below
+    // its top) and moving with it; never stored in mm.diagram. opts: the boxSize options of the class.
+    const satelliteOf = (mm, name, wf, lang, opts = {}) => {
+      if (!wf || !mm.classes[name]) return null;
+      const box = boxSize(mm, name, opts);
+      const model = workflowModel(wf, lang);
+      const layout = workflowLayout(model.states, model.transitions, Math.min(WF.satMax, Math.round(box.w * WF.satRatio)));
+      return { dy: box.h + WF.satGap, w: layout.width, h: WF.head + layout.height, layout };
+    };
+    const satRect = (pos, sat) => ({ x: pos.x, y: pos.y + sat.dy, w: sat.w, h: sat.h });
+    // the room a class takes with its satellite (autoLayout, fit, separate, freeSpot), and the obstacle the
+    // satellite and the gap above it are for connectors and labels (routeEdges opts.extra)
+    const footSize = (box, sat) => ({ w: Math.max(box.w, sat ? sat.w : 0), h: box.h + (sat ? WF.satGap + sat.h : 0) });
+    const satObstacle = (pos, sat) => ({ x: pos.x, y: pos.y + sat.dy - WF.satGap, w: sat.w, h: WF.satGap + sat.h });
+
+    const edgesOf = (mm, uses = null) => {
       // EMF / Ecore Tools notation: reference = open arrow at the target; containment = filled diamond at the
       // container; a pair of opposite references = one connector with both ends; inheritance = hollow triangle
-      // at the supertype.
+      // at the supertype. A reference the behaviour uses gets ` ·ƒ` after its label.
+      const used = (cn, rn) => (uses?.[cn]?.references?.[rn] ? " ·ƒ" : "");
       const list = [];
       const drawn = new Set();
       for (const [cn, c] of Object.entries(mm.classes)) {
@@ -252,26 +596,28 @@
             key: `${cn}.${rn}`, a: cn, b: r.type, cls: "edge",
             start: r.containment ? "url(#diamond)" : (o ? "url(#arrow)" : null),
             end: o?.containment ? "url(#diamond)" : "url(#arrow)",
-            labelB: `${rn} ${multText(r.lower, r.upper)}`,
-            labelA: o ? `${r.opposite} ${multText(o.lower, o.upper)}` : null,
+            labelB: `${rn} ${multText(r.lower, r.upper)}${used(cn, rn)}`,
+            labelA: o ? `${r.opposite} ${multText(o.lower, o.upper)}${used(r.type, r.opposite)}` : null,
           });
         }
       }
       return list;
     };
 
-    const routeEdges = (mm, size) => {
+    const routeEdges = (mm, size, opts = {}) => {
       // Connectors as orthogonal polylines, with the labels of their ends: { edges: [{key, a, b, cls, start, end,
       // pts, labels: [{text, x, y, w, h}]}], boxes: {name: rect}, ext } (ext: the extent of lines and labels).
       // A bus (BUS_MIN or more references entering the same side of a class, core:diagrams) is one edge: `pts` the
       // stub with the arrow, `trunk` the line parallel to the side, `branches` [{key, a, start, pts}] one per source,
       // one label when the references read the same, else one at each source.
+      // opts.extra: more obstacles ([name, rect], e.g. the workflow satellites) that connectors and labels avoid;
+      // opts.uses: the `uses` map of behavior.json (marks the labels of the references the behaviour uses).
       const rects = {};
       for (const n of [...Object.keys(mm.classes), ...Object.keys(mm.enums)]) {
         const p = mm.diagram[n];
         if (p) { const s = size(n); rects[n] = { x: p.x, y: p.y, w: s.w, h: s.h }; }
       }
-      const boxes = Object.entries(rects);
+      const boxes = [...Object.entries(rects), ...(opts.extra || [])];
       const crosses = (pts, skip) => {
         let n = 0;
         for (const [name, R] of boxes) {
@@ -281,15 +627,17 @@
         return n;
       };
       const length = (pts) => segments(pts).reduce((a, [p, q]) => a + Math.abs(q.x - p.x) + Math.abs(q.y - p.y), 0);
-      const list = edgesOf(mm);
+      const list = edgesOf(mm, opts.uses);
       for (const e of list) {   // the sides the connector leaves and enters
         const A = rects[e.a], B = rects[e.b];
         e.A = A; e.B = B;
         if (e.a === e.b) { e.sa = "right"; e.sb = "right"; continue; }
         let best = Infinity;
-        for (const sa of SIDES) for (const sb of SIDES) {
-          const pts = route(mid(A, sa), sa, mid(B, sb), sb, 0, false);
-          const c = crosses(pts, [e.a, e.b]) * 100000 + length(pts) + (pts.length - 2) * 40;
+        for (const sa of SIDES) for (const sb of SIDES) for (const frac of FRACS) {
+          const pts = route(mid(A, sa), sa, mid(B, sb), sb, 0, false, 0, frac);
+          // a Z off the middle only when it avoids a crossing: the sides are chosen on the box centres, the
+          // ports move along the sides afterwards, and a path that squeezes through on the centres may not then
+          const c = crosses(pts, [e.a, e.b]) * 100000 + length(pts) + (pts.length - 2) * 40 + Math.abs(frac - 0.5) * 2000;
           if (c < best - 1e-6) { best = c; e.sa = sa; e.sb = sb; }
         }
       }
@@ -378,11 +726,11 @@
       for (const e of list) {
         if (e.bus) continue;
         let best = null;
-        for (const jog of [0, 6, -6]) for (const lane of LANES) for (let detour = 0; detour < 5; detour++) {
-          const pts = route(slide(e.pa, e.sa, jog), e.sa, slide(e.pb, e.sb, jog), e.sb, lane, e.a === e.b, detour);
+        for (const frac of FRACS) for (const jog of [0, 6, -6]) for (const lane of LANES) for (let detour = 0; detour < 5; detour++) {
+          const pts = route(slide(e.pa, e.sa, jog), e.sa, slide(e.pb, e.sb, jog), e.sb, lane, e.a === e.b, detour, frac);
           const segs = segments(pts);
           const c = crosses(pts, [e.a, e.b]) * 100000 + shared(segs) * 10000 + length(pts) + (pts.length - 2) * 40
-            + Math.abs(lane) + detour * 6 + Math.abs(jog) * 2;
+            + Math.abs(lane) + detour * 6 + Math.abs(jog) * 2 + Math.abs(frac - 0.5) * 20;
           if (!best || c < best.c - 1e-6) best = { c, pts, segs };
         }
         e.pts = best.pts;
@@ -393,6 +741,7 @@
       const placed = [];
       const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
       const grow = (x0, y0, x1, y1) => { ext.x0 = Math.min(ext.x0, x0); ext.y0 = Math.min(ext.y0, y0); ext.x1 = Math.max(ext.x1, x1); ext.y1 = Math.max(ext.y1, y1); };
+      for (const [, R] of opts.extra || []) grow(R.x, R.y, R.x + R.w, R.y + R.h);
       const label = (pt, side, text, below) => {
         const w = text.length * LABEL_CHAR_W + 4, h = LABEL_H;
         const [ox, oy] = out[side];
@@ -465,7 +814,8 @@
       return { x: Math.round(start.x), y: Math.round(bottom) };
     };
 
-    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot };
+    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot,
+      workflowModel, workflowLayout, satelliteOf, satRect, footSize, satObstacle, WF, STEREO_H };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -554,6 +904,9 @@
       dropLiteral: "letterale rimosso: i record con questo valore vanno migrati",
       behavior: "Comportamento", workflow: "Workflow", states: "stati", transitions: "transizioni",
       derived: "calcolato", inCode: "calcolato nel codice", formula: "formula",
+      legendWf: "classe con workflow", legendInvolved: "coinvolta nel comportamento", legendStruct: "solo struttura",
+      usedBy: "usato da", derivation: "derivazione", guard: "requisito", when: "condizione", at: "scadenza", by: "chi",
+      owner: "in attesa di", editable_by: "modificabile da", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo",
     },
     en: {
       addClass: "Class", addEnum: "Enum", layout: "Layout", fit: "Fit", save: "Save", note: "Change note",
@@ -572,17 +925,20 @@
       dropLiteral: "literal removed: records with this value must be migrated",
       behavior: "Behaviour", workflow: "Workflow", states: "states", transitions: "transitions",
       derived: "derived", inCode: "computed in code", formula: "formula",
+      legendWf: "class with a workflow", legendInvolved: "involved in the behaviour", legendStruct: "structure only",
+      usedBy: "used by", derivation: "derivation", guard: "requirement", when: "condition", at: "due", by: "who",
+      owner: "waiting for", editable_by: "editable by", notify: "recipient", revert: "revert", scope: "role scope",
     },
   };
 
   const css = `
 :host { --bg:#fff; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --panel:#f9fafb; --accent:#2563eb; --head:#eef2ff;
-  --enum:#fef3c7; --err:#dc2626; --ok:#16a34a; display:block; font:13px/1.4 system-ui,sans-serif; color:var(--fg); }
+  --enum:#fef3c7; --wf:#dcfce7; --inv:#b45309; --err:#dc2626; --ok:#16a34a; display:block; font:13px/1.4 system-ui,sans-serif; color:var(--fg); }
 @media (prefers-color-scheme: dark) { :host { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151;
-  --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --accent:#60a5fa; } }
-:host([theme="light"]) { --bg:#fff; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --panel:#f9fafb; --head:#eef2ff; --enum:#fef3c7; --accent:#2563eb; }
+  --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --wf:#064e3b; --inv:#f59e0b; --accent:#60a5fa; } }
+:host([theme="light"]) { --bg:#fff; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --panel:#f9fafb; --head:#eef2ff; --enum:#fef3c7; --wf:#dcfce7; --inv:#b45309; --accent:#2563eb; }
 :host(:fullscreen) { height:100vh; background:var(--bg); }
-:host([theme="dark"]) { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151; --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --accent:#60a5fa; }
+:host([theme="dark"]) { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151; --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --wf:#064e3b; --inv:#f59e0b; --accent:#60a5fa; }
 * { box-sizing:border-box; }
 .wrap { display:grid; grid-template-rows:auto 1fr; height:100%; min-height:520px; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--bg); }
 .bar { display:flex; gap:6px; align-items:center; padding:6px 8px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
@@ -618,6 +974,26 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .wf { margin:0 0 4px; font-size:12px; }
 .wf .hint { display:block; margin-left:8px; }
 .box text.state { fill:var(--accent); }
+.box.workflow rect.head { fill:var(--wf); }
+.box text.inv { fill:var(--inv); }
+.box text.mark { fill:var(--inv); font-weight:700; font-size:12px; }
+.sat { cursor:move; }
+.sat rect.satbody { fill:var(--panel); stroke:var(--line); stroke-dasharray:4 3; }
+.sat path.stub { stroke:var(--muted); stroke-dasharray:3 3; stroke-width:1.4; fill:none; }
+.sat text.stereo { fill:var(--muted); font-size:10px; }
+.wfe { fill:none; stroke-width:1.6; }
+.wfs { fill:var(--bg); }
+.wfst { font-size:10px; font-weight:600; }
+.wfkey { font-size:9px; fill:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.wfl-bg { fill:var(--bg); fill-opacity:.92; stroke-width:1; stroke-opacity:.5; }
+.wfl { font-size:9px; fill:var(--fg); }
+.wfa { stroke:none; }
+svg.hover .wfe:not(.hi), svg.hover .wfa:not(.hi), svg.hover .wfdot:not(.hi), svg.hover .wfl:not(.hi), svg.hover .wfl-bg:not(.hi) { opacity:.15; }
+.wfe.hi { stroke-width:2.6; }
+.legend { position:absolute; left:8px; bottom:8px; display:flex; gap:10px; align-items:center; font-size:11px; color:var(--muted); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:4px 8px; pointer-events:none; }
+.legend .sw { display:inline-block; width:12px; height:12px; border-radius:3px; background:var(--head); border:1px solid var(--line); margin-right:-5px; }
+.legend .sw.wf { background:var(--wf); }
+.legend .sw.inv { color:var(--inv); font-weight:700; font-size:10px; line-height:11px; text-align:center; }
 .issues { position:absolute; right:8px; top:8px; max-width:420px; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:8px 10px; font-size:12px; box-shadow:0 4px 16px rgba(0,0,0,.12); z-index:2; }
 .issues div { color:var(--err); }
 .box rect.body { fill:var(--bg); stroke:var(--line); }
@@ -680,13 +1056,15 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this._allAttrs = false;      // boxes show every attribute instead of the first MAX_ROWS
       this._showIssues = false;
       this._hover = null;          // key of the connector under the mouse: highlighted, the others dimmed
-      this._bh = null;             // behavior.json (optional): formulas of the derived attributes, workflows
+      this._bh = null;             // behavior.json (optional): formulas of the derived attributes, workflows, uses
+      this._showWf = true;         // workflow satellites drawn under their classes
+      this._sats = new Map();      // satellite layouts, per class (cleared when behaviour, model, lang or rows change)
       this._lastSel = undefined;   // the selection last announced with the `select` event
       this.attachShadow({ mode: "open" });
     }
 
     static get observedAttributes() { return ["lang", "readonly", "save-label"]; }
-    attributeChangedCallback() { if (this.isConnected) this._render(); }
+    attributeChangedCallback() { this._sats.clear(); if (this.isConnected) this._render(); }
     connectedCallback() { this._render(); }
 
     get t() { return T[(this.getAttribute("lang") || "it").slice(0, 2)] || T.it; }
@@ -696,6 +1074,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     set metamodel(mm) {
       const m = Layout.normalize(mm);
       this._mm = m;
+      this._sats.clear();
       this._orig = clone(m);
       this._sel = null;
       this._panel = false;
@@ -706,10 +1085,21 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     }
     get metamodel() { return clone(this._mm); }
     // the behaviour model (src/lib/modeler/behavior.json): read only, shown next to the structure it refers to
-    set behavior(b) { this._bh = b && typeof b === "object" ? b : null; if (this.isConnected) this._render(); }
+    set behavior(b) { this._bh = b && typeof b === "object" ? b : null; this._sats.clear(); if (this.isConnected) { this._separate(); this._render(); this._refit(); } }
     get behavior() { return this._bh; }
     _workflow(cn) { return this._bh?.workflows?.[cn] || null; }
     _formula(cn, an) { return this._bh?.derivations?.[cn]?.[an]?.text ?? null; }
+    _uses(cn) { return this._bh?.uses?.[cn] || null; }
+    _lang() { return (this.getAttribute("lang") || "it").slice(0, 2); }
+    // "used by: Project.plannedHours (derivation), …" for a feature or a whole class
+    _usedText(used) { return `${this.t.usedBy}: ${used.map((u) => `${u.of} (${this.t[u.kind] || u.kind})`).join(", ")}`; }
+    _usesText(cn) {
+      const u = this._uses(cn);
+      if (!u) return "";
+      const lines = [...Object.entries(u.attributes || {}), ...Object.entries(u.references || {})].map(([n, used]) => `${n} — ${this._usedText(used)}`);
+      if (u.class?.length) lines.push(this._usedText(u.class));
+      return lines.join("\n");
+    }
     // the changes from the metamodel the editor was opened with (the running one) to `mm`, as `modeler diff`
     changesTo(mm) { return Layout.diff(this._orig || {}, mm); }
     getMetamodel() { return this.metamodel; }
@@ -748,7 +1138,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       // the place of the box of `name` (just added to the model, not yet to the diagram): see Layout.freeSpot
       const mm = this._mm;
       const occupied = Object.keys(mm.diagram).filter((n) => n !== name && (mm.classes[n] || mm.enums[n]))
-        .map((n) => ({ ...mm.diagram[n], ...this._boxSize(n) }));
+        .map((n) => ({ ...mm.diagram[n], ...this._footSize(n) }));
       const size = this._boxSize(name);
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
       const v = this._view;
@@ -892,15 +1282,29 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     }
 
     /* ------------------------------------------------------------------ layout */
-    _rows(cn) { return Layout.rowItems(this._mm.classes[cn], this._allAttrs, this.t.more, this._workflow(cn)?.state || null); }
-    _boxSize(name) { return Layout.boxSize(this._mm, name, { allAttrs: this._allAttrs, more: this.t.more, state: this._workflow(name)?.state || null }); }
+    _sizeOpts(cn) { return { allAttrs: this._allAttrs, more: this.t.more, state: this._workflow(cn)?.state || null, uses: this._uses(cn), workflow: !!this._workflow(cn) }; }
+    _rows(cn) { return Layout.rowItems(this._mm.classes[cn], this._allAttrs, this.t.more, this._workflow(cn)?.state || null, this._uses(cn)); }
+    _boxSize(name) { return Layout.boxSize(this._mm, name, this._sizeOpts(name)); }
+    // the satellite (state diagram) of a class with a workflow, memoised per class, language and box width
+    _satellite(cn) {
+      const w = this._showWf && this._mm.classes[cn] ? this._workflow(cn) : null;
+      if (!w) return null;
+      const key = `${cn}|${this._lang()}|${this._boxSize(cn).w}`;
+      if (!this._sats.has(key)) this._sats.set(key, Layout.satelliteOf(this._mm, cn, w, this._lang(), this._sizeOpts(cn)));
+      return this._sats.get(key);
+    }
+    _footSize(name) { return Layout.footSize(this._boxSize(name), this._satellite(name)); }
+    _satellites() {
+      return Object.keys(this._mm.classes).filter((n) => this._mm.diagram[n] && this._satellite(n))
+        .map((n) => ({ name: n, sat: this._satellite(n), rect: Layout.satRect(this._mm.diagram[n], this._satellite(n)) }));
+    }
     _workflowText(cn) {
       const w = this._workflow(cn), t = this.t;
       return w ? `${t.workflow}: ${Object.keys(w.states || {}).length} ${t.states}, ${Object.keys(w.transitions || {}).length} ${t.transitions}` : "";
     }
     _autoLayout(force) {
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
-      const pos = Layout.autoLayout(this._mm, (n) => this._boxSize(n),
+      const pos = Layout.autoLayout(this._mm, (n) => this._footSize(n),
         { force, width: r ? r.width - 2 * MARGIN : 0, height: r ? r.height - 2 * MARGIN : 0 });
       Object.assign(this._mm.diagram, pos);
     }
@@ -910,7 +1314,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       if (!r || r.width < 50 || r.height < 50 || !pos.length) return;
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (const [n, p] of pos) {
-        const s = this._boxSize(n);
+        const s = this._footSize(n);
         x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x + s.w); y1 = Math.max(y1, p.y + s.h);
       }
       if (this._ext) {   // connectors that run around the boxes stay in view
@@ -927,12 +1331,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       const names = Object.keys(mm.diagram).filter((n) => mm.classes[n] || mm.enums[n]).sort((a, b) => mm.diagram[a].y - mm.diagram[b].y);
       const done = [];
       for (const n of names) {
-        const p = mm.diagram[n], s = this._boxSize(n);
+        const p = mm.diagram[n], s = this._footSize(n);
         let moved = true;
         while (moved) {
           moved = false;
           for (const o of done) {
-            const q = mm.diagram[o], t = this._boxSize(o);
+            const q = mm.diagram[o], t = this._footSize(o);
             if (p.x < q.x + t.w && q.x < p.x + s.w && p.y < q.y + t.h + GAP_Y / 2 && q.y < p.y + s.h) {
               p.y = q.y + t.h + GAP_Y;
               moved = true;
@@ -981,8 +1385,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         this.readonly ? null : el("button", { onclick: () => this._addEnum(), title: t.addEnum }, `+ ${t.addEnum}`),
         el("button", { onclick: () => { this._autoLayout(true); this._refit(); this._changed(); }, disabled: this.readonly }, t.layout),
         el("button", { onclick: () => this._refit() }, t.fit),
-        el("button", { class: this._allAttrs ? "on" : "", onclick: () => { this._allAttrs = !this._allAttrs; this._separate(); this._render(); this._refit(); } },
+        el("button", { class: this._allAttrs ? "on" : "", onclick: () => { this._allAttrs = !this._allAttrs; this._sats.clear(); this._separate(); this._render(); this._refit(); } },
           this._allAttrs ? t.compact : t.allAttrs),
+        Object.keys(this._bh?.workflows || {}).length ? el("button", {
+          class: this._showWf ? "on" : "", title: t.legendWf,
+          onclick: () => { this._showWf = !this._showWf; this._sats.clear(); this._separate(); this._render(); this._refit(); },
+        }, `⟳ ${t.workflow}`) : null,
         el("button", { class: this._panel ? "on" : "", onclick: () => { this._panel = !this._panel; this._render(); } }, t.panel),
         el("button", { onclick: () => this._toggleFullscreen() }, document.fullscreenElement === this ? t.exitFullscreen : t.fullscreen),
         el("span", {
@@ -1010,15 +1418,20 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       if (this._showIssues && (issues.length || warns.length)) {
         canvas.append(el("div", { class: "issues" }, issues.map((i) => el("div", {}, i)), warns.map((w) => el("div", { class: "w" }, `△ ${w}`))));
       }
+      canvas.querySelector(".legend")?.remove();
+      if (this._bh) {   // the three levels of involvement in the behaviour
+        canvas.append(el("div", { class: "legend" },
+          el("span", { class: "sw wf" }), t.legendWf, el("span", { class: "sw inv" }, "ƒ"), t.legendInvolved, el("span", { class: "sw" }), t.legendStruct));
+      }
     }
 
     _bindCanvas(canvas) {
       let drag = null;
       canvas.addEventListener("pointerdown", (ev) => {
-        const box = ev.target.closest?.(".box");
+        const box = ev.target.closest?.(".box, .sat");
         const p = { x: ev.clientX, y: ev.clientY };
         if (box) {
-          const name = box.dataset.name;
+          const name = box.dataset.name || box.dataset.sat;
           this._sel = { kind: this._mm.classes[name] ? "class" : "enum", name };
           this._panel = true;
           const start = { ...(this._mm.diagram[name] || { x: 0, y: 0 }) };
@@ -1117,7 +1530,10 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         const last = pts[pts.length - 1];
         return d + ` L${last.x},${last.y}`;
       };
-      const routed = Layout.routeEdges(mm, (n) => this._boxSize(n));
+      const sats = this._satellites();
+      const routed = Layout.routeEdges(mm, (n) => this._boxSize(n), {
+        extra: sats.map((s) => [`sat:${s.name}`, Layout.satObstacle(mm.diagram[s.name], s.sat)]), uses: this._bh?.uses || null,
+      });
       for (const e of routed.edges) {
         // a bus: the stub with the arrow, the trunk and a branch per source, with a dot where each joins the trunk
         const runs = [{ pts: e.pts, start: e.start, end: e.end }];
@@ -1145,17 +1561,25 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         if (!p) continue;
         const s = this._boxSize(cn);
         const sel = this._sel?.name === cn;
-        const hh = HEAD_H;
-        const b = svg("g", { class: `box${sel ? " sel" : ""}`, "data-name": cn, transform: `translate(${p.x},${p.y})` },
+        // «workflow» stereotype in the head of a class with a workflow; ƒ in the corner of a class the behaviour uses
+        const wf = this._workflow(cn), involved = !wf && this._uses(cn);
+        const hh = HEAD_H + (wf ? STEREO_H : 0);
+        const b = svg("g", { class: `box${sel ? " sel" : ""}${wf ? " workflow" : ""}`, "data-name": cn, transform: `translate(${p.x},${p.y})` },
           svg("rect", { class: "body", width: s.w, height: s.h, rx: 6 }),
           svg("rect", { class: "head", width: s.w - 2, x: 1, y: 1, height: hh - 2, rx: 5 }),
-          svg("text", { x: s.w / 2, y: 21, "text-anchor": "middle", class: `title${c.abstract ? " abstract" : ""}` }, cn));
+          wf ? svg("text", { x: s.w / 2, y: 14, "text-anchor": "middle", class: "stereo" }, "«workflow»") : null,
+          svg("text", { x: s.w / 2, y: wf ? 30 : 21, "text-anchor": "middle", class: `title${c.abstract ? " abstract" : ""}` }, cn),
+          involved ? svg("text", { x: s.w - 6, y: 13, "text-anchor": "end", class: "stereo mark" }, "ƒ", svg("title", {}, this._usesText(cn))) : null);
         let y = hh + 14;
         const rows = this._rows(cn);
         if (!rows.length) b.append(svg("text", { x: 8, y, class: "muted" }, "—"));
         for (const r of rows) {
-          const tip = r.derived ? `/${r.attr} = ${this._formula(cn, r.attr) ?? this.t.inCode}` : r.state ? this._workflowText(cn) : null;
-          b.append(svg("text", { x: 8, y, class: r.muted ? "muted" : r.state ? "state" : null }, r.text, tip ? svg("title", {}, tip) : null));
+          const tips = [];
+          if (r.derived) tips.push(`/${r.attr} = ${this._formula(cn, r.attr) ?? this.t.inCode}`);
+          if (r.state) tips.push(this._workflowText(cn));
+          if (r.used) tips.push(this._usedText(r.used));
+          const cls = r.muted ? "muted" : r.state ? "state" : r.used ? "inv" : null;
+          b.append(svg("text", { x: 8, y, class: cls }, r.text, tips.length ? svg("title", {}, tips.join("\n")) : null));
           y += ROW_H;
         }
         boxes.append(b);
@@ -1174,12 +1598,50 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         for (const l of e.literals) { b.append(svg("text", { x: 8, y }, l.name)); y += ROW_H; }
         boxes.append(b);
       }
+      const satsG = svg("g", {});
+      for (const { name, sat, rect } of sats) satsG.append(this._drawSatellite(name, sat, rect));
       this._ext = routed.ext;
-      g.append(edges, boxes, labels);   // lines under the boxes, labels on top
+      g.append(edges, satsG, boxes, labels);   // lines under the boxes, satellites between, labels on top
       const root = svg("svg", { role: "img", "aria-label": "metamodel diagram" }, defs, g);
       const old = canvas.querySelector("svg");
       if (old) old.replaceWith(root); else canvas.prepend(root);
       this._applyHover();
+    }
+    // a workflow satellite: dashed frame under the class, a stub to it, the state diagram (Layout.workflowLayout):
+    // states in their colour (thick border when final), connectors in the colour of the target state (dashed when
+    // timed) with a filled arrow head, labels on a background. Every part carries data-edge="wf:<class>:<transition>".
+    _drawSatellite(cn, sat, R) {
+      const t = this.t, wf = this._workflow(cn), L = sat.layout;
+      const g = svg("g", { class: "sat", "data-sat": cn, transform: `translate(${R.x},${R.y})` },
+        svg("path", { class: "stub", d: `M16,${-WF.satGap} L16,0` }),
+        svg("rect", { class: "satbody", width: R.w, height: R.h, rx: 8 }),
+        svg("text", { x: 8, y: 11, class: "stereo" }, `«workflow» ⟳ ${wf.state} · ${L.boxes.length} ${t.states}, ${Object.keys(wf.transitions || {}).length} ${t.transitions}`));
+      const inner = svg("g", { transform: `translate(0,${WF.head})` });
+      const pathD = (pts) => pts.map((q, i) => `${i ? "L" : "M"}${q.x},${q.y}`).join(" ");
+      for (const e of L.edges) {
+        const key = `wf:${cn}:${e.key}`;
+        for (const p of e.paths) {
+          inner.append(svg("path", { d: pathD(p), class: "ehit", "data-edge": key }));
+          inner.append(svg("path", { d: pathD(p), class: "wfe", stroke: e.color, "stroke-dasharray": e.timed ? "5 4" : null, "data-edge": key }));
+        }
+        for (const q of e.dots) inner.append(svg("circle", { cx: q.x, cy: q.y, r: 2.2, class: "wfdot", fill: e.color, "data-edge": key }));
+        inner.append(svg("polygon", { points: [e.arrow[0], e.arrow[2], e.arrow[3]].map((q) => `${q.x},${q.y}`).join(" "), class: "wfa", fill: e.color, "data-edge": key }));
+      }
+      for (const b of L.boxes) {
+        inner.append(svg("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 6, class: "wfs", stroke: b.color, "stroke-width": b.kind === "final" ? 3 : 1.5 }));
+        const text = svg("text", { x: b.x + b.w / 2, y: b.y + 8 + WF.font, "text-anchor": "middle", class: "wfst", fill: b.color });
+        b.lines.forEach((line, i) => text.append(svg("tspan", { x: b.x + b.w / 2, dy: i ? WF.font + 3 : 0 }, line)));
+        inner.append(text, svg("text", { x: b.x + b.w / 2, y: b.y + b.h - 5, "text-anchor": "middle", class: "wfkey" }, b.key));
+      }
+      for (const e of L.edges) {   // labels on top of the lines
+        const key = `wf:${cn}:${e.key}`, l = e.label;
+        inner.append(svg("rect", { x: l.x, y: l.y, width: l.w, height: l.h, rx: 3, class: "wfl-bg", stroke: e.color, "data-edge": key }));
+        const text = svg("text", { x: l.x + l.w / 2, y: l.y + WF.labelFont + 2, "text-anchor": "middle", class: "wfl", "data-edge": key });
+        l.lines.forEach((line, i) => text.append(svg("tspan", { x: l.x + l.w / 2, dy: i ? WF.labelFont + 2 : 0 }, line)));
+        inner.append(text);
+      }
+      g.append(inner);
+      return g;
     }
     _applyHover() {
       const root = this.shadowRoot.querySelector(".canvas svg");

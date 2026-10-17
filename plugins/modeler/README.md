@@ -40,9 +40,15 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   prints derivations and guards as PostgreSQL, `--format engine` the workflow versions as the runtime engine
   stores them (clauses, principals, timed triggers); `drift` compares the workflows with the versions published in
   the database. In the web modeler, when the page passes `behavior.json` (`install` says so while it does not),
-  derived attributes are marked `/name` with the formula in the tooltip and in the panel, the state attribute
-  `⟳`, and the behaviour (roles, workflows, derivations, events, reactions) is shown read only under the diagram,
-  following the class selected. `model:engine -- --write` generates the SQL engine itself as one idempotent migration: derived
+  the diagram shows the behaviour next to the structure: a class with a workflow has a «workflow» head and its
+  **state diagram as a satellite** under the box (states in their colour, transitions in the colour of the target,
+  timed ones dashed, final sinks on a bus, hover highlight; toggle `⟳ Workflow` in the toolbar), derived
+  attributes are marked `/name` with the formula in the tooltip and in the panel, the state attribute `⟳`, and the
+  features the behaviour uses (formulas, guards, principals, recipients, role scopes: the `uses` map of
+  `behavior.json`) carry ` ·ƒ` with "used by" in the tooltip, a class without a workflow but involved has `ƒ` in its
+  head; a legend tells the three levels apart (workflow, involved, structure only). Under the diagram the
+  behaviour is listed read only (roles, workflows, derivations, classes involved, events, reactions), following
+  the class selected. `model:engine -- --write` generates the SQL engine itself as one idempotent migration: derived
   attributes computed by triggers (and refreshed when the rows they navigate to change), `<entity>_perform_transition`
   with principals, conditions, guards, comments, history and events with the recipients of the reactions,
   `_available_transitions`, `_revert`, `_run_timed_transitions`, `_run_reminders`, lifecycle events; it relies on
