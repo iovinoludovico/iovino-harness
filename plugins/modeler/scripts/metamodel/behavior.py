@@ -587,6 +587,8 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "lifecycle": "Ogni classe emette `created`, `updated`, `deleted`; una classe con workflow anche `transitioned`, `completed`, `reverted`, `reminder`.",
         "reactions": "Reazioni", "name": "Nome", "recipients": "Destinatari", "template": "Template", "notify": "notifica",
         "subscriptions": "Sottoscrizioni", "url": "URL", "patterns": "Eventi",
+        "involved": "Classi coinvolte nel comportamento", "feature": "Attributo o riferimento", "used_by": "Usato da",
+        "involved_note": "Classi senza workflow di cui il comportamento legge o usa attributi e riferimenti (formule, condizioni, destinatari, ambiti dei ruoli).",
     },
     "en": {
         "title": "Behaviour of the domain {package}",
@@ -605,6 +607,8 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "lifecycle": "Every class emits `created`, `updated`, `deleted`; a class with a workflow also `transitioned`, `completed`, `reverted`, `reminder`.",
         "reactions": "Reactions", "name": "Name", "recipients": "Recipients", "template": "Template", "notify": "notify",
         "subscriptions": "Subscriptions", "url": "URL", "patterns": "Events",
+        "involved": "Classes involved in the behaviour", "feature": "Attribute or reference", "used_by": "Used by",
+        "involved_note": "Classes without a workflow whose attributes and references the behaviour reads or points to (formulas, conditions, recipients, role scopes).",
     },
 }
 MARKDOWN_MARK = "<!-- modeler: generated from behavior.yaml by model:sync -->"
@@ -688,6 +692,19 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
                 derived.append([cname, _code(an), _code(formula) if formula else t["in_code"]])
     if derived:
         out += [f"## {t['derivations']}", ""] + E._table(["Class" if lang == "en" else "Classe", t["attribute"], t["formula"]], derived) + [""]
+    # classes without a workflow whose features the behaviour reads or points to: the only involvement not visible elsewhere
+    involved: list[list[str]] = []
+    for cname, groups in uses(b, e).items():
+        if cname in b["workflows"]:
+            continue
+        for group in ("attributes", "references"):
+            for fn, us in groups[group].items():
+                involved.append([cname, _code(fn), ", ".join(f"{u['kind']}: {_code(u['of'])}" for u in us)])
+        if groups["class"]:
+            involved.append([cname, "—", ", ".join(f"{u['kind']}: {_code(u['of'])}" for u in groups["class"])])
+    if involved:
+        out += [f"## {t['involved']}", "", t["involved_note"], ""] + E._table(
+            ["Class" if lang == "en" else "Classe", t["feature"], t["used_by"]], involved) + [""]
     out += [f"## {t['events']}", "", t["lifecycle"], ""]
     rows = [[cname, _code(en), str(ev.get("doc") or "")] for cname, evs in b["events"].items() for en, ev in evs.items()]
     if rows:
@@ -714,12 +731,119 @@ def _typed(text: Any, ctx: X.Context, sql_ctx: X.SqlContext, expect: str | None 
     return {"text": X.to_text(node), "type": t, "ast": node, "sql": X.to_sql(node, sql_ctx)}
 
 
+def uses(b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
+    """Which features of which classes the behaviour reads or points to:
+    {Class: {attributes: {name: [{kind, of}]}, references: {name: [{kind, of}]}, class: [{kind: "scope", of: role}]}}.
+    `kind` says how (derivation, when, guard, at, by, owner, editable_by, revert, notify, scope), `of` where
+    (Class.attribute, Class.transition, Class.state, reaction name, role). Computed on the typed trees, so every hop
+    of a path is attributed to the class that owns the feature; an expression that does not type-check contributes
+    nothing (validate() reports it). Only classes with at least one entry appear."""
+    out: dict[str, Any] = {}
+
+    def add(cname: str, group: str | None, name: str | None, kind: str, of: str) -> None:
+        if cname in E.BUILTIN_CLASSES or cname not in e["classes"]:
+            return
+        bucket = out.setdefault(cname, {"attributes": {}, "references": {}, "class": []})
+        lst = bucket[group].setdefault(name, []) if group and name else bucket["class"]
+        entry = {"kind": kind, "of": of}
+        if entry not in lst:
+            lst.append(entry)
+
+    def mark(node: dict[str, Any], kind: str, of: str) -> None:
+        for owner, seg in X.hops_used(node):
+            if owner not in e["classes"]:
+                continue
+            attrs, _ = E.features(e, owner)
+            add(owner, "attributes" if seg in attrs else "references", seg, kind, of)
+
+    def expr(text: Any, ctx: X.Context, kind: str, of: str, expect: str | None = None) -> None:
+        try:
+            node, _ = X.check(str(text), ctx, expect)
+        except X.ExprError:
+            return
+        mark(node, kind, of)
+
+    def principal(p: str, cname: str, kind: str, of: str) -> None:
+        if cname not in e["classes"]:
+            return
+        if p == "creator":
+            _, refs = E.features(e, cname)
+            for rn in ("createdBy", "created_by"):
+                if rn in refs:
+                    add(cname, "references", rn, kind, of)
+            return
+        if p in BUILTIN_PRINCIPALS:
+            return
+        if p.startswith("self."):
+            expr(p, X.Context(e, cname), kind, of)
+            return
+        m = ROLE_AT.match(p)
+        role_spec = b["roles"].get(m.group("role")) if m else None
+        if not m or role_spec is None:
+            return
+        if m.group("path"):
+            expr(m.group("path"), X.Context(e, cname), kind, of)
+            return
+        scope = role_spec.get("scope")
+        if scope in e["classes"]:
+            for rn in _scope_reference(e, cname, scope):
+                add(cname, "references", rn, kind, of)
+
+    for cname, ders in b["derivations"].items():
+        if cname not in e["classes"]:
+            continue
+        attrs, _ = E.features(e, cname)
+        for an, text in ders.items():
+            expect = X.feature_type(attrs[an], e, False) if an in attrs else None
+            expr(text, X.Context(e, cname), "derivation", f"{cname}.{an}", expect)
+    for cname, w in b["workflows"].items():
+        if cname not in e["classes"]:
+            continue
+        ctx = X.Context(e, cname)
+        for sn, s in w["states"].items():
+            for p in s["owner"]:
+                principal(p, cname, "owner", f"{cname}.{sn}")
+            for p in s["editable_by"]:
+                principal(p, cname, "editable_by", f"{cname}.{sn}")
+        for tn, t in w["transitions"].items():
+            of = f"{cname}.{tn}"
+            for p in t["by"]:
+                principal(p, cname, "by", of)
+            if t.get("when") is not None:
+                expr(t["when"], ctx, "when", of, X.BOOL)
+            if t.get("guard") is not None:
+                expr(t["guard"], ctx, "guard", of, X.BOOL)
+            if t.get("at") is not None:
+                m = AT.match(str(t["at"]).strip())
+                if m:
+                    expr(m.group("path"), ctx, "at", of)
+        rv = w.get("revert")
+        if rv:
+            for p in list(rv["by"]) + list(rv["final_by"]):
+                principal(p, cname, "revert", cname)
+    for r in b["reactions"]:
+        ev = str(r.get("event") or "")
+        if "." not in ev:
+            continue
+        cname, event = ev.split(".", 1)
+        name = str(r.get("name") or ev)
+        if r.get("when") is not None and cname in e["classes"]:
+            expr(r["when"], context(e, b, cname, event), "when", name, X.BOOL)
+        for p in r.get("notify") or []:
+            principal(str(p), cname, "notify", name)
+    for rn, r in b["roles"].items():
+        if r.get("scope") in e["classes"]:
+            add(str(r["scope"]), None, None, "scope", rn)
+    return out
+
+
 def runtime_json(raw: dict[str, Any], metamodel: dict[str, Any]) -> dict[str, Any]:
     """The behaviour as the application reads it: canonical form, every expression typed (text, type, tree, SQL),
     the entity key of each class (snake_case: event prefix, workflow entity). Assumes a valid behaviour model."""
     e = E.expand(metamodel)
     b = expand(raw)
     b["entities"] = {cname: M.snake(cname) for cname in list(b["workflows"]) + list(b["derivations"]) + list(b["events"])}
+    b["uses"] = uses(b, e)                 # on the texts, before they become typed dicts below
     for cname, ders in b["derivations"].items():
         attrs, _ = E.features(e, cname)
         ctx = X.Context(e, cname)
