@@ -1,145 +1,125 @@
-# Handoff — sviluppo dell'harness iovino-harness
-_Aggiornato: 2026-10-16 (sera, dopo la PR #9) · branch `main`_
+# Handoff — modello di comportamento `behavior.yaml` nel plugin modeler
+_Aggiornato: 2026-10-17 · branch `feat/modeler-behavior` (6 commit avanti a `origin/main`, non pushato)_
 
 ## Obiettivo
-Marketplace personale di plugin per Claude Code, installabile su ogni computer con `./install.sh`:
-convenzioni e guardrail comuni (`core`) e sviluppo model-based delle app Next.js + Supabase (`modeler`).
-Si raffina un pezzo alla volta applicando le note raccolte nei progetti (`NOTES.md`, con `/core:harness-review`);
-poi arriveranno i plugin `research` e `mde`.
+Marketplace personale di plugin per Claude Code (`core`, `modeler`), installato con `./install.sh`. Il lavoro in corso
+aggiunge al modeler il **secondo modello**: `behavior.yaml` accanto a `domain.ecore.yaml` (ruoli, workflow con guardie
+e passaggi temporizzati, attributi derivati, eventi, reazioni, webhook), verificato contro il metamodello e tradotto
+in documentazione, JSON tipizzato e un motore SQL (funzioni e trigger PostgreSQL) generato, al posto degli
+`app.yaml` archiviati e delle clausole SQL scritte a mano nelle app (guest-invitations-af, kura, order-management).
 
 ## Stato
-- Pubblicato su `origin/main` con la PR #9 (`5500386`): **core 0.9.0, modeler 0.12.1**. Nessun branch aperto, né locale né remoto.
-- PR #1–#9 (15–16 ottobre):
-  - **#1** `model:pull` senza DSN: lo ricava dal progetto collegato con `supabase link` (`supabase/.temp/pooler-url`
-    o `project-ref`) o da `MODELER_PROD_DB` (`remote_dsn` in `plugins/modeler/scripts/metamodel/cli.py`);
-    versione installata nella barra dell'editor (`install` sostituisce `__MODELER_VERSION__` in
-    `kit/metamodel-editor.js`).
-  - **#2** `apply` archivia con la proposta applicata le altre che contiene (`_contained` sui modelli espansi);
-    nuovo `model:done [-- --write]` (`cmd_done`): segna `applied`/`rejected` in `model_change_requests` le
-    proposte di `.modeler/proposals/applied/` e `rejected/`. `pull` salva l'`id` della riga.
-  - **#3** `apply` tiene il `diagram` del file e ignora quello della proposta; se non può scrivere riga per riga,
-    `--write` si ferma (riscrittura completa solo con `--rewrite`). Riga in `conventions.md`: controllare
-    `origin/main` prima di dire in che stato è l'harness.
-  - **#4** guardia in `guard_harness_edit` (`plugins/core/scripts/hook.py`): chiede conferma se una sessione aperta
-    su un'altra cartella modifica il clone dell'harness (tranne `NOTES.md`); `/core:harness-note` suggerisce una
-    seconda sessione nell'harness se il problema blocca il lavoro.
-  - **#5** `_prod_query` (usato da `pull` e `done --write`) si ferma prima di collegarsi se non c'è password né
-    terminale, con la riga di `~/.pgpass` da aggiungere (`_pgpass_line`); senza terminale `psql -w`; le skill
-    `modeler:apply` e `core:db-push` non suggeriscono più `! …` per i comandi che chiedono la password.
-  - **#6** `Layout.freeSpot(occupied, size, start, view)` in `kit/metamodel-editor.js` (pura, testata in
-    `tests/layout.test.mjs`): «+ Classe»/«+ Enum» mettono il riquadro nuovo su spazio libero, con le misure reali
-    dei riquadri. Riga in `conventions.md` e punto "Punti d'ingresso" nel `code-reviewer`: una pagina che
-    sostituisce una vista generica si collega da un'unica funzione con la mappa delle viste sostituite.
-  - **#7** `docs/DOMAIN.md` generato dal metamodello (`to_markdown`/`markdown_document` in `ecore.py`): intestazione,
-    diagramma Mermaid, una sezione per classe (attributi, riferimenti, regole), enum con etichette, nella lingua del
-    metamodello. Nuova chiave `rules` (`[{id, text}]`) su package e classi: validata, in `diff` (CLI ed editor),
-    scritta riga per riga da `apply`, annotazione `rules` in Ecore; nessun effetto sul database. Il file è l'inbox
-    delle note a mano: `npm run model:docs` (`cmd_docs`) elenca le sezioni toccate con un estratto di diff;
-    `npm run model:sync` (`sync`, `docs_status`) rigenera solo se `missing`/`aligned`/`stale` e rifiuta con exit 1
-    se `edited`, `-- --force` fa il backup in `.modeler/backups/DOMAIN.md.<ts>` e riscrive. Le note si misurano
-    contro `.modeler/DOMAIN.generated.md` (copia di ciò che `sync` ha scritto l'ultima volta), non contro la
-    generazione attuale. `/modeler:metamodel` passo 0 traduce le note (struttura → metamodello e migrazione,
-    vincoli esprimibili → chiavi, il resto → `rules`); l'hook di sessione segnala `edited`/`stale`/`missing`;
-    `install` scrive il file e `show --format markdown` lo stampa senza marker.
-  - **#8** (revisione delle note del 2026-10-16) `docs_clash` in `cli.py`: un `docs/domain.md` con altre maiuscole
-    (app ex appforge) dà stato `clash` in `docs_status`; `sync` (anche `--force`), `install` e `apply` non scrivono
-    `DOMAIN.md` e dicono di rinominarlo o cancellarlo, l'hook di sessione lo segnala. `BOX_W` tolta dal kit;
-    `tests/lint.test.mjs` fallisce su ogni costante maiuscola del kit mai usata (toglie l'avviso di eslint nelle app).
-  - **#9** (revisione delle note del 2026-10-16, da order-management) due skill di `core`: `core:deploy`
-    (`plugins/core/skills/deploy/SKILL.md`): i passi di produzione generalizzati dai `docs/deploy.md` di
-    guest-invitations-af, kura e order-management (Supabase cloud, GitHub/GHCR, DNS, Docker Manager di Hostinger con
-    progetto a nome stabile e `DATABASE_URL` unico segreto nel pannello, proxy host di Nginx Proxy Manager con i
-    buffer per i cookie di Supabase Auth, verifica, rollback con `APP_TAG`, diagnosi del PAT scaduto e di Watchtower);
-    `core:security-audit` (`plugins/core/skills/security-audit/SKILL.md`): audit in sola lettura in sei blocchi A–F
-    (login e dominio, database, piattaforma Supabase, app pubblica, GitHub/GHCR, coerenza del deploy) con rapporto per
-    controllo e correzioni solo dopo conferma. Riga Web di `conventions.md` riscritta (Docker Manager, mai `.env` via
-    SSH, rimandi alle due skill); `ship` §5 e `db-push` §5 rimandano a `core:deploy` e propongono l'audit.
-- Flusso delle proposte di produzione (skill `modeler:apply`): `npm run model:pull` → `npm run model:apply`
-  (poi `-- --write`) → migrazione e codice → `/core:db-push` → deploy → `npm run model:done -- --write`.
-- `NOTES.md`: nessuna nota da valutare (le quattro del 2026-10-16 applicate con #8 e #9). Rinviate: il bus dell'editor
-  per molte sorgenti (la condizione è avverata: order-management ha 10 riferimenti verso `User`, da riprendere in una
-  sessione sul modeler, test `todo` in `tests/layout.test.mjs`); le proposte di produzione in `modeler proposals`
-  (fattibile con `_prod_query`, in sola lettura); il controllo di `origin/main` nell'hook di sessione.
-- Verificato (2026-10-16, prima del merge di #9): `python3 -m unittest discover -s tests` → 23 OK;
-  `python3 -m unittest discover -s plugins/modeler/tests` → 56 OK (5 skip senza `MODELER_PG`; con `MODELER_PG`
-  sul container `postgres:16` dedicato verificato prima di #5); `claude plugin validate .` → passed. Prima di #8:
-  `node --test plugins/modeler/tests/layout.test.mjs
-  plugins/modeler/tests/diff.test.mjs plugins/modeler/tests/lint.test.mjs` → 93 pass, 1 todo (il bus); `node --test`
-  sulla cartella non funziona con questo Node, vanno elencati i file. Prova
-  manuale di #7 in un'app temporanea: `install` → nota a mano → `docs` → `sync` (rifiuta) → `sync --force`
-  (backup e rigenera); revisione `core:code-reviewer` applicata.
-- Non committato: nulla.
+- `origin/main` è alla PR #9 (`ae238e2`): **core 0.9.0, modeler 0.12.1**. Nessun branch remoto aperto.
+- Il branch locale `feat/modeler-behavior` contiene, già con il commit di release `bd12419` (**core 0.9.1, modeler 0.13.0**):
+  - `eb8f9a5` `behavior.yaml` + `expr.py` (linguaggio di espressioni tipizzato: path, collezioni, confronti, enum,
+    and/or/not) + `behavior.py` (validazione: feature sconosciute, tipi, principal che non arrivano a `User`/Email,
+    ruoli con scope senza riferimento, stati irraggiungibili, cicli tra derivazioni). `validate` controlla entrambi
+    i file (`--behavior` per nominarne uno), `apply` segnala una proposta che rompe il comportamento, l'hook
+    `plugins/modeler/hooks/hook.py` valida `behavior.yaml` dopo ogni modifica di uno dei due file. Attributi
+    `derived: true` nel metamodello (Emfatic, XMI, docs, diff), formula nel behavior. Fixture:
+    `plugins/modeler/tests/fixtures/invitations.{ecore,behavior}.yaml` (tutto il comportamento di guest-invitations).
+  - `40ece68` riga «comportamento» in `plugins/core/context/conventions.md` (Sviluppo guidato dai modelli).
+  - `0785fa0` `from __future__ import annotations` nei test degli hook core (Python 3.9).
+  - `ff9e054` espressioni con aritmetica, `round`, `coalesce`, `if … then … else`, differenze di date;
+    `expr.to_sql` (path → subselect, collezioni → aggregati, join table e containment secondo lo storage mapping).
+    `sync` scrive `docs/BEHAVIOR.md` e `src/lib/modeler/behavior.json`; comando `behavior` (`--format sql|engine`);
+    `drift` confronta i workflow con `workflow_versions/states/transitions` pubblicati e dice quando l'app non ha
+    quelle tabelle. Guardie non valutabili come clausole → consiglio di spostarle in un attributo derivato.
+  - `0d40d98` `engine.py` + comando `engine [--write]`: una migrazione idempotente (`supabase/migrations/…behavior_engine…`)
+    con trigger before per le derivazioni in ordine di dipendenza (e refresh quando cambia una riga riferita),
+    `<entity>_perform_transition` (principal via `<entity>_principals`: admin, creator, ruoli nello scope, utenti
+    puntati; condizione, guardia, commento, `workflow_history`, eventi con destinatari delle reazioni),
+    `_available_transitions`, `_revert`, `_run_timed_transitions`, `_run_reminders`, trigger di lifecycle, `_can_edit`.
+    Si appoggia a `current_profile_id`, `is_admin`, `has_role`, `role_members`, `emit_entity_event` dell'app, con
+    fallback solo dove mancano (ruoli da `user_roles`, outbox eventi). `workflow_history` e `workflow_reminders`
+    sono tabelle del motore, ignorate da `drift`. `creator` richiede un riferimento `createdBy: User`.
+    Script npm installati: `model:behavior`, `model:engine` (`cli.py` righe 52–53).
+  - Skill aggiornate: `modeler:metamodel` (sezione 3b «Il comportamento»), `modeler:notation`
+    (+ `references/behavior-notation.md`), README del modeler (sezione Behaviour, tabella dei file generati).
+- Verificato (2026-10-17, su `bd12419`):
+  - `python3 -m unittest discover -s tests` → 23 OK
+  - `python3 -m unittest discover -s plugins/modeler/tests` → 90 OK (8 skip senza `MODELER_PG`)
+  - con `MODELER_PG` sul container `postgres:16` (vedi «Per riprendere») → 90 OK, nessuno skip: compresi
+    `test_workflow_end_to_end` (guardie, permessi, condizioni, notifiche, passaggio temporizzato, reminder, revert,
+    completamento) e `test_generated_sql_runs_and_workflows_align`
+  - `node --test plugins/modeler/tests/layout.test.mjs plugins/modeler/tests/diff.test.mjs plugins/modeler/tests/lint.test.mjs`
+    → 93 pass, 1 todo (il bus)
+  - `claude plugin validate .` → passed; `python3 scripts/release.py` → «Nothing to release».
+- Non committato: nulla (solo questo `HANDOFF.md`).
 
 ## Decisioni
-- Deploy e audit come **skill** (`core:deploy`, `core:security-audit`), non come file in `plugins/core/context/`: solo
-  la descrizione di una skill entra in ogni sessione e fa scattare la lettura quando l'utente chiede del server o
-  del proxy; un file di contesto non verrebbe trovato. Il costo è una riga di descrizione per skill a sessione.
-- `core:security-audit` è solo letture, nessuna correzione senza conferma; i controlli dello scaffold
-  (`app_settings`, `before_user_created_hook`) valgono «se l'app li ha». L'attivazione dell'hook Before User Created
-  non si legge dall'API: resta un test manuale con un account di un altro dominio.
-- Il bus dell'editor resta rinviato anche se order-management lo giustifica: è lavoro sul modeler, separato dalla
-  revisione di `core`.
-- Le migliorie all'harness si annotano nella sessione dell'app (`/core:harness-note`) e si applicano in una
-  sessione aperta nell'harness — solo lì è caricato il suo `CLAUDE.md` (branch, test, release), e il clone
-  installato in place non va condiviso tra sessioni (oggi è comparso un commit estraneo su un branch e
-  `NOTES.md` modificato da un'altra sessione). La guardia di #4 lo rende esplicito.
-- `pull`/`done` dal progetto collegato, password solo da `SUPABASE_DB_PASSWORD`, `~/.pgpass` o un terminale proprio
-  — mai in chat, nel comando o in file del repository; mai `! …` (non ha un terminale).
-- `pull` non ripiega mai sul Supabase locale — ha senso solo in produzione.
-- Proposte "contenute" confrontate sui modelli espansi, non sulle righe di `diff` — il diff perde
-  `unique`/`default`/`label` (trovato dalla revisione di `core:code-reviewer`).
-- Il `diagram` della proposta non entra nel repository; niente riscrittura completa silenziosa di
-  `domain.ecore.yaml`.
-- Controllo di `origin/main` come regola in `conventions.md`, non nell'hook — l'hook chiederebbe la rete a ogni avvio.
-- `docs/DOMAIN.md`: fonte di verità il metamodello, il file è generato e serve da inbox (modifiche a mano
-  rilevate e tradotte da `/modeler:metamodel`, poi rigenerato) — un file scritto a mano andrebbe fuori sincrono.
-  `rules` solo `{id, text}`, senza `sql` → CHECK (scartato per ora). Diagramma Mermaid in cima. Le note a mano si
-  confrontano con la copia generata, non con la generazione attuale: altrimenti con metamodello cambiato e nota
-  insieme il report le mescolava (trovato dalla revisione). Riformattazioni (Prettier) non contano come modifiche.
+- Comportamento in un **file separato** `behavior.yaml`, non dentro `domain.ecore.yaml`: il metamodello resta Ecore
+  puro (esportabile in XMI/Emfatic); il behavior lo referenzia per nome e la validazione incrociata sostituisce il
+  legame «solo per nome» che si rompeva al rinominare una feature.
+- Le formule degli attributi derivati vivono nel behavior; il metamodello dice solo `derived: true`. Così il database
+  (colonna materializzata dal trigger) e la documentazione restano coerenti senza duplicare la formula.
+- Il motore è **generato come una sola migrazione idempotente**, rigenerata e sostituita a ogni cambio del behavior
+  (una migrazione del motore per release), non una serie append-only: è codice derivato, non uno schema. Le tabelle
+  del motore (`workflow_history`, `workflow_reminders`) sono fuori dal metamodello e `drift` le ignora.
+- Il motore riusa le funzioni dell'app (`current_profile_id`, `is_admin`, `has_role`, `role_members`,
+  `emit_entity_event`) e crea un fallback solo se mancano, per potersi innestare nelle app esistenti senza
+  riscriverne la sicurezza.
+- Guardie con `or`, calcoli o navigazioni non diventano clausole del motore: si spostano in un attributo derivato
+  (`model:behavior -- --format engine` elenca cosa non è valutabile). Mantiene il motore semplice e le formule
+  in un posto solo.
+- Messaggi del motore nella lingua del metamodello, come `DOMAIN.md`.
+- Release già fatta nel branch (`bd12419`) perché il push arriverà via PR: `release.py` non segnala nulla da fare.
 
 ## Problemi aperti
-- `model:pull` e `model:done --write` non ancora riusciti su un progetto cloud reale: in guest-invitations-af
-  `done --write` è fallito con `fe_sendauth: no password supplied` (lanciato con `! …`, prima di #5). Sul computer
-  esiste `~/.pgpass`, probabilmente senza la riga del pooler.
-- `supabase link`/`supabase db push` lanciati con `! …` non provati: le skill comunque non li suggeriscono più così.
-- La guardia di #4 copre solo Edit/Write, non le scritture fatte con comandi della shell.
-- Le app nate con appforge citano ancora appforge.
-- Un'altra sessione ha committato una nota direttamente su `main` locale (`9651a19`, non pushato): il branch della
-  revisione l'ha portata nella PR #8 e `main` è stato riallineato con `git reset --hard origin/main`. Le note vanno
-  committate nell'harness solo dalla sessione aperta qui, o lasciate nel working tree.
-- `docs/DOMAIN.md` non ancora visto in un'anteprima Markdown/GitHub (tabelle, blocco Mermaid) né provato il passo 0
-  di `/modeler:metamodel` con note vere in un'app.
-- Parte app della nota sulle viste sostituite, ancora da fare in guest-invitations-af: `listHref` nel modello
-  dell'app o redirect in `src/proxy.ts` da `/e/economic_rate` a `/x/economic_rate` (oggi solo il menu ha il caso
-  speciale; dashboard, ricerca, breadcrumb, redirect e riferimenti portano ancora alla vista generica).
+- Il branch non è ancora su GitHub: niente PR, niente CI. Su questo computer `gh` non è installato (`command not
+  found`): `/core:ship` va fatto da un computer con `gh` oppure PR a mano dal browser dopo il push.
+- Il motore generato non è stato ancora provato su un'**app reale**: solo sul fixture di guest-invitations in
+  PostgreSQL nudo. Da verificare nelle app: convivenza con le funzioni esistenti (`emit_entity_event`, policy RLS
+  che chiamano `_can_edit`), confronto fra il SQL generato e l'engine scritto a mano (`docs/behavior.md`,
+  migrazioni), ordine fra la migrazione del motore e quelle dello schema in `supabase db reset`.
+- `test_behavior.py` e `test_modeler.py` con `MODELER_PG` richiedono `psql` sul PATH: su questo Mac non c'è, i test
+  girano con uno shim che inoltra a `docker exec modeler-pg-test psql` (vedi «Per riprendere»). Alternativa da
+  valutare: far usare ai test `docker exec` direttamente o documentare `brew install libpq`.
+- Ereditati dall'handoff precedente, ancora validi: `model:pull`/`model:done --write` mai riusciti su un progetto
+  cloud reale (`fe_sendauth: no password supplied`, manca la riga del pooler in `~/.pgpass`); la guardia
+  `guard_harness_edit` copre solo Edit/Write; `docs/DOMAIN.md` non visto in anteprima GitHub; parte app della nota
+  sulle viste sostituite in guest-invitations-af (`listHref` o redirect `/e/economic_rate` → `/x/economic_rate`);
+  bus dell'editor rinviato (test `todo` in `tests/layout.test.mjs`, order-management ha 10 riferimenti a `User`).
+- `NOTES.md`: nessuna nota aperta.
 
 ## Prossimi passi
-1. In order-management: `/reload-plugins`, poi `/core:security-audit` sulla produzione appena messa in piedi (è il
-   caso che ha generato la skill: prima prova vera, correggere la skill se un comando non torna) e allineare
-   `docs/deploy.md` ai passi di `core:deploy` (proxy host completo con i buffer, DNS); lo stesso allineamento in
-   guest-invitations-af (`docs/deploy.md` §3 ha solo una riga sul proxy) e kura.
-2. In guest-invitations-af e order-management: `/reload-plugins` e `/modeler:install` (la barra dell'editor deve
-   mostrare `v0.12.1`, `npm run lint` senza l'avviso su `BOX_W`; scrive `docs/DOMAIN.md`, da aggiungere a
-   `.prettierignore` se l'app formatta `docs/`; in guest-invitations-af `docs/domain.md` è già stato rinominato
-   `docs/behavior.md`);
-   aprire `docs/DOMAIN.md` su GitHub e provare una nota a mano → `npm run model:docs` → `/modeler:metamodel`;
-   in guest-invitations-af chiudere la parte app della nota sulle viste sostituite.
-3. Aggiungere a `~/.pgpass` la riga `<host del pooler>:5432:postgres:postgres.<ref>:<password>` e `chmod 600` (la CLI
-   stampa la riga esatta se manca), poi `npm run model:done -- --write`; verificare che le righe passino ad
-   `applied` e spariscano da `/admin/model` in produzione.
-4. Alla prossima proposta: tutto il flusso pull → apply → done, controllando che `git diff domain.ecore.yaml` mostri
-   solo le righe cambiate.
-5. Sugli altri computer: `claude plugin update core@iovino-harness` (0.9.0: le due skill nuove) e `claude plugin update modeler@iovino-harness`.
-6. Facoltativi: il bus dell'editor (vedi NOTES.md), proposte di produzione in `modeler proposals`, `drift --linked`; poi plugin `mde` e `research`.
+1. Pubblicare: `/core:ship` (da un computer con `gh`) o `git push -u origin feat/modeler-behavior` + PR dal browser;
+   merge su `main` solo dopo conferma. Dopo il merge, sugli altri computer `claude plugin update core@iovino-harness`
+   e `claude plugin update modeler@iovino-harness` (0.9.1 / 0.13.0).
+2. In guest-invitations-af: `/reload-plugins`, `/modeler:install` (barra dell'editor `v0.13.0`), poi scrivere
+   `behavior.yaml` partendo da `plugins/modeler/tests/fixtures/invitations.behavior.yaml` (è già la sua traduzione)
+   e marcare `derived: true` gli attributi calcolati; `npm run model:validate`, `npm run model:sync`, confrontare
+   `npm run model:behavior -- --format sql` con le clausole in produzione e `npm run model:drift` sui workflow
+   pubblicati (`workflow_versions`).
+3. Sempre lì, provare il motore generato: `npm run model:engine -- --write`, `supabase db reset`, i test dell'app,
+   `npm run model:drift`; decidere se sostituisce l'engine a mano o resta un confronto, e correggere `engine.py`
+   dove il SQL generato non coincide con ciò che l'app fa.
+4. Ripetere `/modeler:install` in kura e order-management; in order-management anche `/core:security-audit`
+   (prima prova vera della skill) e `docs/deploy.md` allineato a `core:deploy`.
+5. `~/.pgpass`: aggiungere la riga del pooler stampata dalla CLI, poi `npm run model:done -- --write` e verificare
+   `applied` in `/admin/model`.
+6. Facoltativi: bus dell'editor; proposte di produzione in `modeler proposals`; plugin `mde` e `research`.
 
 ## Per riprendere
 `cd <clone> && claude` — i plugin si caricano da questa cartella: dopo una modifica usa `/reload-plugins`.
-Test con database: `docker run -d --rm --name modeler-pg-test -e POSTGRES_PASSWORD=pg -p 55499:5432 postgres:16`,
-poi `MODELER_PG=postgresql://postgres:pg@localhost:55499/postgres python3 -m unittest discover -s plugins/modeler/tests`
-e `docker stop modeler-pg-test` (non usare il database Supabase di un'app per i test).
-File da leggere per primi: `CLAUDE.md`, `NOTES.md`, `plugins/modeler/skills/apply/SKILL.md`,
-`plugins/modeler/scripts/metamodel/cli.py` (`cmd_apply`, `cmd_pull`, `cmd_done`, `remote_dsn`, `_prod_query`,
-`docs_status`, `docs_clash`, `sync`, `cmd_docs`), `plugins/modeler/scripts/metamodel/ecore.py` (`to_markdown`, `markdown_changes`),
-`plugins/modeler/skills/metamodel/SKILL.md` (passo 0),
-`plugins/core/scripts/hook.py` (`guard_harness_edit`), `plugins/core/context/conventions.md`,
-`plugins/core/skills/deploy/SKILL.md`, `plugins/core/skills/security-audit/SKILL.md`.
+Test senza database: `python3 -m unittest discover -s tests && python3 -m unittest discover -s plugins/modeler/tests && claude plugin validate .`
+Test con database (anche il motore end-to-end):
+```bash
+docker run -d --rm --name modeler-pg-test -e POSTGRES_PASSWORD=pg -p 55499:5432 postgres:16
+# senza psql locale: shim in una cartella sul PATH
+cat > /tmp/pgbin/psql <<'PY'
+#!/usr/bin/env python3
+import subprocess, sys
+args = [a.replace("localhost:55499", "localhost:5432") for a in sys.argv[1:]]
+sys.exit(subprocess.run(["docker", "exec", "-i", "-e", "PGPASSWORD=pg", "modeler-pg-test", "psql", *args], stdin=sys.stdin).returncode)
+PY
+chmod +x /tmp/pgbin/psql
+PATH=/tmp/pgbin:$PATH MODELER_PG=postgresql://postgres:pg@localhost:55499/postgres python3 -m unittest discover -s plugins/modeler/tests
+docker stop modeler-pg-test
+```
+Prova rapida sui fixture: `python3 plugins/modeler/scripts/modeler.py engine plugins/modeler/tests/fixtures/invitations.ecore.yaml --behavior plugins/modeler/tests/fixtures/invitations.behavior.yaml`.
+File da leggere per primi: `CLAUDE.md`, `plugins/modeler/README.md` (sezione Behaviour),
+`plugins/modeler/skills/notation/references/behavior-notation.md`, `plugins/modeler/skills/metamodel/SKILL.md` (3b),
+`plugins/modeler/scripts/metamodel/behavior.py` (`validate`), `expr.py` (`parse`, `to_sql`), `engine.py` (`engine_sql`),
+`cli.py` (`cmd_behavior`, `cmd_engine`, `cmd_drift`, `sync`), `plugins/modeler/tests/test_behavior.py`
+(`EngineDatabaseTests.test_workflow_end_to_end`), `plugins/modeler/hooks/hook.py` (`_check_behavior`).

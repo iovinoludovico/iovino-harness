@@ -1,7 +1,8 @@
 """Claude Code hooks of the modeler plugin (Python standard library only; never break a session).
 
-post    (PostToolUse on Edit|Write|MultiEdit): domain.ecore.yaml changed -> validate it (exit 2 sends the
-        errors back to Claude); a migration changed in an app with a metamodel -> remind to keep them aligned.
+post    (PostToolUse on Edit|Write|MultiEdit): domain.ecore.yaml changed -> validate it, and behavior.yaml
+        against it (exit 2 sends the errors back to Claude); behavior.yaml changed -> validate it against the
+        metamodel; a migration changed in an app with a metamodel -> remind to keep them aligned.
 session (SessionStart): inside an app with a metamodel, describe how it is kept aligned, report a vendored
         modeler older than the plugin and, with MODELER_DRIFT_DB set, the drift from the database.
 """
@@ -15,6 +16,7 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 METAMODEL_FILE = "domain.ecore.yaml"
+BEHAVIOR_FILE = "behavior.yaml"
 
 
 def _input() -> dict:
@@ -53,12 +55,18 @@ def post(data: dict) -> int:
                                     f"{root / METAMODEL_FILE}. Update the metamodel in the same change, then "
                                     "`npm run model:sync` and, after applying the migration locally, `npm run model:drift`.")
         return 0
+    if path.name == "BEHAVIOR.md" and path.parent.name == "docs" and _app_root(path.parent.parent):
+        _context("PostToolUse", f"modeler: docs/BEHAVIOR.md is generated from {BEHAVIOR_FILE} (`npm run model:sync`) and "
+                                f"rewritten every time: the change belongs in {BEHAVIOR_FILE}.")
+        return 0
     if path.name == "DOMAIN.md" and path.parent.name == "docs" and _app_root(path.parent.parent):
         _context("PostToolUse", "modeler: docs/DOMAIN.md is generated from domain.ecore.yaml (`npm run model:sync`). "
                                 "If this is the user's note to translate, leave it; otherwise the change belongs in "
                                 "domain.ecore.yaml (structure, or `rules` for constraints), then "
                                 "`npm run model:sync -- --force` regenerates the file.")
         return 0
+    if path.name == BEHAVIOR_FILE and (path.parent / METAMODEL_FILE).exists():
+        return _check_behavior(path.parent / METAMODEL_FILE, path, changed="behavior")
     if path.name != METAMODEL_FILE:
         return 0
     sys.path.insert(0, str(SCRIPTS))
@@ -72,11 +80,42 @@ def post(data: dict) -> int:
     if not rep.ok:
         print(f"modeler: {METAMODEL_FILE} is not valid — fix it:\n" + rep.render(), file=sys.stderr)
         return 2
+    if (path.parent / BEHAVIOR_FILE).exists():
+        code = _check_behavior(path, path.parent / BEHAVIOR_FILE, changed="metamodel")
+        if code:
+            return code
     _context("PostToolUse", "modeler: metamodel valid. Next, in the same change: the migration "
                             "(`npm run model:migrate -- --name <name> --write`, then resolve its TODO(modeler) lines), "
                             "`npm run model:sync` "
                             "(refreshes the admin modeler and docs/DOMAIN.md), the code that uses the new structure, "
                             "`npm run model:drift`.")
+    return 0
+
+
+def _check_behavior(meta: Path, behavior: Path, changed: str) -> int:
+    """behavior.yaml against the metamodel: errors go back to Claude (exit 2)."""
+    sys.path.insert(0, str(SCRIPTS))
+    from metamodel import behavior as B, core as M, ecore as E  # noqa: E402
+
+    try:
+        meta_raw = E.load(meta)
+        if not E.validate(meta_raw).ok:
+            return 0                                     # the metamodel's own errors are reported by its edit
+        rep = B.validate(B.load(behavior), meta_raw)
+    except M.ModelError as exc:
+        print(f"modeler: {BEHAVIOR_FILE}: {exc}", file=sys.stderr)
+        return 2
+    if not rep.ok:
+        head = (f"modeler: this change of {METAMODEL_FILE} breaks {BEHAVIOR_FILE} — update the behaviour in the same change "
+                "(or revert the domain change):" if changed == "metamodel"
+                else f"modeler: {BEHAVIOR_FILE} is not valid against {METAMODEL_FILE} — fix it:")
+        print(head + "\n" + rep.render(), file=sys.stderr)
+        return 2
+    if changed == "behavior":
+        note = "modeler: behaviour valid against the metamodel."
+        if rep.warnings:
+            note += "\n" + "\n".join(f"WARNING {w}" for w in rep.warnings)
+        _context("PostToolUse", note)
     return 0
 
 
@@ -98,6 +137,9 @@ def session(data: dict) -> int:
         elif installed != __version__:
             lines.append(f"The app ships modeler {installed}, the plugin is {__version__}: "
                          "upgrade it with /modeler:install.")
+        if (root / BEHAVIOR_FILE).exists():
+            lines.append(f"Behaviour model: {root / BEHAVIOR_FILE} (roles, derivations, workflows, events, reactions), "
+                         "written on the concepts of the metamodel and checked against it by `npm run model:validate`.")
         pending = sorted(cli.proposals_dir(root / METAMODEL_FILE).glob("*.json"))
         if pending:
             lines.append(f"{len(pending)} proposal(s) saved by the admin modeler and not applied yet "

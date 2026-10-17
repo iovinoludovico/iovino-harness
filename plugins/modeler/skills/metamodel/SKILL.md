@@ -1,6 +1,6 @@
 ---
 name: metamodel
-description: Crea o fa evolvere il metamodello di dominio domain.ecore.yaml (notazione Ecore) di un'app Next.js + Supabase partendo da una descrizione in linguaggio naturale, e porta la modifica fino a migrazione, codice e verifica di allineamento. Va usata quando l'utente descrive concetti e relazioni del dominio ("una Persona ha associato un Account", "un ordine contiene più righe", "aggiungi la classe Fornitore", "aggiungi il campo telefono"), chiede di vedere il metamodello, o invoca /modeler:metamodel.
+description: Crea o fa evolvere il metamodello di dominio domain.ecore.yaml (notazione Ecore) e il modello di comportamento behavior.yaml (workflow, guardie, derivazioni, eventi, reazioni) di un'app Next.js + Supabase partendo da una descrizione in linguaggio naturale, e porta la modifica fino a migrazione, codice e verifica di allineamento. Va usata quando l'utente descrive concetti e relazioni del dominio ("una Persona ha associato un Account", "un ordine contiene più righe", "aggiungi la classe Fornitore", "aggiungi il campo telefono"), stati, passaggi e notifiche ("si approva solo se i dati sono completi", "avvisa il direttore quando viene emesso"), chiede di vedere il metamodello, o invoca /modeler:metamodel.
 argument-hint: "<descrizione del dominio o della modifica> | show"
 ---
 
@@ -10,14 +10,16 @@ Richiesta: `$ARGUMENTS`
 
 CLI: nell'app `npm run model:<comando>` (o `python3 tools/modeler/modeler.py <comando>`); se il modellatore non
 è ancora installato, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/modeler.py" <comando>`. Leggi prima
-`${CLAUDE_PLUGIN_ROOT}/skills/notation/references/ecore-notation.md`.
+`${CLAUDE_PLUGIN_ROOT}/skills/notation/references/ecore-notation.md` e, se la richiesta tocca stati, passaggi,
+campi calcolati, notifiche o eventi, `${CLAUDE_PLUGIN_ROOT}/skills/notation/references/behavior-notation.md`.
 
 ## 0. Appunti in `docs/DOMAIN.md`
 `npm run model:docs`. Se segnala modifiche a mano, leggile come parte della richiesta, sezione per sezione:
 - fatti strutturali (classi, attributi, relazioni) → chiavi del metamodello, con la migrazione (sezione 4);
 - vincoli che la notazione esprime (`lower: 1`, `unique`, enum, `max_length`, `default`, `unique` di classe) →
   quelle chiavi;
-- tutto il resto ("non può", "deve sempre", invarianti, regole di calcolo) → `rules` della classe o del package,
+- stati e passaggi, chi li esegue e quando, campi calcolati, notifiche → `behavior.yaml` (sezione 3b);
+- tutto il resto ("non può", "deve sempre", invarianti) → `rules` della classe o del package,
   `text` con le parole dell'utente e un `id` breve in snake_case.
 Poi `npm run model:sync -- --force` rigenera il file (copia dell'originale in `.modeler/backups/`). Nel resoconto:
 cosa è diventato struttura, cosa regola, cosa non si è potuto collocare (chiedi).
@@ -47,6 +49,38 @@ il client lo supporta); `--format storage` mostra tabelle e colonne.
 3. Scrivi o modifica `domain.ecore.yaml`. L'hook PostToolUse lo valida: correggi subito gli errori.
 4. Mostra il risultato in Emfatic e come diagramma, più `show --format storage` quando conta il database.
 
+## 3b. Il comportamento: `behavior.yaml`
+Stati e transizioni ("passa da … a …", "si approva solo se …"), chi le esegue, scadenze ("N giorni dopo la data
+di fine"), campi calcolati ("si calcola come …", "è completo quando …"), eventi e notifiche ("avvisa X quando Y")
+e sottoscrizioni webhook non vanno nel metamodello né direttamente nel codice: vanno in `behavior.yaml`, accanto a
+`domain.ecore.yaml`, scritti sui concetti del metamodello con le espressioni tipizzate del riferimento
+`behavior-notation.md` (`guard: dataComplete`, `when: not agencyBookingRequired`, `at: endDate + 1d`,
+`notify: [director, self.issuer]`).
+- Un campo calcolato è `derived: true` nel metamodello e ha la formula in `derivations` (aritmetica, `round`,
+  `coalesce`, `if … then … else`, somme su collezioni); se la formula non si può scrivere (lookup in un'altra
+  tabella, valori esterni) resta `derived: true` senza formula e il calcolo è una personalizzazione.
+- Una `guard`/`when` che il motore runtime valuta come clausole è una congiunzione di test su singoli attributi
+  del record; `or`, calcoli e navigazioni vanno in un attributo derivato (`npm run model:behavior -- --format
+  engine` dice cosa il motore non valuta).
+- L'attributo di stato (`state:` del workflow) è un `EString` o un enum con un letterale per stato.
+- Ambiguità da chiedere in un giro solo, insieme a quelle della struttura: chi può eseguire una transizione
+  (ruolo, con quale ambito, o un utente collegato al record come `self.issuer`); se una condizione nasconde la
+  transizione (`when`) o la blocca spiegando cosa manca (`guard`); se il commento è obbligatorio.
+- Dopo ogni modifica l'hook valida il file contro il metamodello (anche quando cambia il metamodello: una
+  rinomina che rompe una guardia o un destinatario viene segnalata subito); `npm run model:validate` fa lo stesso
+  in CI. Se un file non esiste ancora e l'app ha già workflow in codice, proponi di scriverlo a partire da ciò che
+  il codice fa (`docs/behavior.md`, migrazioni), senza cambiare il comportamento.
+Dopo ogni modifica: `npm run model:sync` rigenera `docs/BEHAVIOR.md` e `src/lib/modeler/behavior.json`;
+`npm run model:engine -- --write` rigenera la migrazione del motore (funzioni e trigger: derivazioni,
+`<entità>_perform_transition`, `_available_transitions`, `_revert`, transizioni a tempo, solleciti, eventi con i
+destinatari; idempotente, una per rilascio, da rivedere nei `TODO(modeler)`: catalogo degli eventi, policy RLS con
+`<entità>_can_edit`, pg_cron), da applicare in locale e poi `npm run model:drift`. Il motore si appoggia a
+`current_profile_id`, `has_role`, `role_members`, `emit_entity_event` dell'app (fallback se mancano). In un'app
+nata con appforge le funzioni generate sostituiscono quelle di appforge con lo stesso nome: rivedi la migrazione
+prima di applicarla. Nelle app che tengono il motore a mano, `npm run model:behavior -- --format sql|engine` dà
+l'SQL e la versione del workflow da riportare nel codice, e `drift` confronta i workflow con la versione
+pubblicata: la modifica di `behavior.yaml` e quella del codice vanno nella stessa modifica.
+
 ## 4. Allineare l'applicazione (nella stessa modifica, su un branch)
 1. **Migrazione**: `npm run model:migrate` mostra la bozza generata dal confronto tra il metamodello committato
    (`HEAD`) e quello nuovo (`--from HEAD~1` se l'hai già committato, `--from empty` per lo schema intero); poi
@@ -64,7 +98,8 @@ il client lo supporta); `--format storage` mostra tabelle e colonne.
 5. Typecheck, lint e test dell'app.
 
 Le regole di dominio dichiarative stanno in `rules` del metamodello (package o classe) e compaiono in
-`docs/DOMAIN.md`; il codice che le applica è una personalizzazione (`docs/customizations.md`, `CUSTOM(<id>)`),
-come ogni logica che il metamodello non esprime (workflow, pagine speciali).
+`docs/DOMAIN.md`; il comportamento (workflow, derivazioni, eventi, reazioni) in `behavior.yaml`; il codice che li
+applica è una personalizzazione (`docs/customizations.md`, `CUSTOM(<id>)`), come ogni logica che nessuno dei
+due modelli esprime (aritmetica, pagine speciali).
 
 Resoconto: il metamodello in Emfatic, le ipotesi fatte, la migrazione e cosa cambia nell'applicazione.

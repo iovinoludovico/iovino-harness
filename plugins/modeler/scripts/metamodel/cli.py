@@ -17,16 +17,21 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from . import behavior as B
 from . import core as M
 from . import dbschema as D
 from . import ecore as E
+from . import engine as N
+from . import expr as X
 from . import sqlgen as G
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]            # modeler.py, metamodel/, vendor/
 KIT_DIR = SCRIPTS_DIR.parent / "kit"                          # only in the plugin, not in the vendored copy
 STATE_DIR = ".modeler"                                        # proposals and backups, in the app repository
 METAMODEL_JSON = Path("src/lib/modeler/metamodel.json")       # what the admin page reads
+BEHAVIOR_JSON = Path("src/lib/modeler/behavior.json")         # the behaviour as the app reads it (typed expressions, SQL)
 DOMAIN_MD = Path("docs/DOMAIN.md")                            # the domain explained, generated; hand notes allowed
+BEHAVIOR_MD = Path("docs/BEHAVIOR.md")                        # the behaviour explained, generated (no hand notes)
 DOMAIN_COPY = Path(STATE_DIR) / "DOMAIN.generated.md"         # what sync wrote last: hand edits are measured against it
 EDITOR_JS = Path("public/modeler/metamodel-editor.js")
 TOOLS_DIR = Path("tools/modeler")
@@ -44,6 +49,8 @@ NPM_SCRIPTS = {
     "model:done": "python3 tools/modeler/modeler.py done",
     "model:apply": "python3 tools/modeler/modeler.py apply",
     "model:migrate": "python3 tools/modeler/modeler.py migrate",
+    "model:behavior": "python3 tools/modeler/modeler.py behavior",
+    "model:engine": "python3 tools/modeler/modeler.py engine",
 }
 
 
@@ -135,13 +142,42 @@ def _load_any(path: Path) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Commands on the metamodel
 # --------------------------------------------------------------------------- #
+def behavior_file(meta_path: Path, explicit: str | None = None) -> Path | None:
+    """The behaviour model to check with a metamodel: the one given, else behavior.yaml next to the metamodel."""
+    if explicit:
+        return Path(explicit)
+    p = B.behavior_path(meta_path)
+    return p if p.exists() else None
+
+
+def validate_behavior(meta_raw: dict[str, Any], bpath: Path) -> M.Report:
+    try:
+        return B.validate(B.load(bpath), meta_raw)
+    except M.ModelError as exc:
+        rep = M.Report()
+        rep.error(str(bpath), str(exc))
+        return rep
+
+
 def cmd_validate(a) -> int:
-    rep = E.validate(E.load(find_metamodel(a.path)))
+    meta_path = find_metamodel(a.path)
+    raw = E.load(meta_path)
+    rep = E.validate(raw)
+    bpath = behavior_file(meta_path, a.behavior)
+    brep = validate_behavior(raw, bpath) if bpath and rep.ok else None
     if a.json:
-        print(json.dumps({"ok": rep.ok, "errors": rep.errors, "warnings": rep.warnings}, indent=2))
+        out: dict[str, Any] = {"ok": rep.ok and (brep is None or brep.ok), "errors": rep.errors, "warnings": rep.warnings}
+        if brep is not None:
+            out["behavior"] = {"file": str(bpath), "ok": brep.ok, "errors": brep.errors, "warnings": brep.warnings}
+        print(json.dumps(out, indent=2))
     else:
         print(rep.render())
-    return 0 if rep.ok else 1
+        if brep is not None:
+            print(f"--- {bpath.name} against the metamodel")
+            print(brep.render(ok_text="Behaviour OK"))
+        elif bpath and not rep.ok:
+            print(f"{bpath.name}: not checked (the metamodel must be valid first)")
+    return 0 if rep.ok and (brep is None or brep.ok) else 1
 
 
 def cmd_show(a) -> int:
@@ -170,6 +206,88 @@ def cmd_show(a) -> int:
             print("ERROR", x)
     else:
         print(E.dumps(meta), end="")
+    return 0
+
+
+def cmd_behavior(a) -> int:
+    """The behaviour model in a given view (valid metamodel and behaviour assumed: run validate first)."""
+    meta_path = find_metamodel(a.path)
+    bpath = behavior_file(meta_path, a.behavior)
+    if bpath is None:
+        print(f"no {B.BEHAVIOR_FILE} next to {meta_path}", file=sys.stderr)
+        return 1
+    raw, meta = B.load(bpath), E.load(meta_path)
+    rep = E.validate(meta)
+    brep = B.validate(raw, meta) if rep.ok else None
+    if not rep.ok or not brep.ok:
+        print((rep if not rep.ok else brep).render(), file=sys.stderr)
+        return 1
+    if a.format == "markdown":
+        print(B.to_markdown(raw, meta, a.lang), end="")
+    elif a.format == "mermaid":
+        b = B.expand(raw)
+        lang = a.lang or E.expand(meta)["language"]
+        for cname, w in b["workflows"].items():
+            print(f"%% {cname}")
+            print(B.mermaid_workflow(w, lang), end="")
+    elif a.format == "json":
+        print(json.dumps(B.runtime_json(raw, meta), ensure_ascii=False, indent=2))
+    elif a.format == "sql":
+        print(B.sql_view(raw, meta), end="")
+    elif a.format == "engine":
+        b = B.expand(raw)
+        try:
+            print(json.dumps({c: B.engine_version(raw, meta, c) for c in b["workflows"]}, ensure_ascii=False, indent=2))
+        except X.ExprError as exc:
+            print(f"a guard the engine cannot evaluate as clauses: {exc}", file=sys.stderr)
+            return 1
+    return 0
+
+
+def _write_migration(meta_path: Path, name: str, sql: str) -> Path:
+    name = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_") or "model_change"
+    mig = meta_path.parent / "supabase" / "migrations"
+    mig.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
+    latest = max((f.name[:14] for f in mig.glob("*.sql") if f.name[:14].isdigit()), default="")
+    if latest >= stamp:   # keep the order of the existing migrations
+        stamp = str(int(latest) + 1)
+    out = mig / f"{stamp}_{name}.sql"
+    out.write_text(sql, encoding="utf-8")
+    return out
+
+
+def cmd_engine(a) -> int:
+    """The SQL engine of the behaviour: one idempotent migration, printed or saved in supabase/migrations/."""
+    meta_path = find_metamodel(a.path)
+    bpath = behavior_file(meta_path, a.behavior)
+    if bpath is None:
+        print(f"no {B.BEHAVIOR_FILE} next to {meta_path}", file=sys.stderr)
+        return 1
+    raw, meta = B.load(bpath), E.load(meta_path)
+    rep = E.validate(meta)
+    brep = B.validate(raw, meta) if rep.ok else None
+    if not rep.ok or not brep.ok:
+        print((rep if not rep.ok else brep).render(), file=sys.stderr)
+        return 1
+    try:
+        sql, notes = N.engine_sql(raw, meta, a.schema)
+    except X.ExprError as exc:
+        print(f"cannot generate the engine: {exc}", file=sys.stderr)
+        return 1
+    todos = sql.count(f"-- {N.TODO}")
+    if not a.write:
+        print(sql, end="")
+        for n in notes:
+            print(f"note: {n}", file=sys.stderr)
+        print(f"(dry run: --write saves it in supabase/migrations/; {todos} TODO(modeler) to review)", file=sys.stderr)
+        return 0
+    out = _write_migration(meta_path, a.name or "behavior_engine", sql)
+    print(f"wrote {out}")
+    for n in notes:
+        print(f"note: {n}")
+    print(f"{todos} TODO(modeler) to review; then apply it locally (supabase db reset) and `npm run model:drift`. "
+          "Regenerate it after every change of the behaviour (the file is replaced: keep one engine migration per release).")
     return 0
 
 
@@ -247,6 +365,11 @@ def cmd_apply(a) -> int:
     if not rep.ok:
         print("\nThe proposal is not a valid metamodel: nothing was written.")
         return 1
+    bpath = behavior_file(meta_path)
+    if bpath is not None:
+        brep = validate_behavior(new, bpath)
+        if not brep.ok:
+            print(f"\nThe proposal breaks {bpath.name} (fix the behaviour in the same change):\n" + brep.render())
     included, others = _other_proposals(meta_path, src, old, new)
     if included:
         print("\nIncluded in this proposal (archived with it):")
@@ -615,8 +738,18 @@ def cmd_drift(a) -> int:
         print("no database: pass --db <DSN> (or set MODELER_DB)", file=sys.stderr)
         return 2
     exclude = {t.strip() for t in (a.exclude or os.environ.get("MODELER_EXCLUDE", "")).split(",") if t.strip()}
-    found = D.drift(E.load(meta_path), D.catalog(dsn, a.schema), exclude)
+    meta = E.load(meta_path)
+    found = D.drift(meta, D.catalog(dsn, a.schema), exclude)
     print("\n".join(found) if found else "metamodel and database are aligned")
+    bpath = behavior_file(meta_path)
+    if bpath is not None and B.expand(B.load(bpath))["workflows"]:
+        wcat = D.workflow_catalog(dsn, a.schema)
+        if wcat is None:
+            print(f"{bpath.name}: the database has no workflow tables (workflow_versions): the workflows are code, not compared")
+        else:
+            wfound = B.workflow_drift(B.load(bpath), meta, wcat)
+            print("\n".join(wfound) if wfound else f"{bpath.name}: workflows aligned with the published versions")
+            found += wfound
     return 1 if found else 0
 
 
@@ -632,6 +765,7 @@ def sync(root: Path, force: bool = False) -> list[str]:
     raw = E.load(meta)
     _write_json(root / METAMODEL_JSON, E.runtime_json(raw))
     written = [str(METAMODEL_JSON)]
+    written += sync_behavior(root, raw)
     st = docs_status(root, raw)
     if st["state"] == "clash":                       # another document would be read or overwritten as DOMAIN.md
         return written
@@ -645,15 +779,36 @@ def sync(root: Path, force: bool = False) -> list[str]:
     return written
 
 
-def docs_clash(root: Path) -> str | None:
+def sync_behavior(root: Path, raw: dict[str, Any]) -> list[str]:
+    """What is generated from behavior.yaml, when the app has one and it is valid against the metamodel:
+    behavior.json (typed expressions and SQL for the app) and docs/BEHAVIOR.md (the behaviour explained, no hand
+    notes: always rewritten). A docs/behavior.md with other letter case is another document: BEHAVIOR.md is not
+    written until it is renamed or removed."""
+    bpath = root / B.BEHAVIOR_FILE
+    if not bpath.exists():
+        return []
+    braw = B.load(bpath)
+    if not E.validate(raw).ok or not B.validate(braw, raw).ok:
+        return []
+    _write_json(root / BEHAVIOR_JSON, B.runtime_json(braw, raw))
+    written = [str(BEHAVIOR_JSON)]
+    if docs_clash(root, BEHAVIOR_MD):
+        return written
+    path = root / BEHAVIOR_MD
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(B.markdown_document(braw, raw), encoding="utf-8")
+    return written + [str(BEHAVIOR_MD)]
+
+
+def docs_clash(root: Path, doc: Path = DOMAIN_MD) -> str | None:
     """A file in docs/ named like DOMAIN.md with other letter case (appforge wrote docs/domain.md): another
     document. On macOS it would be read as DOMAIN.md, on Linux sync would write a twin next to it."""
-    docs = root / DOMAIN_MD.parent
+    docs = root / doc.parent
     if not docs.is_dir():
         return None
     for name in sorted(os.listdir(docs)):                # listdir, not exists(): the latter lies on macOS
-        if name.lower() == DOMAIN_MD.name.lower() and name != DOMAIN_MD.name:
-            return str(DOMAIN_MD.parent / name)
+        if name.lower() == doc.name.lower() and name != doc.name:
+            return str(doc.parent / name)
     return None
 
 
@@ -825,8 +980,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("validate", help="validate the metamodel")
+    s = sub.add_parser("validate", help=f"validate the metamodel (and {B.BEHAVIOR_FILE} next to it, if any)")
     s.add_argument("path", nargs="?")
+    s.add_argument("--behavior", help=f"the behaviour model to check against the metamodel (default: {B.BEHAVIOR_FILE} next to it)")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_validate)
 
@@ -834,6 +990,23 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("path", nargs="?")
     s.add_argument("--format", choices=["yaml", "emfatic", "mermaid", "markdown", "json", "storage"], default="emfatic")
     s.set_defaults(fn=cmd_show)
+
+    s = sub.add_parser("behavior", help=f"print the behaviour model ({B.BEHAVIOR_FILE}) in a view")
+    s.add_argument("path", nargs="?")
+    s.add_argument("--behavior", help=f"the behaviour model (default: {B.BEHAVIOR_FILE} next to the metamodel)")
+    s.add_argument("--format", choices=["markdown", "mermaid", "json", "sql", "engine"], default="markdown",
+                   help="markdown: docs/BEHAVIOR.md; mermaid: the state diagrams; json: behavior.json (typed expressions, SQL); "
+                        "sql: derivations and guards as PostgreSQL; engine: the workflow versions as the runtime engine stores them")
+    s.add_argument("--lang", choices=sorted(E.LANGUAGES))
+    s.set_defaults(fn=cmd_behavior)
+
+    s = sub.add_parser("engine", help=f"the SQL engine of the behaviour ({B.BEHAVIOR_FILE}): functions and triggers, one idempotent migration")
+    s.add_argument("path", nargs="?")
+    s.add_argument("--behavior", help=f"the behaviour model (default: {B.BEHAVIOR_FILE} next to the metamodel)")
+    s.add_argument("--schema", default="public")
+    s.add_argument("--name", help="name of the migration file (default: behavior_engine)")
+    s.add_argument("--write", action="store_true", help="save it in supabase/migrations/ (otherwise print it)")
+    s.set_defaults(fn=cmd_engine)
 
     s = sub.add_parser("export", help="write the metamodel as an Ecore XMI file (Eclipse EMF, Epsilon)")
     s.add_argument("path", nargs="?")
@@ -892,14 +1065,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_reverse)
 
-    s = sub.add_parser("drift", help="compare the metamodel with a live database")
+    s = sub.add_parser("drift", help=f"compare the metamodel with a live database (and the workflows of {B.BEHAVIOR_FILE} with the published versions)")
     s.add_argument("path", nargs="?")
     s.add_argument("--db", help="DSN (default: MODELER_DB or the local Supabase of the app)")
     s.add_argument("--schema", default="public")
     s.add_argument("--exclude", help="comma separated tables (or table.column) to ignore (default: MODELER_EXCLUDE)")
     s.set_defaults(fn=cmd_drift)
 
-    s = sub.add_parser("sync", help=f"refresh {METAMODEL_JSON} and {DOMAIN_MD} from the metamodel")
+    s = sub.add_parser("sync", help=f"refresh {METAMODEL_JSON} and {DOMAIN_MD} from the metamodel "
+                                    f"(and {BEHAVIOR_JSON}, {BEHAVIOR_MD} from {B.BEHAVIOR_FILE})")
     s.add_argument("path", nargs="?")
     s.add_argument("--force", action="store_true",
                    help=f"rewrite {DOMAIN_MD} even if it has hand edits (a copy goes to {STATE_DIR}/backups/)")

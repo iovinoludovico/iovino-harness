@@ -1,0 +1,128 @@
+# Test fixture: the domain of guest-invitations (visiting researchers), with the attributes computed by the
+# database marked `derived` (their formulas are in invitations.behavior.yaml).
+package: invitations
+doc: Inviti dei visiting researcher GSSI, con trattamento economico e fondi
+
+classes:
+  Department:
+    doc: "Dipartimento GSSI che emette l'invito"
+    label: {it: "Dipartimento", en: Department}
+    attributes:
+      code: {type: EString, lower: 1, unique: true}
+      name: {type: EString, lower: 1}
+      active: {type: EBoolean, default: true}
+    references: {createdBy: User}
+  EconomicRate:
+    doc: "Importo standard di una voce economica per motivo dell'invito e posizione dell'invitato"
+    label: {it: "Tariffa", en: Rate}
+    attributes: {item: {type: EconomicItem, lower: 1}, amount: {type: EBigDecimal, lower: 1}}
+    references:
+      reason: {type: InvitationReason, opposite: economicRates, on_delete: cascade}
+      position: {type: Position, opposite: economicRates, on_delete: cascade}
+      createdBy: User
+  Fund:
+    doc: "Fondo di spesa su cui gravano i costi degli inviti"
+    label: {it: "Fondo", en: Fund}
+    attributes:
+      name: {type: EString, lower: 1, unique: true}
+      cup: EString
+      notes: Text
+      active: {type: EBoolean, default: true}
+    references: {createdBy: User}
+  Guest:
+    doc: "Visiting researcher invitato"
+    label: {it: "Invitato", en: Guest}
+    attributes:
+      lastName: {type: EString, lower: 1}
+      firstName: {type: EString, lower: 1}
+      fullName: EString
+      email: {type: Email, lower: 1, unique: true}
+      homeInstitution: {type: EString, lower: 1}
+      visitRole: EString
+    references: {position: Position, createdBy: User}
+  InvitationFund:
+    doc: "Quota del costo di un invito imputata a un fondo"
+    label: {it: "Quota su fondo", en: Fund share}
+    attributes: {amount: {type: EBigDecimal, lower: 1}}
+    references:
+      invitation: {type: Invitation, lower: 1, opposite: invitationFunds}
+      fund: {type: Fund, lower: 1}
+      createdBy: User
+  InvitationReason:
+    doc: "Motivo dell'invito, determina il tipo di compenso"
+    label: {it: "Motivo dell'invito", en: Invitation reason}
+    attributes:
+      code: {type: EString, lower: 1, unique: true}
+      label: {type: EString, lower: 1}
+      compensationType: {type: CompensationType, lower: 1, default: none}
+      active: {type: EBoolean, default: true}
+      sortOrder: {type: EInt, default: 100}
+    references:
+      economicRates: {type: EconomicRate, upper: -1, opposite: reason}
+      createdBy: User
+  Invitation:
+    doc: "Invito di un visiting researcher, dalla richiesta al pagamento; lo stato segue il workflow"
+    label: {it: "Invito", en: Invitation}
+    attributes:
+      code: {type: EString, lower: 1, unique: true}
+      startDate: {type: Date, lower: 1}
+      endDate: {type: Date, lower: 1}
+      compensationType: {type: CompensationType, derived: true}
+      reasonCode: {type: EString, derived: true}
+      hours: EBigDecimal
+      hourlyRate: EBigDecimal
+      flatAmount: EBigDecimal
+      compensationAmount: {type: EBigDecimal, derived: true}
+      accommodationMethod: {type: AccommodationMethod, lower: 1, default: none}
+      accommodationAmount: EBigDecimal
+      mealsMethod: {type: MealsMethod, lower: 1, default: none}
+      mealsAmount: EBigDecimal
+      travelMethod: {type: TravelMethod, lower: 1, default: none}
+      travelAmount: EBigDecimal
+      justification: EString
+      accommodationPerNight: {type: EBigDecimal, derived: true}
+      mealsPerDay: {type: EBigDecimal, derived: true}
+      totalAmount: {type: EBigDecimal, derived: true}
+      fundsTotal: {type: EBigDecimal, default: 0, derived: true}
+      agencyBookingRequired: {type: EBoolean, derived: true}
+      accommodationVenue: EString
+      accommodationReference: EString
+      accommodationCheckIn: Date
+      accommodationCheckOut: Date
+      travelReference: EString
+      travelDetails: EString
+      accommodationBookingComplete: {type: EBoolean, derived: true}
+      travelBookingComplete: {type: EBoolean, derived: true}
+      dataComplete: {type: EBoolean, derived: true}
+      notes: Text
+      state: {type: EString, lower: 1}
+      hourlyRateManual: {type: EBoolean, default: false}
+      flatAmountManual: {type: EBoolean, default: false}
+      accommodationAmountManual: {type: EBoolean, default: false}
+      mealsAmountManual: {type: EBoolean, default: false}
+      travelAmountManual: {type: EBoolean, default: false}
+    references:
+      invitationFunds: {type: InvitationFund, lower: 1, upper: -1, containment: true, opposite: invitation}
+      department: {type: Department, lower: 1}
+      guest: {type: Guest, lower: 1}
+      issuer: User
+      reason: {type: InvitationReason, lower: 1, on_delete: restrict}
+      createdBy: {type: User, lower: 1}
+  Position:
+    doc: "Posizione accademica dell'invitato"
+    label: {it: "Posizione", en: Position}
+    attributes:
+      code: {type: EString, lower: 1, unique: true}
+      label: {type: EString, lower: 1}
+      active: {type: EBoolean, default: true}
+      sortOrder: {type: EInt, default: 100}
+    references:
+      economicRates: {type: EconomicRate, upper: -1, opposite: position}
+      createdBy: User
+
+enums:
+  CompensationType: [hourly, flat, none]
+  AccommodationMethod: [agency, receipts, none]
+  MealsMethod: [receipts, flat_daily, none]
+  TravelMethod: [agency, receipts, flat, none]
+  EconomicItem: [compensation, accommodation, meals, meals_flat, travel, travel_flat]

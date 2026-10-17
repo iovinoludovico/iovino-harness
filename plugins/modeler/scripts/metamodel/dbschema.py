@@ -16,7 +16,7 @@ from . import core as M
 
 # tables never described by the metamodel: the users (the built-in User) and the modeler's own proposals;
 # the app's other infrastructure tables are excluded with --exclude (`table.column` excludes one technical column)
-INTERNAL_TABLES = {"profiles", "model_change_requests", "schema_migrations"}
+INTERNAL_TABLES = {"profiles", "model_change_requests", "schema_migrations", "workflow_history", "workflow_reminders"}
 STANDARD_COLUMNS = E.STANDARD_COLUMNS
 USER_TABLES = {("public", "profiles"), ("auth", "users")}
 
@@ -83,17 +83,53 @@ def composite_uniques(cat: dict[str, Any], table: str) -> list[dict[str, Any]]:
             for cols, defn in items if len(cols or []) >= 2]
 
 
-def catalog(dsn: str, schema: str = "public") -> dict[str, Any]:
-    if not re.match(r"^[a-z_][a-z0-9_]*$", schema):
-        raise DbError(f"invalid schema name: {schema}")
+# the published versions of the runtime workflow engine (tables workflow_versions/states/transitions of the app);
+# `null` when the app has no such tables (its workflows are code)
+WORKFLOW_SQL = """
+select json_build_object(
+ 'versions', (select coalesce(json_agg(json_build_object('id', v.id, 'entity', v.entity, 'version', v.version, 'status', v.status)
+                              order by v.entity), '[]') from {s}.workflow_versions v where v.status = 'published'),
+ 'states', (select coalesce(json_agg(json_build_object('version_id', st.version_id, 'key', st.key, 'kind', st.kind,
+                            'owner', st.owner, 'editable_by', st.editable_by, 'reminder_days', st.reminder_days,
+                            'reminder_template', st.reminder_template) order by st.sort, st.key), '[]')
+            from {s}.workflow_states st join {s}.workflow_versions v on v.id = st.version_id where v.status = 'published'),
+ 'transitions', (select coalesce(json_agg(json_build_object('version_id', tr.version_id, 'key', tr.key, 'from_states', tr.from_states,
+                                 'to_state', tr.to_state, 'allowed', tr.allowed, 'trigger', tr.trigger, 'at_field', tr.at_field,
+                                 'at_offset', tr.at_offset, 'comment', tr.comment, 'guard', tr.guard, 'condition', tr.condition,
+                                 'emits', tr.emits) order by tr.sort, tr.key), '[]')
+                 from {s}.workflow_transitions tr join {s}.workflow_versions v on v.id = tr.version_id where v.status = 'published')
+)
+"""
+HAS_WORKFLOW_SQL = "select to_json(to_regclass('{s}.workflow_versions') is not null)"
+
+
+def _query_json(dsn: str, sql: str) -> Any:
     try:
-        out = subprocess.run(["psql", dsn, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", CATALOG_SQL.format(s=schema)],
+        out = subprocess.run(["psql", dsn, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", sql],
                              capture_output=True, text=True, timeout=60)
     except FileNotFoundError as exc:
         raise DbError("psql not found: install the PostgreSQL client") from exc
     if out.returncode != 0:
         raise DbError(out.stderr.strip() or "psql failed")
     return json.loads(out.stdout.strip())
+
+
+def _check_schema(schema: str) -> None:
+    if not re.match(r"^[a-z_][a-z0-9_]*$", schema):
+        raise DbError(f"invalid schema name: {schema}")
+
+
+def catalog(dsn: str, schema: str = "public") -> dict[str, Any]:
+    _check_schema(schema)
+    return _query_json(dsn, CATALOG_SQL.format(s=schema))
+
+
+def workflow_catalog(dsn: str, schema: str = "public") -> dict[str, Any] | None:
+    """The published workflow versions with their states and transitions; None if the app has no workflow tables."""
+    _check_schema(schema)
+    if not _query_json(dsn, HAS_WORKFLOW_SQL.format(s=schema)):   # a missing table fails the whole query, even in a CASE
+        return None
+    return _query_json(dsn, WORKFLOW_SQL.format(s=schema))
 
 
 # --------------------------------------------------------------------------- #

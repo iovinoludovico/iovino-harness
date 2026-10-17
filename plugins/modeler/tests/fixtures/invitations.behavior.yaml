@@ -1,0 +1,104 @@
+# Behaviour of the guest-invitations domain (invitations.ecore.yaml): roles, derivations, the Invitation
+# workflow, events, reactions and the n8n subscription. Translated from the legacy appforge app.yaml.
+doc: Inviti dei visiting researcher, dalla richiesta dell'emittente al pagamento
+
+roles:
+  office:   {label: {it: Uffici amministrativi, en: Administrative offices}}
+  issuer:   {scope: Department, label: {it: Emittente, en: Issuer}}
+  director: {scope: Department, label: {it: Direttore di dipartimento, en: Department director}}
+
+derivations:
+  Invitation:
+    compensationType: reason.compensationType
+    reasonCode: reason.code
+    agencyBookingRequired: accommodationMethod = agency or travelMethod = agency
+    accommodationBookingComplete: accommodationMethod <> agency or (accommodationVenue.isSet() and accommodationReference.isSet())
+    travelBookingComplete: travelMethod <> agency or travelReference.isSet()
+    fundsTotal: invitationFunds.amount.sum()
+    dataComplete: >
+      reason.isSet()
+      and (compensationType <> hourly or (hours > 0 and hourlyRate.isSet()))
+      and (compensationType <> flat or flatAmount.isSet())
+      and (accommodationMethod = none or accommodationAmount.isSet())
+      and (mealsMethod = none or mealsAmount.isSet())
+      and (travelMethod = none or travelAmount.isSet())
+      and fundsTotal = totalAmount
+    compensationAmount: >
+      if compensationType = hourly then round(coalesce(hours, 0) * coalesce(hourlyRate, 0), 2)
+      else if compensationType = flat then coalesce(flatAmount, 0) else 0
+    accommodationPerNight: >
+      if accommodationMethod <> none and accommodationAmount.isSet()
+      then round(accommodationAmount / (if endDate - startDate > 1 then endDate - startDate else 1), 2) else 0
+    mealsPerDay: if mealsMethod <> none and mealsAmount.isSet() then round(mealsAmount / (endDate - startDate + 1), 2) else 0
+    totalAmount: >
+      compensationAmount
+      + (if accommodationMethod <> none then coalesce(accommodationAmount, 0) else 0)
+      + (if mealsMethod <> none then coalesce(mealsAmount, 0) else 0)
+      + (if travelMethod <> none then coalesce(travelAmount, 0) else 0)
+
+workflows:
+  Invitation:
+    state: state
+    states:
+      draft:                 {initial: true, label: {it: Bozza, en: Draft}, color: "#64748b", owner: [self.issuer], editable_by: [self.issuer, office]}
+      pending_director:      {label: {it: In attesa di approvazione, en: Awaiting approval}, color: "#d97706", owner: [director]}
+      rejected:              {label: {it: Rifiutato, en: Rejected}, color: "#dc2626", owner: [self.issuer], editable_by: [self.issuer, office]}
+      bookings:              {label: {it: Prenotazioni agenzia, en: Agency bookings}, color: "#0f766e", owner: [office], editable_by: [office]}
+      bookings_confirmed:    {label: {it: Prenotazioni confermate, en: Bookings confirmed}, color: "#115e59", owner: [office], editable_by: [office]}
+      in_management:         {label: {it: In gestione uffici, en: Being handled by offices}, color: "#2563eb", owner: [office], editable_by: [office]}
+      awaiting_confirmation:
+        label: {it: In attesa di conferma visita, en: Awaiting visit confirmation}
+        color: "#7c3aed"
+        owner: [self.issuer]
+        editable_by: [self.issuer, office]
+        reminder: {after: 7d, template: visit_confirmation_reminder}
+      director_confirmation: {label: {it: In attesa di conferma del direttore, en: Awaiting director confirmation}, color: "#5b21b6", owner: [director]}
+      payment:               {label: {it: Pagamenti in corso, en: Payments in progress}, color: "#0891b2", owner: [office], editable_by: [office]}
+      closed:                {final: true, label: {it: Chiuso, en: Closed}, color: "#16a34a"}
+      cancelled:             {final: true, label: {it: Annullato, en: Cancelled}, color: "#71717a"}
+    transitions:
+      submit:            {from: draft, to: pending_director, by: [self.issuer], guard: dataComplete, label: {it: Emetti, en: Submit}}
+      approve:           {from: pending_director, to: in_management, by: [director], when: not agencyBookingRequired, guard: dataComplete, label: {it: Approva, en: Approve}}
+      approve_bookings:  {from: pending_director, to: bookings, by: [director], when: agencyBookingRequired, guard: dataComplete, label: {it: Approva, en: Approve}}
+      reject:            {from: pending_director, to: rejected, by: [director], comment: required, label: {it: Rifiuta, en: Reject}}
+      resubmit:          {from: rejected, to: pending_director, by: [self.issuer], guard: dataComplete, label: {it: Riemetti, en: Resubmit}}
+      confirm_bookings:  {from: bookings, to: bookings_confirmed, by: [office], guard: dataComplete and accommodationBookingComplete and travelBookingComplete, label: {it: Conferma prenotazioni, en: Confirm bookings}}
+      start_management:  {from: bookings_confirmed, to: in_management, by: [office], guard: dataComplete and accommodationBookingComplete and travelBookingComplete, label: {it: Avvia gestione, en: Start management}}
+      rebook:            {from: bookings_confirmed, to: bookings, by: [office], comment: required, label: {it: Modifica prenotazioni, en: Change bookings}}
+      visit_ended:       {from: in_management, to: awaiting_confirmation, at: endDate + 1d, emits: visit_ended, label: {it: Fine visita, en: Visit ended}}
+      confirm:           {from: awaiting_confirmation, to: director_confirmation, by: [self.issuer], guard: dataComplete, label: {it: Conferma visita e attività, en: Confirm visit and activities}}
+      director_confirm:  {from: director_confirmation, to: payment, by: [director], guard: dataComplete, label: {it: Conferma visita, en: Confirm visit}}
+      director_return:   {from: director_confirmation, to: awaiting_confirmation, by: [director], comment: required, label: {it: Rimanda all'emittente, en: Send back to issuer}}
+      close:             {from: payment, to: closed, by: [office], guard: dataComplete, label: {it: Chiudi, en: Close}}
+      withdraw:          {from: [draft, rejected], to: cancelled, by: [self.issuer, office], label: {it: Annulla, en: Cancel}}
+      cancel:
+        from: [pending_director, bookings, bookings_confirmed, in_management, awaiting_confirmation, director_confirmation, payment]
+        to: cancelled
+        by: [office]
+        comment: required
+        label: {it: Annulla, en: Cancel}
+    revert: {by: [office, director], final_by: [office], comment: required}
+
+events:
+  Invitation:
+    visit_ended: {doc: La visita è terminata (passaggio automatico alla data di fine)}
+
+reactions:
+  - {name: notify_submitted, event: Invitation.transitioned, when: "transition in [submit, resubmit]", notify: [director], template: invitation_submitted}
+  - {name: notify_to_manage, event: Invitation.transitioned, when: transition = approve, notify: [office], template: invitation_to_manage}
+  - {name: notify_to_book, event: Invitation.transitioned, when: transition = approve_bookings, notify: [office], template: invitation_to_book}
+  - {name: notify_approved, event: Invitation.transitioned, when: "transition in [approve, approve_bookings]", notify: [self.issuer], template: invitation_approved}
+  - {name: notify_rejected, event: Invitation.transitioned, when: transition = reject, notify: [self.issuer], template: invitation_rejected}
+  - {name: notify_bookings_guest, event: Invitation.transitioned, when: transition = confirm_bookings, notify: [self.guest.email], template: bookings_confirmed_guest}
+  - {name: notify_bookings_issuer, event: Invitation.transitioned, when: transition = confirm_bookings, notify: [self.issuer], template: bookings_confirmed}
+  - {name: notify_rebook, event: Invitation.transitioned, when: transition = rebook, notify: [self.issuer], template: bookings_changed}
+  - {name: notify_visit_ended, event: Invitation.transitioned, when: transition = visit_ended, notify: [self.issuer], template: visit_confirmation_requested}
+  - {name: notify_director_confirmation, event: Invitation.transitioned, when: transition = confirm, notify: [director], template: director_confirmation_requested}
+  - {name: notify_visit_confirmed, event: Invitation.transitioned, when: transition = director_confirm, notify: [office], template: visit_confirmed}
+  - {name: notify_visit_confirmed_issuer, event: Invitation.transitioned, when: transition = director_confirm, notify: [self.issuer], template: visit_confirmed_by_director}
+  - {name: notify_returned, event: Invitation.transitioned, when: transition = director_return, notify: [self.issuer], template: visit_confirmation_returned}
+  - {name: notify_closed, event: Invitation.transitioned, when: transition = close, notify: [self.issuer], template: invitation_closed}
+  - {name: notify_reverted, event: Invitation.reverted, notify: [self.issuer], template: invitation_reverted}
+
+subscriptions:
+  - {name: n8n, url_env: N8N_WEBHOOK_URL, events: [Invitation.*, Guest.*, user.*]}
