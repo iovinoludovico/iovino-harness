@@ -6,9 +6,12 @@
  *
  *   const el = document.querySelector("metamodel-editor");
  *   el.metamodel = json;            // canonical form: src/lib/modeler/metamodel.json (`npm run model:sync`)
+ *   el.behavior = json;             // optional: src/lib/modeler/behavior.json (behavior.yaml as the app reads it);
+ *                                   // derived attributes show their formula, the state attribute its workflow
  *   el.readonly = false;
  *   el.addEventListener("change", (e) => e.detail.metamodel);
  *   el.addEventListener("save", (e) => { e.detail.metamodel; e.detail.note; });
+ *   el.addEventListener("select", (e) => e.detail.name);   // the class or enum selected (null: none)
  *
  * Attributes: lang="it|en", save-label="…", readonly.
  * The diagram positions are kept in metamodel.diagram ({Class: {x, y}}).
@@ -37,27 +40,32 @@
   const LABEL_CHAR_W = 6.6, LABEL_H = 14;
   const PORT_STAGGER = 4;                  // incoming ports sit a few px off the outgoing ones
   const LANES = [0, 8, -8, 16, -16, 24, -24, 32, -32];
+  const BUS_MIN = 4;                       // references entering the same side of a class that share a bus
+  const BUS_GAP = 28;                      // distance of the trunk of a bus from the side of the class
 
   const Layout = (() => {
-    const rowsOf = (c, allAttrs = false, more = "more") => {
-      // attribute lines of a class box: all of them, or the first ones plus "+N more"
-      const lines = Object.entries(c.attributes).map(([an, a]) => {
+    const rowItems = (c, allAttrs = false, more = "more", state = null) => {
+      // attribute lines of a class box: all of them, or the first ones plus "+N more". `🔑` marks the id,
+      // `/name` a derived attribute (UML), `⟳` the state attribute of the workflow (`state` of behavior.yaml)
+      const items = Object.entries(c.attributes).map(([an, a]) => {
         const m = a.lower === 0 && a.upper === 1 ? "" : ` [${multText(a.lower, a.upper)}]`;
-        return `${a.id ? "🔑 " : ""}${an}: ${a.type}${m}`;
+        const mark = a.id ? "🔑 " : an === state ? "⟳ " : "";
+        return { text: `${mark}${a.derived ? "/" : ""}${an}: ${a.type}${m}`, attr: an, derived: !!a.derived, state: an === state };
       });
       // references to the application users have no box to point to: listed in the class, dimmed
       for (const [rn, r] of Object.entries(c.references)) {
-        if (r.type === "User") lines.push(`↗ ${rn}: User${r.lower === 0 && r.upper === 1 ? "" : ` [${multText(r.lower, r.upper)}]`}`);
+        if (r.type === "User") items.push({ text: `↗ ${rn}: User${r.lower === 0 && r.upper === 1 ? "" : ` [${multText(r.lower, r.upper)}]`}`, ref: rn, muted: true });
       }
-      if (allAttrs || lines.length <= MAX_ROWS) return lines;
-      return [...lines.slice(0, MAX_ROWS - 1), `… +${lines.length - MAX_ROWS + 1} ${more}`];
+      if (allAttrs || items.length <= MAX_ROWS) return items;
+      return [...items.slice(0, MAX_ROWS - 1), { text: `… +${items.length - MAX_ROWS + 1} ${more}`, muted: true }];
     };
+    const rowsOf = (c, allAttrs, more, state) => rowItems(c, allAttrs, more, state).map((r) => r.text);
 
     const boxSize = (mm, name, opts = {}) => {
       const c = mm.classes[name];
       const width = (texts, min) => Math.round(Math.max(min, Math.min(380, Math.max(...texts.map((x) => x.length)) * CHAR_W + 24)));
       if (c) {
-        const rows = rowsOf(c, opts.allAttrs, opts.more);
+        const rows = rowsOf(c, opts.allAttrs, opts.more, opts.state);
         return { w: width([name, ...rows], 160), h: HEAD_H + Math.max(1, rows.length) * ROW_H + PAD };
       }
       const e = mm.enums[name];
@@ -206,6 +214,24 @@
       return h1 ? [p1, a, { x: a.x, y: b.y }, b, p2] : [p1, a, { x: b.x, y: a.y }, b, p2];
     };
 
+    const branchRoute = (pa, sa, A, J, sb, detour = 0) => {
+      // from a source port (side `sa` of the box A) to the trunk of a bus: the line through the junction J parallel
+      // to the side `sb` of the target. Arrives square on the trunk; a port on the far side goes around its box.
+      const step = 28 + detour * 10;
+      const v = horizontal(sb);                       // vertical trunk (x = J.x) when the bus enters a left/right side
+      const [ax, ay] = out[sa];
+      if (horizontal(sa) === v) {
+        const facing = v ? (J.x - pa.x) * ax > 0 : (J.y - pa.y) * ay > 0;
+        if (facing) return [pa, v ? { x: J.x, y: pa.y } : { x: pa.x, y: J.y }];
+        const o = { x: pa.x + ax * step, y: pa.y + ay * step };
+        if (v) { const y = J.y < A.y + A.h / 2 ? A.y - step : A.y + A.h + step; return [pa, o, { x: o.x, y }, { x: J.x, y }]; }
+        const x = J.x < A.x + A.w / 2 ? A.x - step : A.x + A.w + step;
+        return [pa, o, { x, y: o.y }, { x, y: J.y }];
+      }
+      const o = { x: pa.x + ax * step, y: pa.y + ay * step };   // a side parallel to the trunk: out, then straight to it
+      return [pa, o, v ? { x: J.x, y: o.y } : { x: o.x, y: J.y }];
+    };
+
     const edgesOf = (mm) => {
       // EMF / Ecore Tools notation: reference = open arrow at the target; containment = filled diamond at the
       // container; a pair of opposite references = one connector with both ends; inheritance = hollow triangle
@@ -237,6 +263,9 @@
     const routeEdges = (mm, size) => {
       // Connectors as orthogonal polylines, with the labels of their ends: { edges: [{key, a, b, cls, start, end,
       // pts, labels: [{text, x, y, w, h}]}], boxes: {name: rect}, ext } (ext: the extent of lines and labels).
+      // A bus (BUS_MIN or more references entering the same side of a class, core:diagrams) is one edge: `pts` the
+      // stub with the arrow, `trunk` the line parallel to the side, `branches` [{key, a, start, pts}] one per source,
+      // one label when the references read the same, else one at each source.
       const rects = {};
       for (const n of [...Object.keys(mm.classes), ...Object.keys(mm.enums)]) {
         const p = mm.diagram[n];
@@ -264,13 +293,42 @@
           if (c < best - 1e-6) { best = c; e.sa = sa; e.sb = sb; }
         }
       }
+      // many plain references (no opposite) entering the same side of a class share a bus: one port and one arrow
+      const groups = {};
+      for (const e of list) if (e.cls === "edge" && !e.labelA && e.a !== e.b) (groups[`${e.b}|${e.sb}`] ||= []).push(e);
+      const buses = Object.entries(groups).filter(([, g]) => g.length >= BUS_MIN).map(([k, g]) => {
+        const bus = { key: `bus:${k}`, a: g[0].a, b: g[0].b, sb: g[0].sb, cls: "edge", end: g[0].end, members: g };
+        for (const e of g) e.bus = bus;
+        return bus;
+      });
+      // the other plain references into a class with a bus join it when a branch reaches the trunk without
+      // crossing a box: one arrow on the class instead of one per side
+      for (const bus of buses) {
+        const J0 = mid(rects[bus.b], bus.sb);
+        const J = { x: J0.x + out[bus.sb][0] * BUS_GAP, y: J0.y + out[bus.sb][1] * BUS_GAP };
+        for (const e of list) {
+          if (e.bus || e.b !== bus.b || e.cls !== "edge" || e.labelA || e.a === e.b) continue;
+          let best = null;
+          for (const sa of SIDES) {
+            const pts = branchRoute(mid(e.A, sa), sa, e.A, J, bus.sb);
+            const c = crosses(pts, [e.a]) * 100000 + length(pts) + (pts.length - 2) * 40;
+            if (!best || c < best.c - 1e-6) best = { c, sa };
+          }
+          if (best.c < 100000) { e.sa = best.sa; e.sb = bus.sb; e.bus = bus; bus.members.push(e); }
+        }
+      }
+      const centre = (R, side) => (horizontal(side) ? R.y + R.h / 2 : R.x + R.w / 2);
       // ports: the connectors on the same side of a box are spread along it, ordered by where they go;
-      // the incoming ends are staggered by a few px from the outgoing ones
+      // the incoming ends are staggered by a few px from the outgoing ones; a bus takes one port, at the middle
+      // of its sources
       const ports = {};
       list.forEach((e, i) => {
-        for (const [end, n, side, other] of [["a", e.a, e.sa, e.B], ["b", e.b, e.sb, e.A]]) {
-          (ports[`${n}|${side}`] ||= []).push({ i, end, key: horizontal(side) ? other.y + other.h / 2 : other.x + other.w / 2 });
-        }
+        (ports[`${e.a}|${e.sa}`] ||= []).push({ at: e, i, end: "a", key: centre(e.B, e.sa) });
+        if (!e.bus) (ports[`${e.b}|${e.sb}`] ||= []).push({ at: e, i, end: "b", key: centre(e.A, e.sb) });
+      });
+      buses.forEach((bus, i) => {
+        const keys = bus.members.map((e) => centre(e.A, bus.sb));
+        (ports[`${bus.b}|${bus.sb}`] ||= []).push({ at: bus, i: list.length + i, end: "b", key: keys.reduce((s, v) => s + v, 0) / keys.length });
       });
       for (const [k, items] of Object.entries(ports)) {
         const [n, side] = k.split("|");
@@ -282,8 +340,8 @@
           const pt = side === "left" ? { x: R.x, y: R.y + HEAD_H / 2 + (R.h - HEAD_H / 2) * t + shift }
             : side === "right" ? { x: R.x + R.w, y: R.y + HEAD_H / 2 + (R.h - HEAD_H / 2) * t + shift }
               : side === "top" ? { x: R.x + R.w * t + shift, y: R.y } : { x: R.x + R.w * t + shift, y: R.y + R.h };
-          list[it.i][it.end === "a" ? "pa" : "pb"] = pt;
-          list[it.i][it.end === "a" ? "ja" : "jb"] = j;   // position on the side: labels alternate
+          it.at[it.end === "a" ? "pa" : "pb"] = pt;
+          it.at[it.end === "a" ? "ja" : "jb"] = j;   // position on the side: labels alternate
         });
       }
       // each connector takes the lane (offset of its middle run, distance of a detour) that crosses no box and
@@ -291,13 +349,39 @@
       // two connectors leaving boxes of the same row at the same height do not run on the same line
       const slide = (pt, side, d) => (horizontal(side) ? { x: pt.x, y: pt.y + d } : { x: pt.x + d, y: pt.y });
       const routed = [];
+      const shared = (segs) => routed.reduce((n, o) => n + segs.filter((s) => o.segs.some((t) => collinear(s, t))).length, 0);
+      // the buses first (one place for the trunk, a branch per source), then the single connectors avoid them
+      for (const bus of buses) {
+        const [ox, oy] = out[bus.sb];
+        const J = { x: bus.pb.x + ox * BUS_GAP, y: bus.pb.y + oy * BUS_GAP };
+        bus.pts = [J, bus.pb];
+        bus.branches = [];
+        let lo = horizontal(bus.sb) ? J.y : J.x, hi = lo;
+        for (const e of bus.members) {
+          let best = null;
+          for (const jog of [0, 6, -6, 12, -12]) for (let detour = 0; detour < 5; detour++) {
+            const pts = branchRoute(slide(e.pa, e.sa, jog), e.sa, e.A, J, bus.sb, detour);
+            const segs = segments(pts);
+            const c = crosses(pts, [e.a]) * 100000 + shared(segs) * 10000 + length(pts) + (pts.length - 2) * 40 + detour * 6 + Math.abs(jog) * 2;
+            if (!best || c < best.c - 1e-6) best = { c, pts, segs };
+          }
+          e.pts = best.pts;
+          routed.push({ segs: best.segs });
+          const end = best.pts[best.pts.length - 1];
+          const v = horizontal(bus.sb) ? end.y : end.x;
+          lo = Math.min(lo, v); hi = Math.max(hi, v);
+          bus.branches.push({ key: e.key, a: e.a, start: e.start, pts: best.pts });
+        }
+        bus.trunk = horizontal(bus.sb) ? [{ x: J.x, y: lo }, { x: J.x, y: hi }] : [{ x: lo, y: J.y }, { x: hi, y: J.y }];
+        routed.push({ segs: segments(bus.pts) }, { segs: [bus.trunk] });
+      }
       for (const e of list) {
+        if (e.bus) continue;
         let best = null;
         for (const jog of [0, 6, -6]) for (const lane of LANES) for (let detour = 0; detour < 5; detour++) {
           const pts = route(slide(e.pa, e.sa, jog), e.sa, slide(e.pb, e.sb, jog), e.sb, lane, e.a === e.b, detour);
           const segs = segments(pts);
-          const shared = routed.reduce((n, o) => n + segs.filter((s) => o.segs.some((t) => collinear(s, t))).length, 0);
-          const c = crosses(pts, [e.a, e.b]) * 100000 + shared * 10000 + length(pts) + (pts.length - 2) * 40
+          const c = crosses(pts, [e.a, e.b]) * 100000 + shared(segs) * 10000 + length(pts) + (pts.length - 2) * 40
             + Math.abs(lane) + detour * 6 + Math.abs(jog) * 2;
           if (!best || c < best.c - 1e-6) best = { c, pts, segs };
         }
@@ -305,7 +389,7 @@
         routed.push({ segs: best.segs });
       }
       // labels: at the ends, in the first of several candidate places that covers no box, label or line
-      const allSegs = list.flatMap((e) => segments(e.pts));
+      const allSegs = [...list.flatMap((e) => segments(e.pts)), ...buses.flatMap((b) => [...segments(b.pts), b.trunk])];
       const placed = [];
       const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
       const grow = (x0, y0, x1, y1) => { ext.x0 = Math.min(ext.x0, x0); ext.y0 = Math.min(ext.y0, y0); ext.x1 = Math.max(ext.x1, x1); ext.y1 = Math.max(ext.y1, y1); };
@@ -333,13 +417,23 @@
         return { text, ...best.r };
       };
       for (const e of list) {
+        if (e.bus) continue;
         e.labels = [];
         const pa = e.pts[0], pb = e.pts[e.pts.length - 1];   // the ports, after sliding
         if (e.labelB) e.labels.push(label(pb, e.sb, e.labelB, e.labelA ? false : e.jb % 2 === 0));   // first port: label on its left
         if (e.labelA) e.labels.push(label(pa, e.sa, e.labelA, e.ja % 2 === 0));
         for (const q of e.pts) grow(q.x - 14, q.y - 14, q.x + 14, q.y + 14);
       }
-      const edges = list.map(({ key, a, b, cls, start, end, pts, labels }) => ({ key, a, b, cls, start, end, pts, labels }));
+      for (const bus of buses) {   // one label at the arrow when every reference reads the same, else one per source
+        bus.labels = [];
+        if (new Set(bus.members.map((e) => e.labelB)).size === 1) bus.labels.push(label(bus.pb, bus.sb, bus.members[0].labelB, bus.jb % 2 === 0));
+        else for (const e of bus.members) bus.labels.push(label(e.pts[0], e.sa, e.labelB, e.ja % 2 === 0));
+        for (const q of [...bus.pts, ...bus.trunk, ...bus.members.flatMap((e) => e.pts)]) grow(q.x - 14, q.y - 14, q.x + 14, q.y + 14);
+      }
+      const edges = [
+        ...list.filter((e) => !e.bus).map(({ key, a, b, cls, start, end, pts, labels }) => ({ key, a, b, cls, start, end, pts, labels })),
+        ...buses.map(({ key, a, b, cls, end, pts, trunk, branches, labels }) => ({ key, a, b, cls, start: null, end, pts, trunk, branches, labels })),
+      ];
       return { edges, boxes: rects, ext: edges.length ? ext : null };
     };
 
@@ -371,7 +465,7 @@
       return { x: Math.round(start.x), y: Math.round(bottom) };
     };
 
-    return { rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot };
+    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -458,6 +552,8 @@
       dropClass: "classe rimossa: la tabella e i suoi dati andranno eliminati",
       dropFeature: "rimosso: la colonna e i suoi dati andranno eliminati",
       dropLiteral: "letterale rimosso: i record con questo valore vanno migrati",
+      behavior: "Comportamento", workflow: "Workflow", states: "stati", transitions: "transizioni",
+      derived: "calcolato", inCode: "calcolato nel codice", formula: "formula",
     },
     en: {
       addClass: "Class", addEnum: "Enum", layout: "Layout", fit: "Fit", save: "Save", note: "Change note",
@@ -474,6 +570,8 @@
       dropClass: "class removed: its table and data will be dropped",
       dropFeature: "removed: the column and its data will be dropped",
       dropLiteral: "literal removed: records with this value must be migrated",
+      behavior: "Behaviour", workflow: "Workflow", states: "states", transitions: "transitions",
+      derived: "derived", inCode: "computed in code", formula: "formula",
     },
   };
 
@@ -516,6 +614,10 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .x { padding:0 4px; border:none; background:none; color:var(--muted); }
 .x:hover { color:var(--err); }
 .hint { color:var(--muted); font-size:12px; }
+.formula { margin:-2px 0 8px 8px; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted); white-space:pre-wrap; word-break:break-word; }
+.wf { margin:0 0 4px; font-size:12px; }
+.wf .hint { display:block; margin-left:8px; }
+.box text.state { fill:var(--accent); }
 .issues { position:absolute; right:8px; top:8px; max-width:420px; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:8px 10px; font-size:12px; box-shadow:0 4px 16px rgba(0,0,0,.12); z-index:2; }
 .issues div { color:var(--err); }
 .box rect.body { fill:var(--bg); stroke:var(--line); }
@@ -537,8 +639,10 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .mk-fill { fill:var(--muted); }
 .ehit { stroke:transparent; stroke-width:10; fill:none; pointer-events:stroke; cursor:pointer; }
 .elabel { cursor:pointer; }
-svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
+.junction { fill:var(--muted); }
+svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.hi) { opacity:.15; }
 .edge.hi { stroke:var(--accent); stroke-width:2.4; }
+.junction.hi { fill:var(--accent); }
 .elabel.hi { fill:var(--accent); font-weight:600; }
 @media (max-width: 760px) { .main { grid-template-columns:1fr; grid-template-rows:1fr auto; } .side { border-left:none; border-top:1px solid var(--line); max-height:50%; } }
 `;
@@ -576,6 +680,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
       this._allAttrs = false;      // boxes show every attribute instead of the first MAX_ROWS
       this._showIssues = false;
       this._hover = null;          // key of the connector under the mouse: highlighted, the others dimmed
+      this._bh = null;             // behavior.json (optional): formulas of the derived attributes, workflows
+      this._lastSel = undefined;   // the selection last announced with the `select` event
       this.attachShadow({ mode: "open" });
     }
 
@@ -599,6 +705,11 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
       requestAnimationFrame(() => this._fit());
     }
     get metamodel() { return clone(this._mm); }
+    // the behaviour model (src/lib/modeler/behavior.json): read only, shown next to the structure it refers to
+    set behavior(b) { this._bh = b && typeof b === "object" ? b : null; if (this.isConnected) this._render(); }
+    get behavior() { return this._bh; }
+    _workflow(cn) { return this._bh?.workflows?.[cn] || null; }
+    _formula(cn, an) { return this._bh?.derivations?.[cn]?.[an]?.text ?? null; }
     // the changes from the metamodel the editor was opened with (the running one) to `mm`, as `modeler diff`
     changesTo(mm) { return Layout.diff(this._orig || {}, mm); }
     getMetamodel() { return this.metamodel; }
@@ -781,8 +892,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
     }
 
     /* ------------------------------------------------------------------ layout */
-    _rows(c) { return Layout.rowsOf(c, this._allAttrs, this.t.more); }
-    _boxSize(name) { return Layout.boxSize(this._mm, name, { allAttrs: this._allAttrs, more: this.t.more }); }
+    _rows(cn) { return Layout.rowItems(this._mm.classes[cn], this._allAttrs, this.t.more, this._workflow(cn)?.state || null); }
+    _boxSize(name) { return Layout.boxSize(this._mm, name, { allAttrs: this._allAttrs, more: this.t.more, state: this._workflow(name)?.state || null }); }
+    _workflowText(cn) {
+      const w = this._workflow(cn), t = this.t;
+      return w ? `${t.workflow}: ${Object.keys(w.states || {}).length} ${t.states}, ${Object.keys(w.transitions || {}).length} ${t.transitions}` : "";
+    }
     _autoLayout(force) {
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
       const pos = Layout.autoLayout(this._mm, (n) => this._boxSize(n),
@@ -885,6 +1000,11 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
       ].filter(Boolean));
       this._renderDiagram();
       this._renderSide();
+      const selName = this._sel?.name ?? null;
+      if (selName !== this._lastSel) {   // the page follows the selection (e.g. the behaviour of the class)
+        this._lastSel = selName;
+        this.dispatchEvent(new CustomEvent("select", { detail: { kind: this._sel?.kind ?? null, name: selName } }));
+      }
       const canvas = root.querySelector(".canvas");
       canvas.querySelector(".issues")?.remove();
       if (this._showIssues && (issues.length || warns.length)) {
@@ -999,12 +1119,22 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
       };
       const routed = Layout.routeEdges(mm, (n) => this._boxSize(n));
       for (const e of routed.edges) {
-        const d = rounded(e.pts);
-        const attrs = { d, class: e.cls, "data-edge": e.key };
-        if (e.start) attrs["marker-start"] = e.start;
-        if (e.end) attrs["marker-end"] = e.end;
-        edges.append(svg("path", attrs));
-        edges.append(svg("path", { d, class: "ehit", "data-edge": e.key }));   // wider, invisible: easier to hover
+        // a bus: the stub with the arrow, the trunk and a branch per source, with a dot where each joins the trunk
+        const runs = [{ pts: e.pts, start: e.start, end: e.end }];
+        if (e.trunk) runs.push({ pts: e.trunk }, ...e.branches.map((b) => ({ pts: b.pts, start: b.start })));
+        for (const r of runs) {
+          const d = rounded(r.pts);
+          const attrs = { d, class: e.cls, "data-edge": e.key };
+          if (r.start) attrs["marker-start"] = r.start;
+          if (r.end) attrs["marker-end"] = r.end;
+          edges.append(svg("path", attrs));
+          edges.append(svg("path", { d, class: "ehit", "data-edge": e.key }));   // wider, invisible: easier to hover
+        }
+        if (e.trunk) {
+          for (const q of [e.pts[0], ...e.branches.map((b) => b.pts[b.pts.length - 1])]) {
+            edges.append(svg("circle", { cx: q.x, cy: q.y, r: 2.6, class: "junction", "data-edge": e.key }));
+          }
+        }
         for (const l of e.labels) {
           labels.append(svg("text", { x: l.x + 2, y: l.y + l.h - 3, class: "elabel", "data-edge": e.key }, l.text));
         }
@@ -1021,13 +1151,13 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
           svg("rect", { class: "head", width: s.w - 2, x: 1, y: 1, height: hh - 2, rx: 5 }),
           svg("text", { x: s.w / 2, y: 21, "text-anchor": "middle", class: `title${c.abstract ? " abstract" : ""}` }, cn));
         let y = hh + 14;
-        const rows = this._rows(c);
+        const rows = this._rows(cn);
         if (!rows.length) b.append(svg("text", { x: 8, y, class: "muted" }, "—"));
-        rows.forEach((line, i) => {
-          const muted = line.startsWith("↗ ") || (!this._allAttrs && i === MAX_ROWS - 1 && line.startsWith("…"));
-          b.append(svg("text", { x: 8, y, class: muted ? "muted" : null }, line));
+        for (const r of rows) {
+          const tip = r.derived ? `/${r.attr} = ${this._formula(cn, r.attr) ?? this.t.inCode}` : r.state ? this._workflowText(cn) : null;
+          b.append(svg("text", { x: 8, y, class: r.muted ? "muted" : r.state ? "state" : null }, r.text, tip ? svg("title", {}, tip) : null));
           y += ROW_H;
-        });
+        }
         boxes.append(b);
       }
       for (const [en, e] of Object.entries(mm.enums)) {
@@ -1105,12 +1235,14 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
         el("div", { class: "field" }, el("label", {}, t.doc), el("textarea", { rows: 2, disabled: ro, onchange: (ev) => { const v = ev.target.value.trim(); if (v) c.doc = v; else delete c.doc; commit(); } }, c.doc || "")),
         el("h3", {}, t.attributes),
         el("div", { class: "row attr hint" }, el("span", {}, t.name), el("span", {}, t.type), el("span", {}, t.mult), el("span", { title: "iD" }, t.id), el("span")),
-        ...Object.entries(c.attributes).map(([an, a]) => el("div", { class: "row attr" },
-          el("input", { value: an, disabled: ro, onchange: (ev) => { this._renameFeature(cn, "attributes", an, ev.target.value.trim()); commit(); } }),
+        ...Object.entries(c.attributes).flatMap(([an, a]) => [el("div", { class: "row attr" },
+          el("input", { value: an, disabled: ro, title: a.derived ? `${t.derived} (/${an})` : null, onchange: (ev) => { this._renameFeature(cn, "attributes", an, ev.target.value.trim()); commit(); } }),
           el("select", { disabled: ro, onchange: (ev) => { a.type = ev.target.value; delete a.default; commit(); } }, typeOptions(a.type)),
           this._multSelect(a, commit, ro),
           el("input", { type: "checkbox", checked: !!a.id, disabled: ro, title: "iD (unique key)", onchange: (ev) => { if (ev.target.checked) a.id = true; else delete a.id; commit(); } }),
-          ro ? el("span") : el("button", { class: "x", title: t.del, onclick: () => { delete c.attributes[an]; commit(); } }, "×"))),
+          ro ? el("span") : el("button", { class: "x", title: t.del, onclick: () => { delete c.attributes[an]; commit(); } }, "×")),
+          // a derived attribute: its formula from behavior.yaml (read only here), or "computed in code"
+          a.derived ? el("div", { class: "formula", title: t.formula }, `= ${this._formula(cn, an) ?? t.inCode}`) : null]),
         ro ? null : el("button", { onclick: () => { c.attributes[this._uniqueName("attribute", Object.keys(c.attributes))] = { type: "EString", lower: 0, upper: 1 }; commit(); } }, `+ ${t.add}`),
         el("h3", {}, t.references),
         ...Object.entries(c.references).flatMap(([rn, r]) => {
@@ -1134,8 +1266,23 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi) { opacity:.15; }
           c.references[this._uniqueName(target[0].toLowerCase() + target.slice(1), [...Object.keys(c.references), ...Object.keys(c.attributes)])] = { type: target, lower: 0, upper: 1, containment: false };
           commit();
         } }, `+ ${t.add}`),
+        ...this._behaviorPanel(cn),
         el("h3", {}, ""),
         ro ? null : el("button", { class: "danger", onclick: () => { if (confirm(`${t.confirmDelete} ${cn}?`)) { this._deleteClass(cn); commit(); } } }, `${t.del} ${cn}`));
+    }
+
+    // the workflow of the selected class (behavior.yaml), read only: state attribute, states, transitions
+    _behaviorPanel(cn) {
+      const w = this._workflow(cn), t = this.t;
+      if (!w) return [];
+      const lang = (this.getAttribute("lang") || "it").slice(0, 2);
+      const label = (spec, key) => (typeof spec?.label === "string" ? spec.label : spec?.label?.[lang]) || key;
+      return [
+        el("h3", {}, t.behavior),
+        el("div", { class: "wf" }, `⟳ ${w.state} · ${this._workflowText(cn).replace(`${t.workflow}: `, "")}`),
+        ...Object.entries(w.transitions || {}).map(([tn, tr]) => el("div", { class: "wf" },
+          label(tr, tn), el("span", { class: "hint" }, `${(tr.from || []).join(", ")} → ${tr.to}${tr.at != null ? ` · ${tr.at}` : ""}`))),
+      ];
     }
   }
 

@@ -39,7 +39,10 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   and `src/lib/modeler/behavior.json` (every expression typed, with its SQL); `model:behavior -- --format sql`
   prints derivations and guards as PostgreSQL, `--format engine` the workflow versions as the runtime engine
   stores them (clauses, principals, timed triggers); `drift` compares the workflows with the versions published in
-  the database. `model:engine -- --write` generates the SQL engine itself as one idempotent migration: derived
+  the database. In the web modeler, when the page passes `behavior.json` (`install` says so while it does not),
+  derived attributes are marked `/name` with the formula in the tooltip and in the panel, the state attribute
+  `⟳`, and the behaviour (roles, workflows, derivations, events, reactions) is shown read only under the diagram,
+  following the class selected. `model:engine -- --write` generates the SQL engine itself as one idempotent migration: derived
   attributes computed by triggers (and refreshed when the rows they navigate to change), `<entity>_perform_transition`
   with principals, conditions, guards, comments, history and events with the recipients of the reactions,
   `_available_transitions`, `_revert`, `_run_timed_transitions`, `_run_reminders`, lifecycle events; it relies on
@@ -92,6 +95,7 @@ Eclipse EMF and Epsilon.
 |---|---|---|
 | `public/modeler/metamodel-editor.js` | modeler | replaced |
 | `src/components/modeler/metamodel-modeler.tsx` | modeler | replaced |
+| `src/components/modeler/behavior-view.tsx` | modeler | replaced |
 | `src/lib/modeler/metamodel-actions.ts` | modeler | replaced |
 | `tools/modeler/` (+ `VERSION`), `model:*` scripts | modeler | replaced |
 | `src/lib/modeler/metamodel.json` | generated from `domain.ecore.yaml` | refreshed (`model:sync`) |

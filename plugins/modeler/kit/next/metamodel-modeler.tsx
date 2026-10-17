@@ -4,15 +4,19 @@
 // wraps the framework-free <metamodel-editor> (public/modeler/metamodel-editor.js).
 // The page passes the metamodel (src/lib/modeler/metamodel.json) and a server action that stores the proposal.
 // The proposals saved and not yet applied are listed above the editor: each can be opened or rejected.
+// With `behavior` (src/lib/modeler/behavior.json, when the app has a behavior.yaml) the editor marks derived
+// attributes and workflow states, and the behaviour is shown read only below the editor (<BehaviorView>).
 
 import Script from "next/script";
 import { useCallback, useEffect, useRef, useState, type DetailedHTMLProps, type HTMLAttributes, type Ref } from "react";
 import { listMetamodelProposals, rejectMetamodelProposal, type PendingProposal } from "@/lib/modeler/metamodel-actions";
+import { BehaviorView } from "./behavior-view";
 
 export type ProposalResult = { ok: boolean; message: string };
 
 type Props = {
   metamodel: unknown;
+  behavior?: unknown;         // src/lib/modeler/behavior.json: optional, the page passes it when the app has a behavior.yaml
   canEdit: boolean;
   lang?: string;
   saveLabel?: string;
@@ -20,8 +24,9 @@ type Props = {
   onSave: (json: string, note: string) => Promise<ProposalResult>;
 };
 
-type EditorElement = HTMLElement & { metamodel: unknown; changesTo: (mm: unknown) => string[] };
+type EditorElement = HTMLElement & { metamodel: unknown; behavior: unknown; changesTo: (mm: unknown) => string[] };
 type SaveDetail = { metamodel: unknown; note: string };
+type SelectDetail = { kind: "class" | "enum" | null; name: string | null };
 type Pending = PendingProposal & { lines: string[] };
 
 const TEXT = {
@@ -66,13 +71,14 @@ declare module "react" {
   }
 }
 
-export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, downloadLabel = "Download", onSave }: Props) {
+export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "it", saveLabel, downloadLabel = "Download", onSave }: Props) {
   const t = TEXT[lang.startsWith("en") ? "en" : "it"];
   const ref = useRef<EditorElement | null>(null);
   const [ready, setReady] = useState(false);
   const [result, setResult] = useState<ProposalResult | null>(null);
   const [last, setLast] = useState<SaveDetail | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);   // the class selected in the editor, for the behaviour view
   // The proposal shown in the editor, tied to the running metamodel it was opened over: a new one closes it.
   const [opened, setOpened] = useState<{ proposal: Pending; over: unknown } | null>(null);
   const viewing = opened && opened.over === metamodel ? opened.proposal : null;
@@ -106,6 +112,21 @@ export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, d
   useEffect(() => {
     if (ready && ref.current) ref.current.metamodel = metamodel;
   }, [ready, metamodel]);
+
+  useEffect(() => {
+    if (ready && ref.current) ref.current.behavior = behavior ?? null;
+  }, [ready, behavior]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!ready || !el) return;
+    const handler = (ev: Event) => {
+      const d = (ev as CustomEvent<SelectDetail>).detail;
+      setSelected(d.kind === "class" ? d.name : null);
+    };
+    el.addEventListener("select", handler);
+    return () => el.removeEventListener("select", handler);
+  }, [ready]);
 
   useEffect(() => {
     if (!ready) return;
@@ -235,6 +256,7 @@ export function MetamodelModeler({ metamodel, canEdit, lang = "it", saveLabel, d
           )}
         </div>
       )}
+      {behavior ? <BehaviorView behavior={behavior} metamodel={metamodel} lang={lang} selected={selected} /> : null}
     </div>
   );
 }

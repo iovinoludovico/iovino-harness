@@ -465,6 +465,7 @@ class AppTests(unittest.TestCase):
     def test_install_makes_the_modeler_part_of_the_app(self):
         written = cli.install(self.app)
         for rel in ("public/modeler/metamodel-editor.js", "src/components/modeler/metamodel-modeler.tsx",
+                    "src/components/modeler/behavior-view.tsx",
                     "src/lib/modeler/metamodel-actions.ts", "src/lib/modeler/access.ts", "docs/DOMAIN.md",
                     "src/lib/modeler/metamodel.json", "tools/modeler/modeler.py",
                     "tools/modeler/metamodel/ecore.py", "tools/modeler/vendor/yaml/__init__.py"):
@@ -484,6 +485,31 @@ class AppTests(unittest.TestCase):
         editor = (self.app / "public/modeler/metamodel-editor.js").read_text()
         self.assertIn(f'const VERSION = "{__version__}";', editor)                # shown in the toolbar
         self.assertNotIn(cli.VERSION_PLACEHOLDER, editor)
+
+    def test_install_tells_when_the_page_does_not_show_the_behaviour(self):
+        # no behavior.yaml: nothing to say
+        self.assertIsNone(cli.behavior_page_hint(self.app))
+        fixtures = Path(__file__).resolve().parent / "fixtures"
+        (self.app / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        (self.app / "behavior.yaml").write_text((fixtures / "invitations.behavior.yaml").read_text())
+        page = self.app / "src/app/(admin)/admin/model/page.tsx"
+        page.parent.mkdir(parents=True)
+        page.write_text((cli.KIT_DIR / "next" / "page.tsx").read_text())      # the template, behaviour still commented out
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_install(argparse.Namespace(app=str(self.app), no_migration=True)), 0)
+        self.assertIn("behavior.yaml found", out.getvalue())
+        self.assertIn("src/app/(admin)/admin/model/page.tsx", out.getvalue())
+        self.assertIn("behavior={behavior}", out.getvalue())
+        self.assertTrue((self.app / "src/lib/modeler/behavior.json").exists())   # sync wrote what the page should import
+        # the page passes it: nothing more to do; the wrapper itself never counts as a page
+        page.write_text(page.read_text().replace("// import behavior", "import behavior")
+                        .replace("canEdit lang", "behavior={behavior} canEdit lang"))
+        self.assertIsNone(cli.behavior_page_hint(self.app))
+        self.assertEqual([p.name for p in cli.modeler_pages(self.app)], ["page.tsx"])
+        # no page yet (first installation): the hint points to the skill
+        page.unlink()
+        self.assertIn("see the install skill", cli.behavior_page_hint(self.app))
 
     def test_install_stops_on_a_docs_domain_md_with_other_case(self):
         other = self.app / "docs" / "domain.md"                          # appforge's document, not hand notes

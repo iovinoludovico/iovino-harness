@@ -12,8 +12,9 @@ pagine della sua area admin.
 
 Dopo l'installazione il modellatore appartiene all'app: editor, wrapper React, azione server e CLI
 (`tools/modeler/`, con gli script `npm run model:*`) sono nel repository e funzionano senza il plugin.
-Rilanciare questa skill aggiorna i file del modellatore (editor, wrapper, azione, CLI) e non tocca quelli
-adattati all'app (`src/lib/modeler/access.ts`, la pagina admin).
+Rilanciare questa skill aggiorna i file del modellatore (editor, wrapper, vista del comportamento, azione, CLI) e
+non tocca quelli adattati all'app (`src/lib/modeler/access.ts`, la pagina admin): se `install` segnala
+"behavior.yaml found", aggiorna la pagina come dice il punto 4.
 
 ## 1. Database da leggere (solo se manca `domain.ecore.yaml`)
 Di solito il Supabase locale dell'app: `supabase start`, poi il DSN con la porta di `[db]` in
@@ -34,6 +35,9 @@ rivedilo **con l'utente**:
 `install <app>` copia o aggiorna:
 - `public/modeler/metamodel-editor.js` (editor senza dipendenze),
 - `src/components/modeler/metamodel-modeler.tsx` (wrapper React),
+- `src/components/modeler/behavior-view.tsx` (il comportamento in sola lettura sotto l'editor: ruoli, workflow con
+  stati e transizioni, attributi calcolati con la formula, eventi, reazioni; compare solo se la pagina passa
+  `behavior.json`),
 - `src/lib/modeler/metamodel-actions.ts` (salva, elenca e scarta le proposte: file in sviluppo, tabella in produzione),
 - `src/lib/modeler/access.ts` (solo se manca: chi è admin e quale client Supabase usare),
 - `src/lib/modeler/metamodel.json` (il metamodello letto dalla pagina),
@@ -52,7 +56,13 @@ rivedilo **con l'utente**:
 - Pagina admin: parti da `${CLAUDE_PLUGIN_ROOT}/kit/next/page.tsx` e mettila nell'area admin dell'app (es.
   `src/app/(admin)/admin/model/page.tsx`), con layout, titolo e traduzioni dell'app; aggiungi il link nella
   navigazione admin. `lang` segue la lingua dell'utente.
-- `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`).
+- Se l'app ha `behavior.yaml`: nella pagina togli il commento a `import behavior from "@/lib/modeler/behavior.json"`
+  e passa `behavior={behavior}` a `<MetamodelModeler>`: nel diagramma gli attributi calcolati hanno il prefisso `/`
+  (formula nel tooltip e nel pannello) e l'attributo di stato il segno `⟳`; sotto l'editor compare il comportamento
+  e la classe selezionata evidenzia il suo workflow. `install` lo segnala ("behavior.yaml found: …") finché la
+  pagina non lo passa, anche nelle reinstallazioni. Le modifiche del comportamento restano in `behavior.yaml`
+  (`/modeler:metamodel`): dal web non si propone ancora.
+- `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
 - `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`); non ignorare
   `.modeler/proposals/` (le proposte si rivedono nel repository).
 - In `CLAUDE.md` dell'app: "Il metamodello del dominio è `domain.ecore.yaml`: ogni modifica di schema parte da

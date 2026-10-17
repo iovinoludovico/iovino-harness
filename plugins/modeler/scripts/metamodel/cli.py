@@ -912,6 +912,7 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
     editor = target / EDITOR_JS                                  # the toolbar shows the installed version
     editor.write_text(editor.read_text(encoding="utf-8").replace(VERSION_PLACEHOLDER, __version__), encoding="utf-8")
     copy(KIT_DIR / "next" / "metamodel-modeler.tsx", "src/components/modeler/metamodel-modeler.tsx")
+    copy(KIT_DIR / "next" / "behavior-view.tsx", "src/components/modeler/behavior-view.tsx")
     copy(KIT_DIR / "next" / "metamodel-actions.ts", "src/lib/modeler/metamodel-actions.ts")
     copy(KIT_DIR / "next" / "access.ts", "src/lib/modeler/access.ts", overwrite=False)
     # the CLI travels with the app: model:* scripts work without the plugin
@@ -956,6 +957,39 @@ def installed_version(root: Path) -> str | None:
     return f.read_text(encoding="utf-8").strip() if f.exists() else None
 
 
+def modeler_pages(root: Path) -> list[Path]:
+    """The app's pages that render the modeler (the admin page adapted from kit/next/page.tsx)."""
+    src = root / "src"
+    if not src.exists():
+        return []
+    out = []
+    for f in sorted(src.rglob("*.tsx")):
+        if "components/modeler" in f.as_posix() or "node_modules" in f.parts:
+            continue
+        try:
+            if "<MetamodelModeler" in f.read_text(encoding="utf-8"):
+                out.append(f)
+        except (OSError, UnicodeDecodeError):
+            continue
+    return out
+
+
+def behavior_page_hint(root: Path) -> str | None:
+    """The app has a behavior.yaml but its modeler page does not pass behavior.json: what to add by hand (the page
+    belongs to the app, install never rewrites it). None when there is nothing to do."""
+    if not (root / B.BEHAVIOR_FILE).exists():
+        return None
+    pages = modeler_pages(root)
+    passes = re.compile(r"<MetamodelModeler\b[^>]*\bbehavior=", re.S)      # the prop in the JSX, not in a comment
+    missing = [p for p in pages if not passes.search(p.read_text(encoding="utf-8"))]
+    if pages and not missing:
+        return None
+    where = ", ".join(p.relative_to(root).as_posix() for p in missing) or "the modeler page (see the install skill)"
+    return (f"{B.BEHAVIOR_FILE} found: pass the behaviour to the modeler in {where} "
+            f"(import behavior from \"@/lib/modeler/behavior.json\"; <MetamodelModeler ... behavior={{behavior}} />) "
+            "so /admin/model shows derived attributes, workflows and reactions")
+
+
 def cmd_install(a) -> int:
     target = Path(a.app).resolve()
     if not (target / "package.json").exists():
@@ -967,6 +1001,9 @@ def cmd_install(a) -> int:
         print(f"no {E.METAMODEL_FILE} yet: derive it with `reverse --db <DSN> -o {E.METAMODEL_FILE}`, then `sync`")
     elif docs_status(target)["state"] in ("edited", "clash"):
         print(docs_report(docs_status(target), diff=False))
+    hint = behavior_page_hint(target)
+    if hint:
+        print(hint)
     print("next: adapt src/lib/modeler/access.ts to the app's admin check, add the admin page and the link "
           "in the admin navigation (see the install skill)")
     return 0
