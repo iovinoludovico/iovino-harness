@@ -895,6 +895,9 @@ class EngineTests(unittest.TestCase):
                      "update public.invitations x set id = x.id where x.reason in (new.id, old.id);",
                      "if new.state is null then new.state := 'draft'; end if;",
                      "raise exception 'Transition not available: %', p_key;",
+                     # the list is a plain array of objects, not rows wrapped in {"jsonb_build_object": …}
+                     "return coalesce((select jsonb_agg(t.j) from (",
+                     "'guard_ok', coalesce(r.data_complete, false), 'guard', 'dataComplete') as j\n     where r.state = any (array['draft']::text[])",
                      "if p_key = 'approve' then\n    v_from := array['pending_director']::text[]; v_to := 'in_management'; v_allowed := array['director']::text[];",
                      "v_cond := coalesce(not (r.agency_booking_required), false);",
                      "v_guard := coalesce(r.data_complete, false); v_guard_text := 'dataComplete';",

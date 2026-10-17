@@ -429,7 +429,7 @@ end;""")
         if not timed:
             label = t.get("label") if isinstance(t.get("label"), dict) else {}
             avail.append(f"""    select jsonb_build_object('key', {_lit(tn)}, 'to', {_lit(t['to'])}, 'label', {_lit(B.json_text(label))}::jsonb,
-                             'comment', {_lit(t.get('comment') or 'optional')}, 'guard_ok', {guard}, 'guard', {_lit(X.to_text(X.parse(str(t['guard']))) if t.get('guard') is not None else '')})
+                             'comment', {_lit(t.get('comment') or 'optional')}, 'guard_ok', {guard}, 'guard', {_lit(X.to_text(X.parse(str(t['guard']))) if t.get('guard') is not None else '')}) as j
      where r.{sc} = any ({_arr(t['from'])}) and {cond} and v_p && (array['admin'] || {_arr([B.principal_key(p) for p in t['by']])})""")
     final_test = f"v_to = any ({_arr(finals)})"
     out += _fn(f"{k}_perform_transition", "p_id uuid, p_key text, p_comment text default null, p_system boolean default false", "uuid", f"""declare
@@ -476,7 +476,7 @@ begin
   select * into r from {tbl} where id = p_id;
   if not found then return '[]'::jsonb; end if;
   v_p := public.{k}_principals(r);
-  return coalesce((select jsonb_agg(t) from (
+  return coalesce((select jsonb_agg(t.j) from (
 {chr(10).join('    union all'.join([a]) if i == 0 else '    union all' + chr(10) + a for i, a in enumerate(avail))}
   ) t), '[]'::jsonb);
 end;""", stable=True)
