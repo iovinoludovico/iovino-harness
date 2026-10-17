@@ -3,10 +3,11 @@
 // Behaviour of the domain next to the modeler (installed by the modeler plugin, upgraded by re-running `modeler install`):
 // a read-only view of src/lib/modeler/behavior.json (behavior.yaml as `npm run model:sync` writes it): roles, one
 // workflow per class (states, transitions), derived attributes with their formula, events, reactions, subscriptions.
-// The same content as docs/BEHAVIOR.md; the class selected in the editor is highlighted. The behaviour changes in
+// The same content as docs/BEHAVIOR.md; the class selected in the editor is highlighted (no scrolling: the diagram
+// stays where the user is looking). The behaviour changes in
 // behavior.yaml (/modeler:metamodel), not here.
 
-import { useEffect, useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 type Label = string | Record<string, string> | null | undefined;
 type Typed = { text: string; type?: string } | null | undefined;
@@ -131,13 +132,6 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
   const b = (behavior && typeof behavior === "object" ? behavior : {}) as Behavior;
   const mm = (metamodel && typeof metamodel === "object" ? metamodel : {}) as Metamodel;
   const workflows = b.workflows ?? {};
-  const focus = useRef<HTMLDivElement | null>(null);
-
-  // the class selected in the editor: its workflow scrolls into view
-  const focused = selected && workflows[selected] ? selected : null;
-  useEffect(() => {
-    if (focused) focus.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [focused]);
 
   // derived attributes: the flag is in the metamodel, the formula in the behaviour (or the attribute is computed in code)
   const derived: [string, string, Typed][] = [];
@@ -174,7 +168,7 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
         const transitions = Object.entries(w.transitions ?? {});
         const rv = w.revert;
         return (
-          <div key={cn} ref={cn === selected ? focus : null} className={`space-y-2 rounded-md border p-3 ${cn === selected ? "border-sky-400 ring-1 ring-sky-400" : ""}`}>
+          <div key={cn} className={`space-y-2 rounded-md border p-3 ${cn === selected ? "border-sky-400 ring-1 ring-sky-400" : ""}`}>
             <h3 className="font-medium">{t.workflow(cn)}</h3>
             {w.state && (
               <p className="text-xs text-muted-foreground">

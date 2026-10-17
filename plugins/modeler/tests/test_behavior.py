@@ -954,6 +954,16 @@ class EngineTests(unittest.TestCase):
             files = list((root / "supabase" / "migrations").glob("*_behaviour_engine.sql"))
             self.assertEqual(len(files), 1)
             self.assertIn("TODO(modeler) to review", out.getvalue())
+            # regenerated: the previous engine migration is replaced by one with a later timestamp
+            (root / "supabase" / "migrations" / "99990101000000_schema.sql").write_text("select 1;\n")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(cli.main(["engine", str(root / "domain.ecore.yaml"), "--write", "--name", "Behaviour Engine"]), 0)
+            after = list((root / "supabase" / "migrations").glob("*_behaviour_engine.sql"))
+            self.assertEqual(len(after), 1)
+            self.assertNotEqual(after[0].name, files[0].name)
+            self.assertGreater(after[0].name, "99990101000000_schema.sql")           # after every existing migration
+            self.assertRegex(out.getvalue(), rf"replaced .*/{files[0].name}\n")
 
 
 @unittest.skipUnless(os.environ.get("MODELER_PG"), "MODELER_PG not set")
