@@ -7,7 +7,9 @@ description: Regole per costruire o modificare editor e diagrammi di modelli (me
 
 Si applicano a ogni diagramma a nodi e connettori: l'editor del metamodello (`plugins/modeler/kit/metamodel-editor.js`),
 i diagrammi di workflow delle app, grafi di stati. Riferimento d'implementazione: `src/lib/workflow-layout.ts` e
-`tests/workflow-layout.test.ts` di guest-invitations-af.
+`tests/workflow-layout.test.ts` di guest-invitations-af; lo stesso algoritmo, portato in JavaScript, è `Layout.workflowLayout`
+in `plugins/modeler/kit/metamodel-editor.js` (il satellite «workflow» dell'editor del metamodello), con i test in
+`plugins/modeler/tests/layout.test.mjs`.
 
 ## Spazio
 - Il layout riempie il contenitore: misuralo (`ResizeObserver`) e ingrandisci gli elementi fino a un massimo.
