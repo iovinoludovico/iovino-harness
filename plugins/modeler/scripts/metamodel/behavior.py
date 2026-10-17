@@ -559,3 +559,429 @@ def _check_subscriptions(b: dict[str, Any], e: dict[str, Any], rep: M.Report) ->
                 rep.error(f"{where}.events", f"'{pat}': unknown class {cname}")
             elif event != "*" and event not in events_of(b, cname):
                 rep.error(f"{where}.events", f"'{pat}': {cname} has no event '{event}' ({', '.join(events_of(b, cname))})")
+
+
+# --------------------------------------------------------------------------- #
+# Views: docs/BEHAVIOR.md, runtime JSON, SQL
+# --------------------------------------------------------------------------- #
+DOC_TEXT: dict[str, dict[str, str]] = {
+    "it": {
+        "title": "Comportamento del dominio {package}",
+        "note": "Generato da `behavior.yaml` con `npm run model:sync`: il comportamento si modifica nel modello, non qui.",
+        "roles": "Ruoli", "role": "Ruolo", "label": "Etichetta", "scope": "Ambito", "scope_global": "globale",
+        "scope_per": "per {cls}", "builtin_roles": "Oltre ai ruoli predefiniti `admin` (amministratori) e `creator` (chi ha creato il record).",
+        "workflow": "Workflow di {cls}", "state_attr": "Lo stato è l'attributo `{attr}`.",
+        "states": "Stati", "state": "Stato", "kind": "Tipo", "initial": "iniziale", "final": "finale",
+        "owner": "In attesa di", "editable_by": "Modificabile da", "reminder": "Sollecito", "reminder_text": "dopo {after} (`{template}`)",
+        "transitions": "Transizioni", "transition": "Transizione", "from_to": "Da → A", "by": "Chi", "when": "Condizione",
+        "guard": "Requisito", "comment": "Commento", "at": "Scadenza", "emits": "Eventi", "system": "sistema: {at}",
+        "revert": "Ritorno a uno stato precedente: {by}; da uno stato finale: {final_by}; commento {comment}.",
+        "comment_required": "obbligatorio", "comment_optional": "facoltativo",
+        "derivations": "Attributi calcolati", "attribute": "Attributo", "formula": "Formula", "in_code": "*calcolato nel codice*",
+        "events": "Eventi", "event": "Evento", "description": "Descrizione", "builtin_events": "predefinito",
+        "lifecycle": "Ogni classe emette `created`, `updated`, `deleted`; una classe con workflow anche `transitioned`, `completed`, `reverted`, `reminder`.",
+        "reactions": "Reazioni", "name": "Nome", "recipients": "Destinatari", "template": "Template", "notify": "notifica",
+        "subscriptions": "Sottoscrizioni", "url": "URL", "patterns": "Eventi",
+    },
+    "en": {
+        "title": "Behaviour of the domain {package}",
+        "note": "Generated from `behavior.yaml` by `npm run model:sync`: the behaviour changes in the model, not here.",
+        "roles": "Roles", "role": "Role", "label": "Label", "scope": "Scope", "scope_global": "global",
+        "scope_per": "per {cls}", "builtin_roles": "Besides the built-in roles `admin` (administrators) and `creator` (who created the record).",
+        "workflow": "Workflow of {cls}", "state_attr": "The state is the attribute `{attr}`.",
+        "states": "States", "state": "State", "kind": "Kind", "initial": "initial", "final": "final",
+        "owner": "Waiting for", "editable_by": "Editable by", "reminder": "Reminder", "reminder_text": "after {after} (`{template}`)",
+        "transitions": "Transitions", "transition": "Transition", "from_to": "From → To", "by": "Who", "when": "Condition",
+        "guard": "Requirement", "comment": "Comment", "at": "Due", "emits": "Events", "system": "system: {at}",
+        "revert": "Back to a previous state: {by}; from a final state: {final_by}; comment {comment}.",
+        "comment_required": "required", "comment_optional": "optional",
+        "derivations": "Derived attributes", "attribute": "Attribute", "formula": "Formula", "in_code": "*computed in code*",
+        "events": "Events", "event": "Event", "description": "Description", "builtin_events": "built in",
+        "lifecycle": "Every class emits `created`, `updated`, `deleted`; a class with a workflow also `transitioned`, `completed`, `reverted`, `reminder`.",
+        "reactions": "Reactions", "name": "Name", "recipients": "Recipients", "template": "Template", "notify": "notify",
+        "subscriptions": "Subscriptions", "url": "URL", "patterns": "Events",
+    },
+}
+MARKDOWN_MARK = "<!-- modeler: generated from behavior.yaml by model:sync -->"
+
+
+def _lbl(spec: dict[str, Any], key: str, lang: str) -> str:
+    return E._label(spec.get("label"), lang) or key
+
+
+def _code(v: Any) -> str:
+    return f"`{v}`" if v not in (None, "") else ""
+
+
+def mermaid_workflow(w: dict[str, Any], lang: str) -> str:
+    """The workflow as a Mermaid state diagram."""
+    lines = ["stateDiagram-v2"]
+    initial = [s for s, spec in w["states"].items() if spec["initial"]]
+    for sn, s in w["states"].items():
+        label = _lbl(s, sn, lang)
+        if label != sn:
+            lines.append(f"  {sn}: {label}")
+    for sn in initial:
+        lines.append(f"  [*] --> {sn}")
+    for sn, s in w["states"].items():
+        if s["final"]:
+            lines.append(f"  {sn} --> [*]")
+    for tn, t in w["transitions"].items():
+        label = _lbl(t, tn, lang)
+        suffix = " (auto)" if t.get("at") is not None else ""
+        for src in t["from"]:
+            lines.append(f"  {src} --> {t['to']}: {label}{suffix}")
+    return "\n".join(lines) + "\n"
+
+
+def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None = None) -> str:
+    """The behaviour explained: roles, one section per workflow (diagram, states, transitions), derivations, events,
+    reactions, subscriptions. Deterministic. Assumes a valid behaviour model."""
+    e = E.expand(metamodel)
+    b = expand(raw)
+    lang = lang or e["language"]
+    t = DOC_TEXT.get(lang) or DOC_TEXT["en"]
+    out = [f"# {t['title'].format(package=e['package'])}", ""]
+    if b["doc"]:
+        out += [str(b["doc"]), ""]
+    out += [f"> {t['note']}", ""]
+    if b["roles"]:
+        rows = [[rn, E._label(r.get("label"), lang), t["scope_per"].format(cls=r["scope"]) if r.get("scope") else t["scope_global"]]
+                for rn, r in b["roles"].items()]
+        out += [f"## {t['roles']}", ""] + E._table([t["role"], t["label"], t["scope"]], rows) + ["", t["builtin_roles"], ""]
+    for cname, w in b["workflows"].items():
+        out += [f"## {t['workflow'].format(cls=cname)}", "", t["state_attr"].format(attr=w["state"]), "",
+                "```mermaid", mermaid_workflow(w, lang).rstrip("\n"), "```", ""]
+        rows = []
+        for sn, s in w["states"].items():
+            kind = t["initial"] if s["initial"] else t["final"] if s["final"] else ""
+            rem = s.get("reminder")
+            rem_text = t["reminder_text"].format(after=rem["after"], template=rem.get("template") or f"{sn}_reminder") if rem else ""
+            rows.append([_code(sn), _lbl(s, sn, lang), kind, ", ".join(_code(p) for p in s["owner"]),
+                         ", ".join(_code(p) for p in s["editable_by"]), rem_text])
+        out += [f"### {t['states']}", ""] + E._table([t["state"], t["label"], t["kind"], t["owner"], t["editable_by"], t["reminder"]], rows) + [""]
+        rows = []
+        for tn, tr in w["transitions"].items():
+            who = ", ".join(_code(p) for p in tr["by"]) if tr["by"] else t["system"].format(at=_code(tr["at"]))
+            comment = t["comment_required"] if tr.get("comment") == "required" else ""
+            rows.append([_code(tn), _lbl(tr, tn, lang), f"{', '.join(tr['from'])} → {tr['to']}", who,
+                         _code(tr.get("when")), _code(tr.get("guard")), comment,
+                         ", ".join(_code(x) for x in tr["emits"])])
+        out += [f"### {t['transitions']}", ""] + E._table(
+            [t["transition"], t["label"], t["from_to"], t["by"], t["when"], t["guard"], t["comment"], t["emits"]], rows) + [""]
+        rv = w.get("revert")
+        if rv:
+            out += [t["revert"].format(by=", ".join(_code(p) for p in rv["by"]),
+                                       final_by=", ".join(_code(p) for p in rv["final_by"]) or "—",
+                                       comment=t["comment_required"] if rv.get("comment") == "required" else t["comment_optional"]), ""]
+    derived: list[list[str]] = []
+    for cname, c in e["classes"].items():
+        attrs, _ = E.features(e, cname)
+        for an, a in attrs.items():
+            if a.get("derived") and (an in c["attributes"]):
+                formula = b["derivations"].get(cname, {}).get(an)
+                derived.append([cname, _code(an), _code(formula) if formula else t["in_code"]])
+    if derived:
+        out += [f"## {t['derivations']}", ""] + E._table(["Class" if lang == "en" else "Classe", t["attribute"], t["formula"]], derived) + [""]
+    out += [f"## {t['events']}", "", t["lifecycle"], ""]
+    rows = [[cname, _code(en), str(ev.get("doc") or "")] for cname, evs in b["events"].items() for en, ev in evs.items()]
+    if rows:
+        out += E._table(["Class" if lang == "en" else "Classe", t["event"], t["description"]], rows) + [""]
+    if b["reactions"]:
+        rows = [[_code(r["name"]), _code(r["event"]), _code(r.get("when")), ", ".join(_code(p) for p in r["notify"]), _code(r.get("template"))]
+                for r in b["reactions"]]
+        out += [f"## {t['reactions']}", ""] + E._table([t["name"], t["event"], t["when"], t["recipients"], t["template"]], rows) + [""]
+    if b["subscriptions"]:
+        rows = [[_code(s["name"]), _code(f"${s['url_env']}" if s.get("url_env") else s.get("url")), ", ".join(_code(p) for p in s["events"])]
+                for s in b["subscriptions"]]
+        out += [f"## {t['subscriptions']}", ""] + E._table([t["name"], t["url"], t["patterns"]], rows) + [""]
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def markdown_document(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None = None) -> str:
+    return MARKDOWN_MARK + "\n" + to_markdown(raw, metamodel, lang)
+
+
+def _typed(text: Any, ctx: X.Context, sql_ctx: X.SqlContext, expect: str | None = None) -> dict[str, Any] | None:
+    if text is None:
+        return None
+    node, t = X.check(str(text), ctx, expect)
+    return {"text": X.to_text(node), "type": t, "ast": node, "sql": X.to_sql(node, sql_ctx)}
+
+
+def runtime_json(raw: dict[str, Any], metamodel: dict[str, Any]) -> dict[str, Any]:
+    """The behaviour as the application reads it: canonical form, every expression typed (text, type, tree, SQL),
+    the entity key of each class (snake_case: event prefix, workflow entity). Assumes a valid behaviour model."""
+    e = E.expand(metamodel)
+    b = expand(raw)
+    b["entities"] = {cname: M.snake(cname) for cname in list(b["workflows"]) + list(b["derivations"]) + list(b["events"])}
+    for cname, ders in b["derivations"].items():
+        attrs, _ = E.features(e, cname)
+        ctx = X.Context(e, cname)
+        b["derivations"][cname] = {an: _typed(text, ctx, X.SqlContext(e, cname), X.feature_type(attrs[an], e, False))
+                                   for an, text in ders.items()}
+    for cname, w in b["workflows"].items():
+        ctx, sql_ctx = X.Context(e, cname), X.SqlContext(e, cname)
+        for tr in w["transitions"].values():
+            for key in ("when", "guard"):
+                tr[key] = _typed(tr.get(key), ctx, sql_ctx, X.BOOL)
+    for r in b["reactions"]:
+        cname, event = str(r["event"]).split(".")
+        ctx = context(e, b, cname, event)
+        sql_ctx = X.SqlContext(e, cname, variables={"transition": "(p_extra -> 'transition' ->> 'key')"})
+        r["when"] = _typed(r.get("when"), ctx, sql_ctx, X.BOOL)
+    return b
+
+
+# --------------------------------------------------------------------------- #
+# The runtime workflow engine: principals, clauses, offsets, drift against the published version
+# --------------------------------------------------------------------------- #
+CLAUSE_OPS = {"=": "eq", "<>": "neq", "<": "lt", "<=": "lte", ">": "gt", ">=": "gte"}
+
+
+def principal_key(p: str) -> str:
+    """A principal as the engine stores it: roles and built-ins as they are, `self.issuer` -> `field:issuer`,
+    `director@department` -> `director@department`."""
+    return "field:" + p[len("self."):] if p.startswith("self.") else p
+
+
+def offset_interval(offset: str | None) -> str:
+    """`+1d`, `12h`, `2w` -> the interval text the engine stores ('1 days', '12 hours', '2 weeks'); '' for none."""
+    if not offset:
+        return ""
+    m = DURATION.match(offset.strip().replace(" ", ""))
+    if not m:
+        return offset
+    n, unit = m.group(1), {"d": "days", "h": "hours", "w": "weeks"}[m.group(2)]
+    return f"{int(n)} {unit}"
+
+
+def clauses(node: dict[str, Any], e: dict[str, Any], cname: str) -> list[dict[str, Any]]:
+    """A typed boolean tree as the engine's clauses [{field, op, value}] on the columns of the class: a conjunction of
+    atoms on single-valued own attributes (or references with isSet/isEmpty). Anything else raises ExprError with
+    the advice to move the logic into a derived attribute."""
+    attrs, refs = E.features(e, cname)
+    out: list[dict[str, Any]] = []
+
+    def column(p: dict[str, Any]) -> str:
+        if p["k"] != "path" or len(p["segs"]) != 1 or (p.get("ref") or [""])[0].startswith("@"):
+            raise X.ExprError("a clause tests one attribute of the record: move navigations and calculations into a derived attribute", p["pos"])
+        seg = p["segs"][0]
+        spec = attrs.get(seg) or refs.get(seg)
+        if spec is None or spec["upper"] != 1:
+            raise X.ExprError(f"'{seg}' is not a single-valued feature of {cname}", p["pos"])
+        return E.field_key(seg, spec)
+
+    def value(lit: dict[str, Any]) -> Any:
+        if lit["k"] != "lit":
+            raise X.ExprError("a clause compares with a literal: move a comparison between attributes into a derived attribute", lit["pos"])
+        return E.literal_key(str(lit["v"])) if lit["t"].startswith(X.ENUM) else lit["v"]
+
+    def atom(n: dict[str, Any], negate: bool = False) -> None:
+        k = n["k"]
+        if k == "and" and not negate:
+            for x in n["items"]:
+                atom(x)
+            return
+        if k == "not":
+            atom(n["x"], not negate)
+            return
+        if k == "path" and n["call"] is None:
+            out.append({"field": column(n), "op": "is_false" if negate else "is_true"})
+            return
+        if k == "path" and n["call"] in ("isSet", "isEmpty"):
+            empty = (n["call"] == "isEmpty") != negate
+            out.append({"field": column(n), "op": "is_empty" if empty else "is_set"})
+            return
+        if k == "cmp":
+            left, right = (n["l"], n["r"]) if n["r"]["k"] == "lit" else (n["r"], n["l"])
+            op = n["op"]
+            if left is n["r"] and op in ("<", "<=", ">", ">="):
+                op = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}[op]
+            col, val = column(left), value(right)
+            if right["t"] == X.BOOL and op in ("=", "<>"):
+                truth = bool(val) == (op == "=")
+                out.append({"field": col, "op": "is_false" if truth == negate else "is_true"})
+                return
+            if negate:
+                flip = {"=": "<>", "<>": "=", "<": ">=", "<=": ">", ">": "<=", ">=": "<"}
+                op = flip[op]
+            out.append({"field": col, "op": CLAUSE_OPS[op], "value": val})
+            return
+        if k == "in":
+            out.append({"field": column(n["x"]), "op": "not_in" if negate else "in", "value": [value(i) for i in n["items"]]})
+            return
+        if k == "lit" and n["t"] == X.BOOL:
+            if bool(n["v"]) == negate:
+                raise X.ExprError("a clause that is always false", n["pos"])
+            return
+        raise X.ExprError(f"'{X.to_text(n)}' is not a clause: a guard is a conjunction of tests on single attributes "
+                          "(or, arithmetic and navigations go into a derived attribute)", n["pos"])
+
+    atom(node)
+    return out
+
+
+def engine_version(raw: dict[str, Any], metamodel: dict[str, Any], cname: str) -> dict[str, Any]:
+    """The workflow of a class as the runtime engine stores a version: states and transitions with the engine's
+    principals, clauses, trigger, offset and event names. Reactions on `<Class>.transitioned` naming one transition
+    become its `notify`. Raises ExprError for a guard the engine cannot evaluate."""
+    e = E.expand(metamodel)
+    b = expand(raw)
+    w = b["workflows"][cname]
+    entity = M.snake(cname)
+    ctx = X.Context(e, cname)
+    states = []
+    for i, (sn, s) in enumerate(w["states"].items()):
+        rem = s.get("reminder")
+        days = None
+        if rem and isinstance(rem.get("after"), str):
+            m = DURATION.match(rem["after"])
+            days = int(m.group(1)) * {"d": 1, "h": 0, "w": 7}[m.group(2)] if m else None
+        states.append({"key": sn, "labels": s.get("label") if isinstance(s.get("label"), dict) else {},
+                       "kind": "initial" if s["initial"] else "final" if s["final"] else "normal",
+                       "color": s.get("color") or "#64748b", "owner": [principal_key(p) for p in s["owner"]],
+                       "editable_by": [principal_key(p) for p in s["editable_by"]],
+                       "reminder_days": days, "reminder_template": (rem or {}).get("template"), "sort": i})
+    notify: dict[str, list[dict[str, Any]]] = {}
+    for r in b["reactions"]:
+        if r["event"] != f"{cname}.transitioned" or not r.get("when"):
+            continue
+        node, _ = X.check(str(r["when"]), context(e, b, cname, "transitioned"), X.BOOL)
+        keys = _transition_keys(node)
+        for key in keys or []:
+            notify.setdefault(key, []).append({"to": [principal_key(p) for p in r["notify"]], "template": r["template"]})
+    transitions = []
+    for i, (tn, tr) in enumerate(w["transitions"].items()):
+        guard = clauses(X.check(str(tr["guard"]), ctx, X.BOOL)[0], e, cname) if tr.get("guard") else []
+        cond = clauses(X.check(str(tr["when"]), ctx, X.BOOL)[0], e, cname) if tr.get("when") else []
+        at_field, at_offset = None, ""
+        if tr.get("at") is not None:
+            m = AT.match(str(tr["at"]).strip())
+            if m:
+                attrs, _ = E.features(e, cname)
+                at_field = E.field_key(m.group("path"), attrs.get(m.group("path")))
+                at_offset = offset_interval(f"{m.group('n')}{m.group('unit')}") if m.group("n") else ""
+        transitions.append({"key": tn, "labels": tr.get("label") if isinstance(tr.get("label"), dict) else {},
+                            "from_states": list(tr["from"]), "to_state": tr["to"],
+                            "allowed": [principal_key(p) for p in tr["by"]],
+                            "trigger": "timed" if tr.get("at") is not None else "manual", "at_field": at_field, "at_offset": at_offset,
+                            "comment": tr.get("comment") or "optional", "guard": guard, "condition": cond,
+                            "emits": [f"{entity}.{ev}" for ev in tr["emits"]], "notify": notify.get(tn, []), "sort": i})
+    return {"entity": entity, "states": states, "transitions": transitions}
+
+
+def _transition_keys(node: dict[str, Any]) -> list[str] | None:
+    """The transition keys a reaction's `when` names (`transition = x`, `transition in [a, b]`); None if it is
+    another kind of condition."""
+    if node["k"] == "cmp" and node["op"] == "=":
+        sides = [node["l"], node["r"]]
+        var = next((s for s in sides if s["k"] == "path" and (s.get("ref") or [""])[0] == "@transition"), None)
+        lit = next((s for s in sides if s["k"] == "lit"), None)
+        if var is not None and lit is not None:
+            return [str(lit["v"])]
+    if node["k"] == "in" and node["x"]["k"] == "path" and (node["x"].get("ref") or [""])[0] == "@transition":
+        return [str(i["v"]) for i in node["items"] if i["k"] == "lit"]
+    return None
+
+
+def workflow_drift(raw: dict[str, Any], metamodel: dict[str, Any], catalog: dict[str, Any]) -> list[str]:
+    """Differences between the workflows of the behaviour model and the published versions in the database
+    (`dbschema.workflow_catalog`): states (kind, owner, editable_by, reminder), transitions (from/to, allowed, trigger,
+    guard, condition, emits). Labels, colours and notifications are not compared. Empty list = aligned."""
+    out: list[str] = []
+    b = expand(raw)
+    published = {v["entity"]: v for v in catalog.get("versions", []) if v.get("status") == "published"}
+    for cname in b["workflows"]:
+        entity = M.snake(cname)
+        v = published.get(entity)
+        if v is None:
+            out.append(f"WORKFLOW {entity}: no published version in the database (behavior.yaml has one for {cname})")
+            continue
+        try:
+            model = engine_version(raw, metamodel, cname)
+        except X.ExprError as exc:
+            out.append(f"WORKFLOW {entity}: a guard the engine cannot evaluate: {exc}")
+            continue
+        db_states = {s["key"]: s for s in catalog.get("states", []) if s["version_id"] == v["id"]}
+        db_trans = {t["key"]: t for t in catalog.get("transitions", []) if t["version_id"] == v["id"]}
+        for s in model["states"]:
+            d = db_states.get(s["key"])
+            if d is None:
+                out.append(f"MISSING STATE {entity}.{s['key']} (version {v['version']})")
+                continue
+            for key in ("kind", "owner", "editable_by", "reminder_days", "reminder_template"):
+                a, bb = s.get(key), d.get(key)
+                if key in ("owner", "editable_by"):
+                    a, bb = sorted(a or []), sorted(bb or [])
+                if a != bb and not (key == "reminder_template" and s.get("reminder_days") is None):
+                    out.append(f"STATE {entity}.{s['key']}: {key} database {bb!r}, model {a!r}")
+        for key in db_states:
+            if key not in {s["key"] for s in model["states"]}:
+                out.append(f"NOT IN MODEL state {entity}.{key}")
+        for t in model["transitions"]:
+            d = db_trans.get(t["key"])
+            if d is None:
+                out.append(f"MISSING TRANSITION {entity}.{t['key']}")
+                continue
+            for key in ("from_states", "to_state", "allowed", "trigger", "at_field", "at_offset", "comment", "guard", "condition", "emits"):
+                a, bb = t.get(key), d.get(key)
+                if key in ("from_states", "allowed", "emits"):
+                    a, bb = sorted(a or []), sorted(bb or [])
+                if key in ("guard", "condition"):
+                    a, bb = sorted(map(_clause_key, a or [])), sorted(map(_clause_key, bb or []))
+                if key == "at_offset":
+                    a, bb = (a or "").strip(), (bb or "").strip()
+                if a != bb:
+                    out.append(f"TRANSITION {entity}.{t['key']}: {key} database {bb!r}, model {a!r}")
+        for key in db_trans:
+            if key not in {t["key"] for t in model["transitions"]}:
+                out.append(f"NOT IN MODEL transition {entity}.{key}")
+    for entity in published:
+        if entity not in {M.snake(c) for c in b["workflows"]}:
+            out.append(f"NOT IN MODEL workflow {entity} (published version in the database)")
+    return out
+
+
+def _clause_key(c: dict[str, Any]) -> str:
+    v = c.get("value")
+    return f"{c.get('field')} {c.get('op')} {sorted(map(str, v)) if isinstance(v, list) else v}"
+
+
+def sql_view(raw: dict[str, Any], metamodel: dict[str, Any]) -> str:
+    """Derivations, guards, conditions and reaction conditions as PostgreSQL on a row `r` of each class: a preview
+    of what the engine evaluates (to paste into functions, triggers or generated columns)."""
+    e = E.expand(metamodel)
+    b = expand(raw)
+    out: list[str] = []
+    for cname, ders in b["derivations"].items():
+        attrs, _ = E.features(e, cname)
+        ctx = X.Context(e, cname)
+        out.append(f"-- {cname}: derived attributes (r = a row of {X.SqlContext(e, cname).table(cname)})")
+        for an, text in ders.items():
+            node, t = X.check(str(text), ctx, X.feature_type(attrs[an], e, False))
+            sql = X.to_sql(node, X.SqlContext(e, cname))
+            out.append(f"--   {an}")
+            out.append(f"{E.field_key(an, attrs[an])} := {f'coalesce({sql}, false)' if t == X.BOOL else sql};")
+        out.append("")
+    for cname, w in b["workflows"].items():
+        ctx, sql_ctx = X.Context(e, cname), X.SqlContext(e, cname)
+        out.append(f"-- {cname}: transitions (condition hides, guard blocks)")
+        for tn, tr in w["transitions"].items():
+            for key in ("when", "guard"):
+                if tr.get(key) is not None:
+                    node, _ = X.check(str(tr[key]), ctx, X.BOOL)
+                    out.append(f"--   {tn}.{key}: {X.to_text(node)}")
+                    out.append(f"coalesce({X.to_sql(node, sql_ctx)}, false)")
+        out.append("")
+    if b["reactions"]:
+        out.append("-- reactions (p_extra: the event's data)")
+        for r in b["reactions"]:
+            cname, event = str(r["event"]).split(".")
+            if r.get("when") is None:
+                continue
+            node, _ = X.check(str(r["when"]), context(e, b, cname, event), X.BOOL)
+            sql_ctx = X.SqlContext(e, cname, variables={"transition": "(p_extra -> 'transition' ->> 'key')"})
+            out.append(f"--   {r['name']} on {r['event']}: {X.to_text(node)}")
+            out.append(f"coalesce({X.to_sql(node, sql_ctx)}, false)")
+    return "\n".join(out).rstrip("\n") + "\n"

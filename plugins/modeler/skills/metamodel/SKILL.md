@@ -56,8 +56,12 @@ e sottoscrizioni webhook non vanno nel metamodello né direttamente nel codice: 
 `domain.ecore.yaml`, scritti sui concetti del metamodello con le espressioni tipizzate del riferimento
 `behavior-notation.md` (`guard: dataComplete`, `when: not agencyBookingRequired`, `at: endDate + 1d`,
 `notify: [director, self.issuer]`).
-- Un campo calcolato è `derived: true` nel metamodello e ha la formula in `derivations`; se la formula richiede
-  aritmetica (non ancora nel linguaggio) resta `derived: true` senza formula e il calcolo è una personalizzazione.
+- Un campo calcolato è `derived: true` nel metamodello e ha la formula in `derivations` (aritmetica, `round`,
+  `coalesce`, `if … then … else`, somme su collezioni); se la formula non si può scrivere (lookup in un'altra
+  tabella, valori esterni) resta `derived: true` senza formula e il calcolo è una personalizzazione.
+- Una `guard`/`when` che il motore runtime valuta come clausole è una congiunzione di test su singoli attributi
+  del record; `or`, calcoli e navigazioni vanno in un attributo derivato (`npm run model:behavior -- --format
+  engine` dice cosa il motore non valuta).
 - L'attributo di stato (`state:` del workflow) è un `EString` o un enum con un letterale per stato.
 - Ambiguità da chiedere in un giro solo, insieme a quelle della struttura: chi può eseguire una transizione
   (ruolo, con quale ambito, o un utente collegato al record come `self.issuer`); se una condizione nasconde la
@@ -66,8 +70,13 @@ e sottoscrizioni webhook non vanno nel metamodello né direttamente nel codice: 
   rinomina che rompe una guardia o un destinatario viene segnalata subito); `npm run model:validate` fa lo stesso
   in CI. Se un file non esiste ancora e l'app ha già workflow in codice, proponi di scriverlo a partire da ciò che
   il codice fa (`docs/behavior.md`, migrazioni), senza cambiare il comportamento.
-Il motore (funzioni SQL, tabelle `workflow_*`, reazioni) resta codice dell'app finché il plugin non lo genera:
-una modifica di `behavior.yaml` va accompagnata dalla modifica corrispondente del codice nella stessa modifica.
+Dopo ogni modifica: `npm run model:sync` rigenera `docs/BEHAVIOR.md` e `src/lib/modeler/behavior.json`;
+`npm run model:behavior -- --format sql` dà le derivazioni e le guardie in SQL da portare nelle funzioni e nei
+trigger dell'app, `--format engine` la versione del workflow come la memorizzano le tabelle `workflow_*`;
+`npm run model:drift` confronta i workflow con la versione pubblicata nel database. Il motore (funzioni SQL,
+reazioni) resta codice dell'app finché il plugin non lo genera: una modifica di `behavior.yaml` va accompagnata
+dalla modifica corrispondente del codice (o da una nuova versione pubblicata del workflow) nella stessa modifica,
+finché `drift` non è allineato.
 
 ## 4. Allineare l'applicazione (nella stessa modifica, su un branch)
 1. **Migrazione**: `npm run model:migrate` mostra la bozza generata dal confronto tra il metamodello committato

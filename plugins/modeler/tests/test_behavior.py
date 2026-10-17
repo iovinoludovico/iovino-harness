@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +22,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from metamodel import behavior as B  # noqa: E402
 from metamodel import cli  # noqa: E402
 from metamodel import core as M  # noqa: E402
+from metamodel import dbschema as D  # noqa: E402
 from metamodel import ecore as E  # noqa: E402
 from metamodel import expr as X  # noqa: E402
 
@@ -72,8 +75,8 @@ class ExpressionTests(unittest.TestCase):
         self.fails("compensationType = bogus", "not a literal of enum CompensationType (hourly, flat, none)")
         self.fails("startDate < hours", "cannot compare date with number")
         self.fails("hours > 'x'", "cannot compare number with string")
-        self.fails("reason = guest", "a reference cannot be compared")
-        self.fails("invitationFunds = 3", "a collection cannot be compared")
+        self.fails("reason = guest", "cannot compare a reference")
+        self.fails("invitationFunds = 3", "cannot compare a collection")
         self.fails("invitationFunds.isSet()", "isSet() tests a single value")
         self.fails("hours.notEmpty()", "notEmpty() needs a collection")
         self.fails("hours.size()", "size() needs a collection")
@@ -124,11 +127,13 @@ class ExpressionTests(unittest.TestCase):
 class BehaviorTests(unittest.TestCase):
     def test_fixture_is_valid(self):
         rep = B.validate(behavior(), meta())
+        self.assertEqual((rep.errors, rep.warnings), ([], []))
+        # a derived attribute without a formula is computed in code: reported, not refused
+        b = behavior()
+        b["derivations"]["Invitation"].pop("fundsTotal")
+        rep = B.validate(b, meta())
         self.assertEqual(rep.errors, [])
-        # derived attributes still computed in code are reported, not refused
-        self.assertEqual(sorted(w.split(":")[0] for w in rep.warnings),
-                         ["derivations.Invitation.accommodationPerNight", "derivations.Invitation.compensationAmount",
-                          "derivations.Invitation.mealsPerDay", "derivations.Invitation.totalAmount"])
+        self.assertEqual([w.split(":")[0] for w in rep.warnings], ["derivations.Invitation.fundsTotal"])
         b = B.expand(behavior())
         self.assertEqual(b["workflows"]["Invitation"]["transitions"]["withdraw"]["from"], ["draft", "rejected"])
         self.assertEqual(b["workflows"]["Invitation"]["transitions"]["submit"]["from"], ["draft"])
@@ -371,15 +376,18 @@ class CliAndHookTests(unittest.TestCase):
             code, out, _ = self.run_cli("validate", str(root / "domain.ecore.yaml"))
             self.assertEqual(code, 0)
             self.assertNotIn("behavior.yaml", out)
-            (root / "behavior.yaml").write_text(BEHAVIOR.read_text())
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text().replace("    fundsTotal: invitationFunds.amount.sum()\n", ""))
             code, out, _ = self.run_cli("validate", str(root / "domain.ecore.yaml"))
             self.assertEqual(code, 0)
             self.assertIn("--- behavior.yaml against the metamodel", out)
-            self.assertIn("WARNING derivations.Invitation.totalAmount", out)
+            self.assertIn("WARNING derivations.Invitation.fundsTotal", out)
             code, out, _ = self.run_cli("validate", str(root / "domain.ecore.yaml"), "--json")
             data = json.loads(out)
             self.assertTrue(data["ok"] and data["behavior"]["ok"])
-            self.assertEqual(len(data["behavior"]["warnings"]), 4)
+            self.assertEqual(len(data["behavior"]["warnings"]), 1)
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text())
+            code, out, _ = self.run_cli("validate", str(root / "domain.ecore.yaml"))
+            self.assertIn("Behaviour OK", out)
             text = (root / "domain.ecore.yaml").read_text().replace("      endDate: {type: Date, lower: 1}\n", "      visitEnd: {type: Date, lower: 1}\n")
             (root / "domain.ecore.yaml").write_text(text)
             code, out, _ = self.run_cli("validate", str(root / "domain.ecore.yaml"))
@@ -418,7 +426,11 @@ class CliAndHookTests(unittest.TestCase):
             out = self.run_hook({"tool_input": {"file_path": str(beh_f)}})
             self.assertEqual(out.returncode, 0, out.stderr)
             self.assertIn("behaviour valid against the metamodel", out.stdout)
-            self.assertIn("WARNING derivations.Invitation.totalAmount", out.stdout)
+            self.assertNotIn("WARNING", out.stdout)
+            beh_f.write_text(BEHAVIOR.read_text().replace("    fundsTotal: invitationFunds.amount.sum()\n", ""))
+            out = self.run_hook({"tool_input": {"file_path": str(beh_f)}})
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertIn("WARNING derivations.Invitation.fundsTotal", out.stdout)
             beh_f.write_text(BEHAVIOR.read_text().replace("guard: dataComplete,", "guard: dataComplet,", 1))
             out = self.run_hook({"tool_input": {"file_path": str(beh_f)}})
             self.assertEqual(out.returncode, 2)
@@ -458,3 +470,403 @@ class CliAndHookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ArithmeticAndSqlTests(unittest.TestCase):
+    def setUp(self):
+        self.e = E.expand(meta())
+        self.ctx = X.Context(self.e, "Invitation")
+
+    def sql(self, text, cls="Invitation", e=None, **kw):
+        e = e or self.e
+        node, _ = X.check(text, X.Context(e, cls, **kw))
+        return X.to_sql(node, X.SqlContext(e, cls, variables={"transition": "(p_extra -> 'transition' ->> 'key')"}))
+
+    def test_arithmetic_functions_and_if(self):
+        c = lambda t: X.check(t, self.ctx)[1]  # noqa: E731
+        self.assertEqual(c("hours * hourlyRate + 1"), "number")
+        self.assertEqual(c("invitationFunds.size() + 1"), "int")
+        self.assertEqual(c("invitationFunds.size() / 2"), "number")
+        self.assertEqual(c("endDate - startDate"), "int")
+        self.assertEqual(c("round(hours * hourlyRate, 2)"), "number")
+        self.assertEqual(c("coalesce(flatAmount, 0)"), "number")
+        self.assertEqual(c("coalesce(notes, 'x')"), "text")
+        self.assertEqual(c("if compensationType = hourly then hours else 0"), "number")
+        self.assertEqual(c("if dataComplete then reason.code else 'n/a'"), "string")
+        self.assertEqual(c("-hours"), "number")
+        self.assertEqual(X.to_text(X.parse("if a then 1 else 2 + 3")), "if a then 1 else 2 + 3")
+        self.assertEqual(X.to_text(X.parse("(if a then 1 else 2) + 3")), "(if a then 1 else 2) + 3")
+        self.assertEqual(X.to_text(X.parse("not (a = 1 or b)")), "not (a = 1 or b)")
+        self.assertEqual(X.to_text(X.parse("a - (b - c)")), "a - (b - c)")
+        self.assertEqual(X.to_text(X.parse("(a - b) - c")), "a - b - c")
+        self.assertEqual(X.to_text(X.parse("(a + b) * c")), "(a + b) * c")
+        for text, frag in [("hours + 'a'", "'+' needs numbers"), ("startDate - 1", "'-' needs numbers, found date and int"),
+                           ("round(hours, 1.5)", "optional integer number of decimals"), ("round()", "expected"),
+                           ("round(1, 2, 3)", "round() takes 1 to 2 argument(s), found 3"), ("coalesce(hours)", "coalesce() takes at least 2"),
+                           ("if hours then 1 else 2", "'if' needs a boolean condition"), ("if dataComplete then 1 else 'a'", "'then' gives int, 'else' gives string"),
+                           ("coalesce(hours, 'x')", "coalesce() mixes number and string"), ("-notes", "'-' needs a number"),
+                           ("if dataComplete then 1", "expected 'else'"), ("invitationFunds + 1", "'+' cannot take a collection"),
+                           ("reason + 1", "'+' cannot take a reference"), ("coalesce(reason, guest)", "coalesce() cannot take a reference")]:
+            with self.assertRaises(X.ExprError, msg=text) as cm:
+                X.check(text, self.ctx)
+            self.assertIn(frag, str(cm.exception), text)
+
+    def test_sql_of_paths(self):
+        self.assertEqual(self.sql("dataComplete"), "r.data_complete")
+        self.assertEqual(self.sql("reason.code = 'x'"),
+                         "(select x1.code from public.invitation_reasons x1 where x1.id = r.reason) = 'x'")
+        self.assertEqual(self.sql("department.createdBy.email"),
+                         "(select x2.email from public.departments x1 join public.profiles x2 on x2.id = x1.created_by where x1.id = r.department)")
+        self.assertEqual(self.sql("invitationFunds.amount.sum()"),
+                         "(select coalesce(sum(x1.amount), 0) from public.invitation_funds x1 where x1.invitation = r.id)")
+        self.assertEqual(self.sql("invitationFunds.size()"), "(select count(*) from public.invitation_funds x1 where x1.invitation = r.id)")
+        self.assertEqual(self.sql("invitationFunds.notEmpty()"), "exists (select 1 from public.invitation_funds x1 where x1.invitation = r.id)")
+        self.assertEqual(self.sql("invitationFunds.isEmpty()"), "not exists (select 1 from public.invitation_funds x1 where x1.invitation = r.id)")
+        self.assertEqual(self.sql("reason.isSet()"), "r.reason is not null")
+        self.assertEqual(self.sql("reason.isEmpty()"), "not (r.reason is not null)")
+        self.assertEqual(self.sql("accommodationVenue.isSet()"), "nullif(trim(r.accommodation_venue), '') is not null")
+        self.assertEqual(self.sql("hours.isSet()"), "r.hours is not null")
+        self.assertEqual(self.sql("reason.economicRates.size()"),
+                         "(select count(*) from public.invitation_reasons x1 join public.economic_rates x2 on x2.reason = x1.id where x1.id = r.reason)")
+        self.assertEqual(self.sql("compensationType in [hourly, flat]"), "r.compensation_type in ('hourly', 'flat')")
+        self.assertEqual(self.sql("not agencyBookingRequired and hours > 0"), "(not (r.agency_booking_required) and r.hours > 0)")
+        self.assertEqual(self.sql("mealsAmount / (endDate - startDate + 1)"), "(r.meals_amount::numeric / ((r.end_date - r.start_date) + 1))")
+        self.assertEqual(self.sql("round(hours * hourlyRate, 2)"), "round(((r.hours * r.hourly_rate))::numeric, 2)")
+        self.assertEqual(self.sql("if compensationType = flat then coalesce(flatAmount, 0) else 0"),
+                         "case when r.compensation_type = 'flat' then coalesce(r.flat_amount, 0) else 0 end")
+        self.assertEqual(self.sql("state = 'it''s'".replace("''", "\\'")), "r.state = 'it''s'")
+        self.assertEqual(self.sql("transition = submit", variables={"transition": X.ENUM + "@transition"}, names={"@transition": ["submit"]}),
+                         "(p_extra -> 'transition' ->> 'key') = 'submit'")
+        # join tables and containment without opposite (anagrafica: Italian table names)
+        e2 = E.expand(E.load(FIXTURES / "anagrafica.ecore.yaml"))
+        self.assertEqual(self.sql("gruppi.nome", "Persona", e2),
+                         "(select x2.nome from public.persone_gruppi x1 join public.gruppi x2 on x2.id = x1.gruppo_id where x1.persona_id = r.id)")
+        self.assertEqual(self.sql("membri.size()", "Gruppo", e2),
+                         "(select count(*) from public.persone_gruppi x1 join public.persone x2 on x2.id = x1.persona_id where x1.gruppo_id = r.id)")
+        self.assertEqual(self.sql("allegati.notEmpty()", "Gruppo", e2), "exists (select 1 from public.allegati x1 where x1.gruppo = r.id)")
+        self.assertEqual(self.sql("indirizzi.size() > 0", "Persona", e2), "(select count(*) from public.indirizzi x1 where x1.persona = r.id) > 0")
+        # one-to-one: the foreign key sits on the mandatory side (Persona.account is [1]), so Account navigates it inversely
+        self.assertEqual(self.sql("account.email", "Persona", e2), "(select x1.email from public.account x1 where x1.id = r.account)")
+        self.assertEqual(self.sql("account.isSet()", "Persona", e2), "r.account is not null")
+        self.assertEqual(self.sql("persona.isSet()", "Account", e2), "exists (select 1 from public.persone x1 where x1.account = r.id)")
+        self.assertEqual(self.sql("persona.codiceFiscale", "Account", e2), "(select x1.codice_fiscale from public.persone x1 where x1.account = r.id)")
+        self.assertEqual(self.sql("persona.nome", "Indirizzo", e2), "(select x1.nome from public.persone x1 where x1.id = r.persona)")
+        self.assertEqual(self.sql("utente.email", "Persona", e2), "(select x1.email from public.profiles x1 where x1.id = r.utente)")
+        with self.assertRaises(X.ExprError):
+            self.sql("reason")                    # a reference has no scalar SQL
+
+
+class GenerationTests(unittest.TestCase):
+    def test_markdown(self):
+        md = B.to_markdown(behavior(), meta())
+        self.assertTrue(md.startswith("# Behaviour of the domain invitations\n"))
+        for frag in ["## Roles", "| director | Department director | per Department |", "## Workflow of Invitation",
+                     "The state is the attribute `state`.", "```mermaid\nstateDiagram-v2\n  draft: Draft", "  [*] --> draft", "  closed --> [*]",
+                     "  in_management --> awaiting_confirmation: Visit ended (auto)", "  draft --> cancelled: Cancel",
+                     "| `awaiting_confirmation` | Awaiting visit confirmation |  | `self.issuer` | `self.issuer`, `office` | after 7d (`visit_confirmation_reminder`) |",
+                     "| `approve` | Approve | pending_director → in_management | `director` | `not agencyBookingRequired` | `dataComplete` |  |  |",
+                     "| `visit_ended` | Visit ended | in_management → awaiting_confirmation | system: `endDate + 1d` |  |  |  | `visit_ended` |",
+                     "| `withdraw` | Cancel | draft, rejected → cancelled | `self.issuer`, `office` |", "| `reject` | Reject | pending_director → rejected | `director` |  |  | required |  |",
+                     "Back to a previous state: `office`, `director`; from a final state: `office`; comment required.",
+                     "## Derived attributes", "| Invitation | `fundsTotal` | `invitationFunds.amount.sum()` |",
+                     "## Events", "| Invitation | `visit_ended` | La visita è terminata (passaggio automatico alla data di fine) |",
+                     "## Reactions", "| `notify_bookings_guest` | `Invitation.transitioned` | `transition = confirm_bookings` | `self.guest.email` | `bookings_confirmed_guest` |",
+                     "| `notify_reverted` | `Invitation.reverted` |  | `self.issuer` | `invitation_reverted` |",
+                     "## Subscriptions", "| `n8n` | `$N8N_WEBHOOK_URL` | `Invitation.*`, `Guest.*`, `user.*` |"]:
+            self.assertIn(frag, md)
+        it = B.to_markdown(behavior(), meta(), "it")
+        self.assertIn("# Comportamento del dominio invitations", it)
+        self.assertIn("| `draft` | Bozza | iniziale |", it)
+        self.assertIn("sistema: `endDate + 1d`", it)
+        self.assertEqual(B.to_markdown(behavior(), meta()), md)                         # deterministic
+        self.assertTrue(B.markdown_document(behavior(), meta()).startswith(B.MARKDOWN_MARK + "\n# "))
+        m = meta()
+        m["classes"]["Invitation"]["attributes"]["extra"] = {"type": "EInt", "derived": True}
+        self.assertIn("| Invitation | `extra` | *computed in code* |", B.to_markdown(behavior(), m))
+        self.assertIn("*calcolato nel codice*", B.to_markdown(behavior(), m, "it"))
+
+    def test_runtime_json(self):
+        rj = B.runtime_json(behavior(), meta())
+        self.assertEqual(rj["entities"]["Invitation"], "invitation")
+        d = rj["derivations"]["Invitation"]["fundsTotal"]
+        self.assertEqual((d["text"], d["type"]), ("invitationFunds.amount.sum()", "number"))
+        self.assertEqual(d["sql"], "(select coalesce(sum(x1.amount), 0) from public.invitation_funds x1 where x1.invitation = r.id)")
+        self.assertEqual(d["ast"]["k"], "path")
+        tr = rj["workflows"]["Invitation"]["transitions"]
+        self.assertEqual(tr["approve"]["when"]["sql"], "not (r.agency_booking_required)")
+        self.assertEqual(tr["approve"]["guard"]["type"], "bool")
+        self.assertIsNone(tr["reject"]["guard"])
+        self.assertEqual(rj["reactions"][0]["when"]["sql"], "(p_extra -> 'transition' ->> 'key') in ('submit', 'resubmit')")
+        self.assertIsNone(rj["reactions"][-1]["when"])
+        json.dumps(rj)                                                                  # serializable
+
+    def test_clauses_and_engine_version(self):
+        e = E.expand(meta())
+        ctx = X.Context(e, "Invitation")
+        cl = lambda t: B.clauses(X.check(t, ctx, X.BOOL)[0], e, "Invitation")  # noqa: E731
+        self.assertEqual(cl("dataComplete"), [{"field": "data_complete", "op": "is_true"}])
+        self.assertEqual(cl("not agencyBookingRequired"), [{"field": "agency_booking_required", "op": "is_false"}])
+        self.assertEqual(cl("dataComplete and travelBookingComplete = false"),
+                         [{"field": "data_complete", "op": "is_true"}, {"field": "travel_booking_complete", "op": "is_false"}])
+        self.assertEqual(cl("compensationType = hourly and hours >= 1 and 2 < hours"),
+                         [{"field": "compensation_type", "op": "eq", "value": "hourly"}, {"field": "hours", "op": "gte", "value": 1},
+                          {"field": "hours", "op": "gt", "value": 2}])
+        self.assertEqual(cl("not (hours > 1)"), [{"field": "hours", "op": "lte", "value": 1}])
+        self.assertEqual(cl("travelMethod in [agency, none] and not (mealsMethod in [none])"),
+                         [{"field": "travel_method", "op": "in", "value": ["agency", "none"]}, {"field": "meals_method", "op": "not_in", "value": ["none"]}])
+        self.assertEqual(cl("reason.isSet() and notes.isEmpty() and not accommodationVenue.isEmpty()"),
+                         [{"field": "reason", "op": "is_set"}, {"field": "notes", "op": "is_empty"}, {"field": "accommodation_venue", "op": "is_set"}])
+        self.assertEqual(cl("state <> 'draft' and true"), [{"field": "state", "op": "neq", "value": "draft"}])
+        for text, frag in [("dataComplete or hours > 0", "is not a clause"), ("reason.code = 'x'", "move navigations and calculations"),
+                           ("hours > hourlyRate", "compares with a literal"), ("invitationFunds.size() > 0", "is not a single-valued feature"),
+                           ("invitationFunds.notEmpty()", "is not a clause"), ("hours + 1 > 2", "move navigations and calculations"),
+                           ("not (dataComplete and hours > 0)", "is not a clause"), ("false", "always false")]:
+            with self.assertRaises(X.ExprError, msg=text) as cm:
+                cl(text)
+            self.assertIn(frag, str(cm.exception), text)
+        v = B.engine_version(behavior(), meta(), "Invitation")
+        self.assertEqual(v["entity"], "invitation")
+        by_key = {t["key"]: t for t in v["transitions"]}
+        self.assertEqual(by_key["approve"]["guard"], [{"field": "data_complete", "op": "is_true"}])
+        self.assertEqual(by_key["approve"]["condition"], [{"field": "agency_booking_required", "op": "is_false"}])
+        self.assertEqual(by_key["approve"]["allowed"], ["director"])
+        self.assertEqual(by_key["approve"]["notify"], [{"to": ["office"], "template": "invitation_to_manage"},
+                                                       {"to": ["field:issuer"], "template": "invitation_approved"}])
+        self.assertEqual((by_key["visit_ended"]["trigger"], by_key["visit_ended"]["at_field"], by_key["visit_ended"]["at_offset"],
+                          by_key["visit_ended"]["allowed"], by_key["visit_ended"]["emits"]), ("timed", "end_date", "1 days", [], ["invitation.visit_ended"]))
+        self.assertEqual(by_key["withdraw"]["from_states"], ["draft", "rejected"])
+        self.assertEqual(by_key["withdraw"]["allowed"], ["field:issuer", "office"])
+        self.assertEqual(by_key["reject"]["comment"], "required")
+        self.assertEqual(by_key["submit"]["notify"], [{"to": ["director"], "template": "invitation_submitted"}])
+        states = {s["key"]: s for s in v["states"]}
+        self.assertEqual((states["draft"]["kind"], states["draft"]["owner"], states["draft"]["editable_by"]), ("initial", ["field:issuer"], ["field:issuer", "office"]))
+        self.assertEqual((states["awaiting_confirmation"]["reminder_days"], states["awaiting_confirmation"]["reminder_template"]), (7, "visit_confirmation_reminder"))
+        self.assertEqual(states["closed"]["kind"], "final")
+        self.assertEqual(B.offset_interval("+1d"), "1 days")
+        self.assertEqual(B.offset_interval("12h"), "12 hours")
+        self.assertEqual(B.offset_interval("2w"), "2 weeks")
+        self.assertEqual(B.offset_interval(None), "")
+        self.assertEqual(B.principal_key("self.department.createdBy"), "field:department.createdBy")
+        b = behavior()
+        b["workflows"]["Invitation"]["transitions"]["submit"]["guard"] = "dataComplete or hours > 0"
+        with self.assertRaises(X.ExprError):
+            B.engine_version(b, meta(), "Invitation")
+
+    def fake_catalog(self):
+        v = B.engine_version(behavior(), meta(), "Invitation")
+        vid = "00000000-0000-0000-0000-000000000001"
+        return {"versions": [{"id": vid, "entity": "invitation", "version": 3, "status": "published"}],
+                "states": [{"version_id": vid, **s} for s in copy.deepcopy(v["states"])],
+                "transitions": [{"version_id": vid, **t} for t in copy.deepcopy(v["transitions"])]}
+
+    def test_workflow_drift(self):
+        cat = self.fake_catalog()
+        self.assertEqual(B.workflow_drift(behavior(), meta(), cat), [])
+        cat["states"][0]["owner"] = ["office"]
+        cat["states"].pop(1)
+        cat["states"].append({"version_id": cat["versions"][0]["id"], "key": "limbo", "kind": "normal", "owner": [], "editable_by": []})
+        tr = {t["key"]: t for t in cat["transitions"]}
+        tr["approve"]["guard"] = []
+        tr["approve"]["allowed"] = ["director", "office"]
+        tr["visit_ended"]["at_offset"] = "2 days"
+        tr["reject"]["comment"] = "optional"
+        cat["transitions"] = [t for t in cat["transitions"] if t["key"] != "close"]
+        cat["transitions"].append({**tr["reject"], "key": "archive"})
+        found = B.workflow_drift(behavior(), meta(), cat)
+        for frag in ["STATE invitation.draft: owner database ['office'], model ['field:issuer']", "MISSING STATE invitation.pending_director",
+                     "NOT IN MODEL state invitation.limbo", "TRANSITION invitation.approve: guard database [], model ['data_complete is_true None']",
+                     "TRANSITION invitation.approve: allowed database ['director', 'office'], model ['director']",
+                     "TRANSITION invitation.visit_ended: at_offset database '2 days', model '1 days'",
+                     "TRANSITION invitation.reject: comment database 'optional', model 'required'", "MISSING TRANSITION invitation.close",
+                     "NOT IN MODEL transition invitation.archive"]:
+            self.assertTrue(any(frag in x for x in found), (frag, found))
+        self.assertEqual(B.workflow_drift(behavior(), meta(), {"versions": [], "states": [], "transitions": []}),
+                         ["WORKFLOW invitation: no published version in the database (behavior.yaml has one for Invitation)"])
+        cat = self.fake_catalog()
+        cat["versions"].append({"id": "x", "entity": "order", "version": 1, "status": "published"})
+        self.assertEqual(B.workflow_drift(behavior(), meta(), cat), ["NOT IN MODEL workflow order (published version in the database)"])
+        b = behavior()
+        b["workflows"]["Invitation"]["transitions"]["submit"]["guard"] = "dataComplete or hours > 0"
+        self.assertTrue(B.workflow_drift(b, meta(), self.fake_catalog())[0].startswith("WORKFLOW invitation: a guard the engine cannot evaluate"))
+
+    def test_sql_view(self):
+        sql = B.sql_view(behavior(), meta())
+        self.assertIn("-- Invitation: derived attributes (r = a row of public.invitations)", sql)
+        self.assertIn("funds_total := (select coalesce(sum(x1.amount), 0) from public.invitation_funds x1 where x1.invitation = r.id);", sql)
+        self.assertIn("data_complete := coalesce((r.reason is not null and", sql)
+        self.assertIn("--   approve.when: not agencyBookingRequired\ncoalesce(not (r.agency_booking_required), false)", sql)
+        self.assertIn("--   notify_submitted on Invitation.transitioned: transition in [submit, resubmit]\n"
+                      "coalesce((p_extra -> 'transition' ->> 'key') in ('submit', 'resubmit'), false)", sql)
+
+
+class SyncAndCommandTests(unittest.TestCase):
+    def run_cli(self, *args):
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_sync_writes_behavior_json_and_docs(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "domain.ecore.yaml").write_text(META.read_text())
+            self.assertEqual(sorted(cli.sync(root)), ["docs/DOMAIN.md", "src/lib/modeler/metamodel.json"])
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text())
+            written = cli.sync(root)
+            self.assertEqual(sorted(written), ["docs/BEHAVIOR.md", "docs/DOMAIN.md", "src/lib/modeler/behavior.json", "src/lib/modeler/metamodel.json"])
+            md = (root / "docs" / "BEHAVIOR.md").read_text()
+            self.assertTrue(md.startswith(B.MARKDOWN_MARK))
+            self.assertIn("## Workflow of Invitation", md)
+            data = json.loads((root / "src/lib/modeler/behavior.json").read_text())
+            self.assertEqual(data["entities"]["Invitation"], "invitation")
+            # always rewritten (no hand notes)
+            (root / "docs" / "BEHAVIOR.md").write_text("edited\n")
+            cli.sync(root)
+            self.assertIn("## Workflow of Invitation", (root / "docs" / "BEHAVIOR.md").read_text())
+            # a broken behaviour is not generated
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text().replace("guard: dataComplete,", "guard: nope,", 1))
+            self.assertEqual(sorted(cli.sync(root)), ["docs/DOMAIN.md", "src/lib/modeler/metamodel.json"])
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text())
+            # another document named behavior.md (other case): BEHAVIOR.md is not written
+            (root / "docs" / "BEHAVIOR.md").unlink()
+            (root / "docs" / "behavior.md").write_text("# hand written\n")
+            self.assertEqual(sorted(cli.sync(root)), ["docs/DOMAIN.md", "src/lib/modeler/behavior.json", "src/lib/modeler/metamodel.json"])
+            self.assertEqual(cli.docs_clash(root, cli.BEHAVIOR_MD), "docs/behavior.md")
+            self.assertIsNone(cli.docs_clash(root))
+
+    def test_behavior_command(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "domain.ecore.yaml").write_text(META.read_text())
+            code, out, err = self.run_cli("behavior", str(root / "domain.ecore.yaml"))
+            self.assertEqual(code, 1)
+            self.assertIn("no behavior.yaml", err)
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text())
+            code, out, _ = self.run_cli("behavior", str(root / "domain.ecore.yaml"))
+            self.assertEqual(code, 0)
+            self.assertIn("# Behaviour of the domain invitations", out)
+            code, out, _ = self.run_cli("behavior", str(root / "domain.ecore.yaml"), "--lang", "it")
+            self.assertIn("# Comportamento del dominio invitations", out)
+            code, out, _ = self.run_cli("behavior", str(root / "domain.ecore.yaml"), "--format", "mermaid")
+            self.assertIn("%% Invitation\nstateDiagram-v2", out)
+            code, out, _ = self.run_cli("behavior", str(root / "domain.ecore.yaml"), "--format", "json")
+            self.assertEqual(json.loads(out)["entities"]["Invitation"], "invitation")
+            code, out, _ = self.run_cli("behavior", str(root / "domain.ecore.yaml"), "--format", "sql")
+            self.assertIn("funds_total :=", out)
+            code, out, _ = self.run_cli("behavior", str(root / "domain.ecore.yaml"), "--format", "engine")
+            self.assertEqual(json.loads(out)["Invitation"]["transitions"][0]["key"], "submit")
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text().replace("guard: dataComplete,", "guard: dataComplete or hours > 0,", 1))
+            code, out, err = self.run_cli("behavior", str(root / "domain.ecore.yaml"), "--format", "engine")
+            self.assertEqual(code, 1)
+            self.assertIn("a guard the engine cannot evaluate as clauses", err)
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text().replace("guard: dataComplete,", "guard: nope,", 1))
+            code, out, err = self.run_cli("behavior", str(root / "domain.ecore.yaml"))
+            self.assertEqual(code, 1)
+            self.assertIn("'nope' is not a feature", err)
+            code, out, _ = self.run_cli("behavior", str(META), "--behavior", str(BEHAVIOR), "--format", "mermaid")
+            self.assertEqual(code, 0)
+
+    def test_hook_on_generated_behavior_md(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "domain.ecore.yaml").write_text(META.read_text())
+            (root / "docs").mkdir()
+            (root / "docs" / "BEHAVIOR.md").write_text("x\n")
+            out = subprocess.run([sys.executable, str(ROOT / "hooks" / "hook.py"), "post"],
+                                 input=json.dumps({"tool_input": {"file_path": str(root / "docs" / "BEHAVIOR.md")}}), capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0)
+            self.assertIn("generated from behavior.yaml", out.stdout)
+
+
+@unittest.skipUnless(os.environ.get("MODELER_PG"), "MODELER_PG not set")
+class WorkflowDatabaseTests(unittest.TestCase):
+    """The generated SQL runs on PostgreSQL, and drift compares the workflows with the engine's tables."""
+
+    ENGINE = """
+    create table public.workflow_versions (id uuid primary key default gen_random_uuid(), entity text not null, version int not null,
+      status text not null default 'draft', unique (entity, version));
+    create table public.workflow_states (version_id uuid references public.workflow_versions (id), key text not null, labels jsonb default '{}',
+      kind text not null default 'normal', color text not null default '#64748b', owner text[] not null default '{}',
+      editable_by text[] not null default '{}', reminder_days int, reminder_template text, sort int not null default 0, primary key (version_id, key));
+    create table public.workflow_transitions (version_id uuid references public.workflow_versions (id), key text not null, labels jsonb default '{}',
+      from_states text[] not null default '{}', to_state text not null, allowed text[] not null default '{}', trigger text not null default 'manual',
+      at_field text, at_offset text not null default '', comment text not null default 'optional', guard jsonb not null default '[]',
+      condition jsonb not null default '[]', emits text[] not null default '{}', notify jsonb not null default '[]', sort int not null default 0,
+      primary key (version_id, key));
+    """
+
+    def setUp(self):
+        self.base = os.environ["MODELER_PG"]
+        self.db = f"modeler_{uuid.uuid4().hex[:8]}"
+        self.psql(self.base, f"create database {self.db}")
+        self.dsn = self.base.rsplit("/", 1)[0] + "/" + self.db
+
+    def tearDown(self):
+        subprocess.run(["psql", self.base, "-qc", f"drop database {self.db} with (force)"], capture_output=True)
+
+    def psql(self, dsn, sql):
+        out = subprocess.run(["psql", dsn, "-q", "-v", "ON_ERROR_STOP=1", "-c", sql], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout
+
+    def seed(self, root):
+        from metamodel import sqlgen as G
+        sql, _ = G.migration({"package": "invitations", "classes": {}}, meta(), "whole")
+        # the generated migration: tables, enums, foreign keys; profiles stands for the users
+        self.psql(self.dsn, "create table public.profiles (id uuid primary key default gen_random_uuid(), email text);")
+        self.psql(self.dsn, sql)
+        self.psql(self.dsn, self.ENGINE)
+        v = B.engine_version(behavior(), meta(), "Invitation")
+        self.psql(self.dsn, "insert into public.workflow_versions (id, entity, version, status) values "
+                            "('00000000-0000-0000-0000-000000000001', 'invitation', 1, 'published');")
+        for s in v["states"]:
+            self.psql(self.dsn, "insert into public.workflow_states (version_id, key, kind, owner, editable_by, reminder_days, reminder_template, sort) values "
+                                f"('00000000-0000-0000-0000-000000000001', '{s['key']}', '{s['kind']}', "
+                                f"array[{', '.join(repr(x) for x in s['owner'])}]::text[], array[{', '.join(repr(x) for x in s['editable_by'])}]::text[], "
+                                f"{s['reminder_days'] if s['reminder_days'] is not None else 'null'}, "
+                                f"{repr(s['reminder_template']) if s['reminder_template'] else 'null'}, {s['sort']});")
+        for t in v["transitions"]:
+            self.psql(self.dsn, "insert into public.workflow_transitions (version_id, key, from_states, to_state, allowed, trigger, at_field, at_offset, "
+                                "comment, guard, condition, emits, sort) values "
+                                f"('00000000-0000-0000-0000-000000000001', '{t['key']}', array[{', '.join(repr(x) for x in t['from_states'])}]::text[], "
+                                f"'{t['to_state']}', array[{', '.join(repr(x) for x in t['allowed'])}]::text[], '{t['trigger']}', "
+                                f"{repr(t['at_field']) if t['at_field'] else 'null'}, '{t['at_offset']}', '{t['comment']}', "
+                                f"'{json.dumps(t['guard'])}'::jsonb, '{json.dumps(t['condition'])}'::jsonb, "
+                                f"array[{', '.join(repr(x) for x in t['emits'])}]::text[], {t['sort']});")
+
+    def test_generated_sql_runs_and_workflows_align(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "domain.ecore.yaml").write_text(META.read_text())
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text())
+            self.seed(root)
+            # every derivation, guard and condition is valid SQL on a row of the table
+            rj = B.runtime_json(behavior(), meta())
+            exprs = [x["sql"] for x in rj["derivations"]["Invitation"].values()]
+            exprs += [tr[k]["sql"] for tr in rj["workflows"]["Invitation"]["transitions"].values() for k in ("when", "guard") if tr[k]]
+            self.psql(self.dsn, "select " + ", ".join(f"({x})" for x in exprs) + " from public.invitations r;")
+            self.psql(self.dsn, "insert into public.invitation_reasons (code, label, compensation_type) values ('sem', 'Seminar', 'hourly');")
+            self.psql(self.dsn, "insert into public.departments (code, name) values ('cs', 'CS'); "
+                                "insert into public.guests (last_name, first_name, email, home_institution) values ('Doe', 'J', 'j@x.org', 'X'); "
+                                "insert into public.profiles (id) values ('00000000-0000-0000-0000-00000000000a');")
+            self.psql(self.dsn, "insert into public.invitations (code, start_date, end_date, hours, hourly_rate, meals_method, meals_amount, "
+                                "compensation_type, state, department, guest, reason, created_by) "
+                                "select 'INV-1', '2026-01-10', '2026-01-13', 2, 50, 'receipts', 80, 'hourly', 'draft', "
+                                "d.id, g.id, rz.id, '00000000-0000-0000-0000-00000000000a' from public.departments d, public.guests g, public.invitation_reasons rz;")
+            der = rj["derivations"]["Invitation"]
+            out = subprocess.run(["psql", self.dsn, "-X", "-A", "-t", "-c",
+                                  f"select {der['compensationType']['sql']}, {der['compensationAmount']['sql']}, {der['mealsPerDay']['sql']}, "
+                                  f"{der['agencyBookingRequired']['sql']}, {der['fundsTotal']['sql']} from public.invitations r"],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.stdout.strip(), "hourly|100.00|20.00|f|0", out.stderr)
+            cat = D.workflow_catalog(self.dsn)
+            self.assertEqual(cat["versions"][0]["entity"], "invitation")
+            self.assertEqual(B.workflow_drift(behavior(), meta(), cat), [])
+            self.psql(self.dsn, "update public.workflow_transitions set guard = '[]'::jsonb where key = 'approve';")
+            found = B.workflow_drift(behavior(), meta(), D.workflow_catalog(self.dsn))
+            self.assertEqual(len(found), 1)
+            self.assertIn("TRANSITION invitation.approve: guard database []", found[0])
+            self.psql(self.dsn, "drop table public.workflow_transitions, public.workflow_states, public.workflow_versions;")
+            self.assertIsNone(D.workflow_catalog(self.dsn))

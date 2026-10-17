@@ -21,13 +21,16 @@ from . import behavior as B
 from . import core as M
 from . import dbschema as D
 from . import ecore as E
+from . import expr as X
 from . import sqlgen as G
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]            # modeler.py, metamodel/, vendor/
 KIT_DIR = SCRIPTS_DIR.parent / "kit"                          # only in the plugin, not in the vendored copy
 STATE_DIR = ".modeler"                                        # proposals and backups, in the app repository
 METAMODEL_JSON = Path("src/lib/modeler/metamodel.json")       # what the admin page reads
+BEHAVIOR_JSON = Path("src/lib/modeler/behavior.json")         # the behaviour as the app reads it (typed expressions, SQL)
 DOMAIN_MD = Path("docs/DOMAIN.md")                            # the domain explained, generated; hand notes allowed
+BEHAVIOR_MD = Path("docs/BEHAVIOR.md")                        # the behaviour explained, generated (no hand notes)
 DOMAIN_COPY = Path(STATE_DIR) / "DOMAIN.generated.md"         # what sync wrote last: hand edits are measured against it
 EDITOR_JS = Path("public/modeler/metamodel-editor.js")
 TOOLS_DIR = Path("tools/modeler")
@@ -45,6 +48,7 @@ NPM_SCRIPTS = {
     "model:done": "python3 tools/modeler/modeler.py done",
     "model:apply": "python3 tools/modeler/modeler.py apply",
     "model:migrate": "python3 tools/modeler/modeler.py migrate",
+    "model:behavior": "python3 tools/modeler/modeler.py behavior",
 }
 
 
@@ -200,6 +204,41 @@ def cmd_show(a) -> int:
             print("ERROR", x)
     else:
         print(E.dumps(meta), end="")
+    return 0
+
+
+def cmd_behavior(a) -> int:
+    """The behaviour model in a given view (valid metamodel and behaviour assumed: run validate first)."""
+    meta_path = find_metamodel(a.path)
+    bpath = behavior_file(meta_path, a.behavior)
+    if bpath is None:
+        print(f"no {B.BEHAVIOR_FILE} next to {meta_path}", file=sys.stderr)
+        return 1
+    raw, meta = B.load(bpath), E.load(meta_path)
+    rep = E.validate(meta)
+    brep = B.validate(raw, meta) if rep.ok else None
+    if not rep.ok or not brep.ok:
+        print((rep if not rep.ok else brep).render(), file=sys.stderr)
+        return 1
+    if a.format == "markdown":
+        print(B.to_markdown(raw, meta, a.lang), end="")
+    elif a.format == "mermaid":
+        b = B.expand(raw)
+        lang = a.lang or E.expand(meta)["language"]
+        for cname, w in b["workflows"].items():
+            print(f"%% {cname}")
+            print(B.mermaid_workflow(w, lang), end="")
+    elif a.format == "json":
+        print(json.dumps(B.runtime_json(raw, meta), ensure_ascii=False, indent=2))
+    elif a.format == "sql":
+        print(B.sql_view(raw, meta), end="")
+    elif a.format == "engine":
+        b = B.expand(raw)
+        try:
+            print(json.dumps({c: B.engine_version(raw, meta, c) for c in b["workflows"]}, ensure_ascii=False, indent=2))
+        except X.ExprError as exc:
+            print(f"a guard the engine cannot evaluate as clauses: {exc}", file=sys.stderr)
+            return 1
     return 0
 
 
@@ -650,8 +689,18 @@ def cmd_drift(a) -> int:
         print("no database: pass --db <DSN> (or set MODELER_DB)", file=sys.stderr)
         return 2
     exclude = {t.strip() for t in (a.exclude or os.environ.get("MODELER_EXCLUDE", "")).split(",") if t.strip()}
-    found = D.drift(E.load(meta_path), D.catalog(dsn, a.schema), exclude)
+    meta = E.load(meta_path)
+    found = D.drift(meta, D.catalog(dsn, a.schema), exclude)
     print("\n".join(found) if found else "metamodel and database are aligned")
+    bpath = behavior_file(meta_path)
+    if bpath is not None and B.expand(B.load(bpath))["workflows"]:
+        wcat = D.workflow_catalog(dsn, a.schema)
+        if wcat is None:
+            print(f"{bpath.name}: the database has no workflow tables (workflow_versions): the workflows are code, not compared")
+        else:
+            wfound = B.workflow_drift(B.load(bpath), meta, wcat)
+            print("\n".join(wfound) if wfound else f"{bpath.name}: workflows aligned with the published versions")
+            found += wfound
     return 1 if found else 0
 
 
@@ -667,6 +716,7 @@ def sync(root: Path, force: bool = False) -> list[str]:
     raw = E.load(meta)
     _write_json(root / METAMODEL_JSON, E.runtime_json(raw))
     written = [str(METAMODEL_JSON)]
+    written += sync_behavior(root, raw)
     st = docs_status(root, raw)
     if st["state"] == "clash":                       # another document would be read or overwritten as DOMAIN.md
         return written
@@ -680,15 +730,36 @@ def sync(root: Path, force: bool = False) -> list[str]:
     return written
 
 
-def docs_clash(root: Path) -> str | None:
+def sync_behavior(root: Path, raw: dict[str, Any]) -> list[str]:
+    """What is generated from behavior.yaml, when the app has one and it is valid against the metamodel:
+    behavior.json (typed expressions and SQL for the app) and docs/BEHAVIOR.md (the behaviour explained, no hand
+    notes: always rewritten). A docs/behavior.md with other letter case is another document: BEHAVIOR.md is not
+    written until it is renamed or removed."""
+    bpath = root / B.BEHAVIOR_FILE
+    if not bpath.exists():
+        return []
+    braw = B.load(bpath)
+    if not E.validate(raw).ok or not B.validate(braw, raw).ok:
+        return []
+    _write_json(root / BEHAVIOR_JSON, B.runtime_json(braw, raw))
+    written = [str(BEHAVIOR_JSON)]
+    if docs_clash(root, BEHAVIOR_MD):
+        return written
+    path = root / BEHAVIOR_MD
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(B.markdown_document(braw, raw), encoding="utf-8")
+    return written + [str(BEHAVIOR_MD)]
+
+
+def docs_clash(root: Path, doc: Path = DOMAIN_MD) -> str | None:
     """A file in docs/ named like DOMAIN.md with other letter case (appforge wrote docs/domain.md): another
     document. On macOS it would be read as DOMAIN.md, on Linux sync would write a twin next to it."""
-    docs = root / DOMAIN_MD.parent
+    docs = root / doc.parent
     if not docs.is_dir():
         return None
     for name in sorted(os.listdir(docs)):                # listdir, not exists(): the latter lies on macOS
-        if name.lower() == DOMAIN_MD.name.lower() and name != DOMAIN_MD.name:
-            return str(DOMAIN_MD.parent / name)
+        if name.lower() == doc.name.lower() and name != doc.name:
+            return str(doc.parent / name)
     return None
 
 
@@ -871,6 +942,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--format", choices=["yaml", "emfatic", "mermaid", "markdown", "json", "storage"], default="emfatic")
     s.set_defaults(fn=cmd_show)
 
+    s = sub.add_parser("behavior", help=f"print the behaviour model ({B.BEHAVIOR_FILE}) in a view")
+    s.add_argument("path", nargs="?")
+    s.add_argument("--behavior", help=f"the behaviour model (default: {B.BEHAVIOR_FILE} next to the metamodel)")
+    s.add_argument("--format", choices=["markdown", "mermaid", "json", "sql", "engine"], default="markdown",
+                   help="markdown: docs/BEHAVIOR.md; mermaid: the state diagrams; json: behavior.json (typed expressions, SQL); "
+                        "sql: derivations and guards as PostgreSQL; engine: the workflow versions as the runtime engine stores them")
+    s.add_argument("--lang", choices=sorted(E.LANGUAGES))
+    s.set_defaults(fn=cmd_behavior)
+
     s = sub.add_parser("export", help="write the metamodel as an Ecore XMI file (Eclipse EMF, Epsilon)")
     s.add_argument("path", nargs="?")
     s.add_argument("-o", "--output")
@@ -928,14 +1008,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_reverse)
 
-    s = sub.add_parser("drift", help="compare the metamodel with a live database")
+    s = sub.add_parser("drift", help=f"compare the metamodel with a live database (and the workflows of {B.BEHAVIOR_FILE} with the published versions)")
     s.add_argument("path", nargs="?")
     s.add_argument("--db", help="DSN (default: MODELER_DB or the local Supabase of the app)")
     s.add_argument("--schema", default="public")
     s.add_argument("--exclude", help="comma separated tables (or table.column) to ignore (default: MODELER_EXCLUDE)")
     s.set_defaults(fn=cmd_drift)
 
-    s = sub.add_parser("sync", help=f"refresh {METAMODEL_JSON} and {DOMAIN_MD} from the metamodel")
+    s = sub.add_parser("sync", help=f"refresh {METAMODEL_JSON} and {DOMAIN_MD} from the metamodel "
+                                    f"(and {BEHAVIOR_JSON}, {BEHAVIOR_MD} from {B.BEHAVIOR_FILE})")
     s.add_argument("path", nargs="?")
     s.add_argument("--force", action="store_true",
                    help=f"rewrite {DOMAIN_MD} even if it has hand edits (a copy goes to {STATE_DIR}/backups/)")

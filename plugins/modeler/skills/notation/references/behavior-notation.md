@@ -6,7 +6,9 @@ transitions), domain events, reactions (who is notified when) and webhook subscr
 concept of the metamodel, navigated with **typed paths**: `modeler validate` (`npm run model:validate`) checks
 the behaviour against the metamodel, the PostToolUse hook does it after every edit of either file, `apply`
 reports a proposal that breaks it, and CI runs the same check. A domain change that breaks a guard, a
-recipient or a derivation is therefore found before the database is.
+recipient or a derivation is therefore found before the database is. From the model, `sync` generates
+`docs/BEHAVIOR.md` and `src/lib/modeler/behavior.json`, `behavior --format sql|engine` the SQL and the workflow
+versions of the runtime engine, and `drift` compares the workflows with the versions published in the database.
 
 ## Syntax
 ```yaml
@@ -21,6 +23,8 @@ derivations:                            # formulas of the attributes `derived: t
     agencyBookingRequired: accommodationMethod = agency or travelMethod = agency
     fundsTotal: invitationFunds.amount.sum()
     dataComplete: reason.isSet() and (compensationType <> hourly or hours > 0) and fundsTotal = totalAmount
+    compensationAmount: if compensationType = hourly then round(coalesce(hours, 0) * coalesce(hourlyRate, 0), 2) else coalesce(flatAmount, 0)
+    mealsPerDay: if mealsMethod <> none then round(mealsAmount / (endDate - startDate + 1), 2) else 0
 
 workflows:
   Invitation:
@@ -61,18 +65,22 @@ Read in the context of an instance of the class (`self`, optional: `dataComplete
 | `parts.amount` | navigation through a many-valued reference: a collection (one level at most) | collection of the type |
 | `x.isSet()` / `x.isEmpty()` | a single value is / is not set (a reference: linked; a string: not empty) | bool |
 | `parts.notEmpty()` / `parts.isEmpty()` / `parts.size()` / `parts.amount.sum()` | on a collection | bool, bool, int, number |
+| `+ - * /`, `-x` | arithmetic on numbers (`/` never truncates); `date2 - date1` is the number of days | int or number |
+| `round(x)`, `round(x, 2)` | rounding | number |
+| `coalesce(a, b, …)` | the first value that is set | the type of `a` |
+| `if c then a else b` | a choice (lowest precedence: write `(if … then … else …) + 1`) | the type of `a`/`b` |
 | `= <> < <= > >=` | comparison; `< <= > >=` only on numbers and dates | bool |
 | `x in [a, b]` | membership | bool |
 | `and or not ( )` | boolean operators | bool |
 | `12`, `1.5`, `'text'`, `true`, `false` | literals | |
-| `hourly` | a bare name is the literal of the enum on the other side of a comparison (`kind = hourly`, `kind in [a, b]`) | the enum |
+| `hourly` | a bare name is the literal of the enum on the other side of a comparison (`kind = hourly`, `kind in [a, b]`, `if … then hourly else flat`) | the enum |
 
 Typing: numbers compare with numbers (EInt, EDouble, EBigDecimal, Money…), strings with strings (EString, Text,
 Email, URL), dates with dates (Date, EDate, DateTime), booleans with booleans, an enum with its literals;
 a reference is only tested with `isSet()` or navigated; a collection is only closed by its operations.
 `guard`, `when` and a reaction's `when` are booleans; a derivation has the type of its attribute. Of a `User` only
-`email` can be navigated. Arithmetic (`+ - * /`, `round`, `if … then … else`) is not available yet: an attribute
-whose formula needs it stays `derived: true` without a derivation (reported as a warning: computed in code).
+`email` can be navigated. A derived attribute without a derivation (a formula the language cannot write: a lookup
+in another table, an external value) is computed in code and reported as a warning.
 
 ## Principals (`by`, `owner`, `editable_by`, `notify`, `revert.by`, `revert.final_by`)
 | form | meaning |
@@ -118,6 +126,28 @@ a date, an `emits` not declared; unreachable states, several initial states, no 
 attribute that is not `derived`, with the wrong type, or in a cycle; derived attributes without a derivation
 (warning). The same check runs when `domain.ecore.yaml` changes: the message then says the domain change
 breaks the behaviour and where.
+
+## What is generated
+- `npm run model:sync` writes **`docs/BEHAVIOR.md`** (roles, one section per workflow with the Mermaid state diagram
+  and the tables of states and transitions, derived attributes, events, reactions, subscriptions; in the language of
+  the metamodel) and **`src/lib/modeler/behavior.json`** (the canonical model with every expression typed: text,
+  type, tree and SQL; `entities` maps each class to its snake_case key). `BEHAVIOR.md` is rewritten every time: it
+  takes no hand notes (a `docs/behavior.md` with other letter case is another document and blocks it until renamed).
+- `npm run model:behavior -- --format markdown|mermaid|json|sql|engine` prints the same views. `sql`: every
+  derivation, guard, condition and reaction condition as PostgreSQL on a row `r` of the class's table (paths through
+  references become subselects, collections become aggregates), to paste into triggers or functions. `engine`: each
+  workflow as a version of the runtime engine (tables `workflow_versions/states/transitions`): states with `kind`,
+  `owner`, `editable_by`, `reminder_days`; transitions with `allowed`, `trigger`/`at_field`/`at_offset`, `comment`,
+  `guard` and `condition` as clauses `[{field, op, value}]`, `emits`, and the `notify` of the reactions that name the
+  transition. Principals are stored as the engine reads them: roles as they are, `self.issuer` → `field:issuer`.
+- A guard or condition the engine evaluates as clauses must be a **conjunction of tests on single attributes of the
+  record** (`a and not b and kind = hourly and n >= 1 and k in [x, y] and ref.isSet()`); `or`, arithmetic and
+  navigations go into a derived attribute, which the SQL view computes with the full language. `validate` accepts
+  the richer form; `behavior --format engine` and `drift` report what the engine cannot evaluate.
+- `npm run model:drift` also compares the workflows with the **published** versions in the database (states and
+  their principals and reminders; transitions, allowed principals, trigger, offset, comment, clauses, emitted
+  events; labels, colours and notifications are not compared). An app without workflow tables (its workflows are
+  code) gets a note, not a drift.
 
 ## From the user's words to the behaviour model
 | the user says | behaviour model |

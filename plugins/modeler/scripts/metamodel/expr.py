@@ -5,15 +5,17 @@ A small OCL/EOL-like language, read in the context of an instance of a class (`s
     dataComplete
     reason.compensationType = hourly and hours > 0
     invitationFunds.amount.sum() = totalAmount
-    accommodationVenue.isSet() and not (travelMethod in [agency, none])
+    if compensationType = hourly then round(hours * hourlyRate, 2) else coalesce(flatAmount, 0)
 
 Paths navigate attributes and single-valued references; through a many-valued reference the rest of the
 path is a collection (one level), closed by `.size()`, `.sum()`, `.isEmpty()` or `.notEmpty()`. `.isSet()`
 and `.isEmpty()` test a single value. Literals: numbers, 'strings', true/false and the bare literals of the
-enum on the other side of a comparison. Operators: `= <> < <= > >=`, `in [a, b]`, `and or not`, parentheses.
+enum on the other side of a comparison. Operators: `+ - * /` (a date minus a date is a number of days),
+`= <> < <= > >=`, `in [a, b]`, `and or not`, `if c then a else b`, `round(x[, n])`, `coalesce(a, b, …)`.
 
 `parse()` builds the tree, `typecheck()` types it against the metamodel (and reports the first problem with
-its position); `check()` does both and can require a type. The tree is plain dicts: generators read it.
+its position), `check()` does both and can require a type. `to_sql()` writes the typed tree as a PostgreSQL
+expression on a row of the class, following the storage mapping of the metamodel. The tree is plain dicts.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import core as M
 from . import ecore as E
 
 NUMERIC = {"int", "number", "money"}
@@ -32,16 +35,18 @@ COLLECTION = "collection:"       # collection:<type>
 CLASS = "class:"                 # class:<name>
 ENUM = "enum:"                   # enum:<name>  (enum:@<var> for a variable with a fixed set of names)
 CALLS = {"isSet", "isEmpty", "notEmpty", "size", "sum"}
+FUNCTIONS = {"round": (1, 2), "coalesce": (2, 99)}
 
 _TOKEN = re.compile(r"""
     (?P<ws>\s+)
   | (?P<num>\d+(?:\.\d+)?)
   | (?P<str>'(?:[^'\\]|\\.)*')
   | (?P<ident>[A-Za-z_][A-Za-z0-9_]*)
-  | (?P<op><>|<=|>=|=|<|>)
+  | (?P<op><>|<=|>=|=|<|>|\+|-|\*|/)
   | (?P<punct>[().,\[\]])
 """, re.VERBOSE)
-KEYWORDS = {"and", "or", "not", "in", "true", "false", "self"}
+KEYWORDS = {"and", "or", "not", "in", "true", "false", "self", "if", "then", "else"}
+CMP_OPS = {"=", "<>", "<", "<=", ">", ">="}
 
 
 class ExprError(Exception):
@@ -127,10 +132,21 @@ class _Parser:
         return self.cur.kind == kind and (value is None or self.cur.value == value)
 
     def parse(self) -> dict[str, Any]:
-        node = self.p_or()
+        node = self.p_expr()
         if self.cur.kind != "eof":
             raise ExprError(f"unexpected {self.cur.value!r}", self.cur.pos, self.text)
         return node
+
+    def p_expr(self) -> dict[str, Any]:
+        if self.at("kw", "if"):
+            t = self.take()
+            c = self.p_expr()
+            self.take("kw", "then")
+            a = self.p_expr()
+            self.take("kw", "else")
+            b = self.p_expr()
+            return {"k": "if", "c": c, "a": a, "b": b, "pos": t.pos}
+        return self.p_or()
 
     def p_or(self) -> dict[str, Any]:
         items = [self.p_and()]
@@ -153,31 +169,55 @@ class _Parser:
         return self.p_cmp()
 
     def p_cmp(self) -> dict[str, Any]:
-        left = self.p_primary()
-        if self.at("op"):
+        left = self.p_add()
+        if self.at("op") and self.cur.value in CMP_OPS:
             op = self.take()
-            right = self.p_primary()
+            right = self.p_add()
             return {"k": "cmp", "op": op.value, "l": left, "r": right, "pos": op.pos}
         if self.at("kw", "in"):
             t = self.take()
             self.take("punct", "[")
             items = []
             if not self.at("punct", "]"):
-                items.append(self.p_primary())
+                items.append(self.p_add())
                 while self.at("punct", ","):
                     self.take()
-                    items.append(self.p_primary())
+                    items.append(self.p_add())
             self.take("punct", "]")
             if not items:
                 raise ExprError("empty list after in", t.pos, self.text)
             return {"k": "in", "x": left, "items": items, "pos": t.pos}
         return left
 
+    def p_add(self) -> dict[str, Any]:
+        node = self.p_mul()
+        while self.at("op") and self.cur.value in ("+", "-"):
+            op = self.take()
+            node = {"k": "arith", "op": op.value, "l": node, "r": self.p_mul(), "pos": op.pos}
+        return node
+
+    def p_mul(self) -> dict[str, Any]:
+        node = self.p_unary()
+        while self.at("op") and self.cur.value in ("*", "/"):
+            op = self.take()
+            node = {"k": "arith", "op": op.value, "l": node, "r": self.p_unary(), "pos": op.pos}
+        return node
+
+    def p_unary(self) -> dict[str, Any]:
+        if self.at("op", "-"):
+            t = self.take()
+            x = self.p_unary()
+            if x["k"] == "lit" and x["t"] in NUMERIC:
+                x["v"] = -x["v"]
+                return x
+            return {"k": "neg", "x": x, "pos": t.pos}
+        return self.p_primary()
+
     def p_primary(self) -> dict[str, Any]:
         t = self.cur
         if t.kind == "punct" and t.value == "(":
             self.take()
-            node = self.p_or()
+            node = self.p_expr()
             self.take("punct", ")")
             return node
         if t.kind == "num":
@@ -189,9 +229,26 @@ class _Parser:
         if t.kind == "kw" and t.value in ("true", "false"):
             self.take()
             return {"k": "lit", "t": BOOL, "v": t.value == "true", "pos": t.pos}
+        nxt = self.toks[self.i + 1] if self.i + 1 < len(self.toks) else t
+        if t.kind == "ident" and t.value in FUNCTIONS and nxt.kind == "punct" and nxt.value == "(":
+            return self.p_function()
         if t.kind == "ident" or (t.kind == "kw" and t.value == "self"):
             return self.p_path()
         raise ExprError(f"unexpected {t.value!r}" if t.kind != "eof" else "unexpected end of expression", t.pos, self.text)
+
+    def p_function(self) -> dict[str, Any]:
+        name = self.take("ident")
+        self.take("punct", "(")
+        args = [self.p_expr()]
+        while self.at("punct", ","):
+            self.take()
+            args.append(self.p_expr())
+        self.take("punct", ")")
+        lo, hi = FUNCTIONS[name.value]
+        if not lo <= len(args) <= hi:
+            want = str(lo) if lo == hi else (f"{lo} to {hi}" if hi < 99 else f"at least {lo}")
+            raise ExprError(f"{name.value}() takes {want} argument(s), found {len(args)}", name.pos, self.text)
+        return {"k": "fn", "f": name.value, "args": args, "pos": name.pos}
 
     def p_path(self) -> dict[str, Any]:
         start = self.cur
@@ -343,6 +400,13 @@ def _literal_for(node: dict[str, Any], other_t: str, ctx: Context, text: str) ->
     return base
 
 
+def _scalar(t: str, where: dict[str, Any], text: str, what: str) -> None:
+    if t.startswith(COLLECTION):
+        raise ExprError(f"{what} a collection: use size(), sum(), isEmpty() or notEmpty()", where["pos"], text)
+    if t.startswith(CLASS):
+        raise ExprError(f"{what} a reference: use isSet() or navigate to an attribute", where["pos"], text)
+
+
 def typecheck(node: dict[str, Any], ctx: Context, text: str = "") -> str:
     """Type of the expression; annotates every node with `t`. Raises ExprError on the first problem."""
     k = node["k"]
@@ -366,10 +430,8 @@ def typecheck(node: dict[str, Any], ctx: Context, text: str = "") -> str:
     if k == "cmp":
         lt = _side(node["l"], node["r"], ctx, text)
         rt = _side(node["r"], node["l"], ctx, text)
-        if lt.startswith(COLLECTION) or rt.startswith(COLLECTION):
-            raise ExprError("a collection cannot be compared: use size(), sum(), isEmpty() or notEmpty()", node["pos"], text)
-        if lt.startswith(CLASS) or rt.startswith(CLASS):
-            raise ExprError("a reference cannot be compared: use isSet() or navigate to an attribute", node["pos"], text)
+        _scalar(lt, node, text, "cannot compare")
+        _scalar(rt, node, text, "cannot compare")
         if not _compatible(lt, rt):
             raise ExprError(f"cannot compare {type_name(lt)} with {type_name(rt)}", node["pos"], text)
         if node["op"] in ("<", "<=", ">", ">=") and lt not in NUMERIC and lt not in TEMPORAL:
@@ -378,19 +440,60 @@ def typecheck(node: dict[str, Any], ctx: Context, text: str = "") -> str:
         return BOOL
     if k == "in":
         xt = typecheck(node["x"], ctx, text)
-        if xt.startswith((COLLECTION, CLASS)):
-            raise ExprError("'in' tests a single value", node["pos"], text)
+        _scalar(xt, node, text, "'in' tests a single value, not")
         for item in node["items"]:
             it = _literal_for(item, xt, ctx, text) or typecheck(item, ctx, text)
             if not _compatible(xt, it):
                 raise ExprError(f"cannot compare {type_name(xt)} with {type_name(it)}", item["pos"], text)
         node["t"] = BOOL
         return BOOL
+    if k == "arith":
+        lt, rt = typecheck(node["l"], ctx, text), typecheck(node["r"], ctx, text)
+        _scalar(lt, node, text, f"'{node['op']}' cannot take")
+        _scalar(rt, node, text, f"'{node['op']}' cannot take")
+        if node["op"] == "-" and lt in TEMPORAL and rt in TEMPORAL:
+            node["t"] = "int"                                # days between two dates
+            return "int"
+        if lt not in NUMERIC or rt not in NUMERIC:
+            raise ExprError(f"'{node['op']}' needs numbers, found {type_name(lt)} and {type_name(rt)}", node["pos"], text)
+        node["t"] = "int" if lt == rt == "int" and node["op"] != "/" else "number"
+        return node["t"]
+    if k == "neg":
+        t = typecheck(node["x"], ctx, text)
+        if t not in NUMERIC:
+            raise ExprError(f"'-' needs a number, found {type_name(t)}", node["pos"], text)
+        node["t"] = t
+        return t
+    if k == "fn":
+        ts = [typecheck(a, ctx, text) for a in node["args"]]
+        if node["f"] == "round":
+            if ts[0] not in NUMERIC or (len(ts) > 1 and ts[1] != "int"):
+                raise ExprError("round() takes a number and an optional integer number of decimals", node["pos"], text)
+            node["t"] = "number"
+        else:                                                # coalesce: the first value that is set
+            for a, t in zip(node["args"], ts):
+                _scalar(t, a, text, "coalesce() cannot take")
+                if not _compatible(ts[0], t):
+                    raise ExprError(f"coalesce() mixes {type_name(ts[0])} and {type_name(t)}", a["pos"], text)
+            node["t"] = ts[0]
+        return node["t"]
+    if k == "if":
+        ct = typecheck(node["c"], ctx, text)
+        if ct != BOOL:
+            raise ExprError(f"'if' needs a boolean condition, found {type_name(ct)}", node["c"]["pos"], text)
+        at = _side(node["a"], node["b"], ctx, text)
+        bt = _side(node["b"], node["a"], ctx, text)
+        _scalar(at, node["a"], text, "'if' cannot give")
+        _scalar(bt, node["b"], text, "'if' cannot give")
+        if not _compatible(at, bt):
+            raise ExprError(f"'then' gives {type_name(at)}, 'else' gives {type_name(bt)}", node["pos"], text)
+        node["t"] = at if at == bt or at not in NUMERIC else "number"
+        return node["t"]
     raise ExprError(f"unknown node {k}")
 
 
 def _side(node: dict[str, Any], other: dict[str, Any], ctx: Context, text: str) -> str:
-    """One side of a comparison: a bare name is read as a literal of the enum on the other side."""
+    """One side of a comparison (or of an if): a bare name is read as a literal of the enum on the other side."""
     if node["k"] == "path" and not node["call"] and len(node["segs"]) == 1:
         try:
             ot: str | None = typecheck(other, ctx, text)
@@ -412,17 +515,18 @@ def check(text: str, ctx: Context, expect: str | None = None) -> tuple[dict[str,
     return node, t
 
 
+def children(node: dict[str, Any]) -> list[dict[str, Any]]:
+    out = [node[k] for k in ("x", "l", "r", "c", "a", "b") if isinstance(node.get(k), dict)]
+    return out + list(node.get("items", [])) + list(node.get("args", []))
+
+
 def features_used(node: dict[str, Any]) -> list[tuple[str, ...]]:
     """Every navigation of a typed tree as (class, feature, feature…), in order of appearance."""
     out: list[tuple[str, ...]] = []
-    k = node["k"]
-    if k == "path" and node.get("ref") and len(node["ref"]) > 1 and not node["ref"][0].startswith("@"):
+    if node["k"] == "path" and node.get("ref") and len(node["ref"]) > 1 and not node["ref"][0].startswith("@"):
         out.append(tuple(node["ref"]))
-    for key in ("x", "l", "r"):
-        if key in node and isinstance(node[key], dict):
-            out += features_used(node[key])
-    for x in node.get("items", []):
-        out += features_used(x)
+    for c in children(node):
+        out += features_used(c)
     return out
 
 
@@ -444,17 +548,207 @@ def to_text(node: dict[str, Any]) -> str:
     if k == "not":
         return "not " + _wrap(node["x"], "not")
     if k == "cmp":
-        return f"{to_text(node['l'])} {node['op']} {to_text(node['r'])}"
+        return f"{_wrap(node['l'], 'cmp')} {node['op']} {_wrap(node['r'], 'cmp')}"
     if k == "in":
-        return f"{to_text(node['x'])} in [{', '.join(to_text(i) for i in node['items'])}]"
+        return f"{_wrap(node['x'], 'in')} in [{', '.join(to_text(i) for i in node['items'])}]"
+    if k == "arith":
+        return f"{_wrap(node['l'], node['op'])} {node['op']} {_wrap(node['r'], node['op'], right=True)}"
+    if k == "neg":
+        return "-" + _wrap(node["x"], "*")
+    if k == "fn":
+        return f"{node['f']}({', '.join(to_text(a) for a in node['args'])})"
+    if k == "if":
+        return f"if {to_text(node['c'])} then {to_text(node['a'])} else {to_text(node['b'])}"
     return "?"
 
 
-def _wrap(node: dict[str, Any], outer: str) -> str:
+_PREC = {"or": 1, "and": 2, "not": 3, "cmp": 4, "in": 4, "+": 5, "-": 5, "*": 6, "/": 6}
+
+
+def _wrap(node: dict[str, Any], outer: str, right: bool = False) -> str:
     s = to_text(node)
     inner = node["k"]
-    if inner in ("and", "or") and (inner != outer or outer == "not"):
+    if inner == "if" or (outer == "not" and inner in ("cmp", "in", "and", "or")):
         return f"({s})"
-    if outer == "not" and inner in ("cmp", "in"):
+    ip = _PREC.get(node["op"] if inner == "arith" else inner)
+    op = _PREC.get(outer)
+    if ip is None or op is None:
+        return s
+    if ip < op or (ip == op and (right or inner in ("cmp", "in"))):
         return f"({s})"
     return s
+
+
+# --------------------------------------------------------------------------- #
+# SQL
+# --------------------------------------------------------------------------- #
+@dataclass
+class SqlContext:
+    """A typed expression as PostgreSQL on one row (`alias`) of the class, with the metamodel's storage mapping.
+    `variables` gives the SQL of each variable (`transition` -> "(p_extra -> 'transition' ->> 'key')")."""
+    e: dict[str, Any]
+    cls: str
+    alias: str = "r"
+    schema: str = "public"
+    variables: dict[str, str] = field(default_factory=dict)
+    _n: int = 0
+
+    def fresh(self) -> str:
+        self._n += 1
+        return f"x{self._n}"
+
+    def table(self, cname: str) -> str:
+        if cname in E.BUILTIN_CLASSES:
+            return f"{self.schema}.profiles"
+        c = self.e["classes"][cname]
+        return f"{self.schema}.{c.get('table') or E.default_table(cname, self.e['language'])}"
+
+
+def ref_store(e: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    """(class, reference) -> how its target rows are reached from a row of the class:
+    `fk` (column on this table), `inverse` (column on the target table), `join` (a join table)."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for col in E.reference_columns(e):
+        holder, fname = col["from"]
+        if col["many"]:
+            table = f"{(e['classes'][holder].get('table') or E.default_table(holder, e['language']))}_{col['field']}"
+            jt = {"join": col["spec"].get("join_table") or table, "here": f"{M.snake(holder)}_id",
+                  "there": f"{col['field']}_id" if col["target"] == holder else f"{M.snake(col['target'])}_id"}
+            out[(holder, fname)] = {"kind": "join", "target": col["target"], **jt}
+            if col["inverse"]:
+                icls, iref = col["inverse"]
+                out[(icls, iref)] = {"kind": "join", "target": holder, "join": jt["join"], "here": jt["there"], "there": jt["here"]}
+            continue
+        if col["holder"] == holder:                               # the foreign key is on this class
+            out[(holder, fname)] = {"kind": "fk", "target": col["target"], "column": col["field"]}
+            if col["inverse"]:
+                icls, iref = col["inverse"]
+                out[(icls, iref)] = {"kind": "inverse", "target": holder, "column": col["field"]}
+        else:                                                     # containment without opposite: the column is on the part
+            out[(holder, fname)] = {"kind": "inverse", "target": col["holder"], "column": col["field"]}
+    return out
+
+
+def _sql_literal(node: dict[str, Any]) -> str:
+    v = node["v"]
+    if node["t"] == BOOL:
+        return "true" if v else "false"
+    if node["t"].startswith(ENUM):
+        return "'" + (str(v) if node["t"].startswith(ENUM + "@") else E.literal_key(str(v))) + "'"
+    if node["t"] in NUMERIC:
+        return str(v)
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def _is_set(value: str, t: str) -> str:
+    return f"nullif(trim({value}), '') is not null" if t in TEXTUAL else f"{value} is not null"
+
+
+def _path_sql(node: dict[str, Any], ctx: SqlContext) -> str:
+    segs: list[str] = node["segs"]
+    call = node["call"]
+    if segs and node.get("ref") and node["ref"][0].startswith("@"):
+        if segs[0] not in ctx.variables:
+            raise ExprError(f"no SQL for the variable '{segs[0]}' here", node["pos"])
+        return ctx.variables[segs[0]]
+    store = ref_store(ctx.e)
+    e = ctx.e
+    cname = ctx.cls
+    alias = ctx.alias                    # alias of the current row(s)
+    frm: list[str] = []                  # FROM and JOIN clauses of the subquery (empty: still on the row itself)
+    where: list[str] = []
+    many = False
+    value: str | None = None
+    value_t: str | None = None
+    last_fk: str | None = None           # `alias.column` of the last hop when it is a foreign key on the row before
+    for i, seg in enumerate(segs):
+        if cname in E.BUILTIN_CLASSES:                       # User: only email
+            value, value_t = f"{alias}.email", "email"
+            continue
+        attrs, refs = E.features(e, cname)
+        if seg in attrs:
+            value = f"{alias}.{E.field_key(seg, attrs[seg])}"
+            value_t = feature_type(attrs[seg], e, False)
+            continue
+        how = store.get((cname, seg))
+        if how is None:
+            raise ExprError(f"no storage for {cname}.{seg}", node["pos"])
+        target = how["target"]
+        x = ctx.fresh()
+        many = many or refs[seg]["upper"] != 1
+        if how["kind"] == "fk":
+            cond = f"{x}.id = {alias}.{how['column']}"
+            last_fk = f"{alias}.{how['column']}"
+            tables = [f"{ctx.table(target)} {x}"]
+        elif how["kind"] == "inverse":
+            cond = f"{x}.{how['column']} = {alias}.id"
+            last_fk = None
+            tables = [f"{ctx.table(target)} {x}"]
+        else:
+            j, x = x, ctx.fresh()                        # the join table first, then the target rows
+            cond = f"{j}.{how['here']} = {alias}.id"
+            last_fk = None
+            tables = [f"{ctx.schema}.{how['join']} {j}", f"join {ctx.table(target)} {x} on {x}.id = {j}.{how['there']}"]
+        if not frm:
+            frm, where = tables, [cond]
+        else:
+            frm.append(f"join {tables[0]} on {cond}" if len(tables) == 1
+                       else f"join {tables[0]} on {cond} {tables[1]}")
+        alias, cname = x, target
+    sub = f"from {' '.join(frm)} where {' and '.join(where)}" if frm else ""
+    if call is None:
+        if value is None:
+            raise ExprError("a reference has no SQL value: navigate to an attribute or use isSet()", node["pos"])
+        return value if not frm else f"(select {value} {sub})"
+    if call == "sum":
+        return f"(select coalesce(sum({value}), 0) {sub})"
+    if call == "size":
+        return f"(select count(*) {sub})"
+    if call == "notEmpty":
+        return f"exists (select 1 {sub})"
+    if call == "isEmpty" and many:
+        return f"not exists (select 1 {sub})"
+    # a single value: an attribute, or a reference (set = the row exists)
+    if value is not None:
+        test = _is_set(value if not frm else f"(select {value} {sub})", value_t or "")
+    elif last_fk is not None and len(frm) == 1:
+        test = f"{last_fk} is not null"
+    else:
+        test = f"exists (select 1 {sub})"
+    return test if call == "isSet" else f"not ({test})"
+
+
+def to_sql(node: dict[str, Any], ctx: SqlContext) -> str:
+    """PostgreSQL for a typed tree. Comparisons follow SQL's null logic: wrap a boolean in coalesce(…, false)
+    where a definite answer is needed."""
+    k = node["k"]
+    if k == "lit":
+        return _sql_literal(node)
+    if k == "path":
+        return _path_sql(node, ctx)
+    if k in ("and", "or"):
+        return "(" + f" {k} ".join(to_sql(x, ctx) for x in node["items"]) + ")"
+    if k == "not":
+        return f"not ({to_sql(node['x'], ctx)})"
+    if k == "cmp":
+        return f"{to_sql(node['l'], ctx)} {node['op']} {to_sql(node['r'], ctx)}"
+    if k == "in":
+        return f"{to_sql(node['x'], ctx)} in ({', '.join(to_sql(i, ctx) for i in node['items'])})"
+    if k == "arith":
+        l, r = to_sql(node["l"], ctx), to_sql(node["r"], ctx)
+        lt, rt = node["l"].get("t", ""), node["r"].get("t", "")
+        if node["op"] == "-" and lt in TEMPORAL and rt in TEMPORAL:
+            return f"({l}::date - {r}::date)" if "datetime" in (lt, rt) else f"({l} - {r})"
+        if node["op"] == "/":
+            return f"({l}::numeric / {r})"
+        return f"({l} {node['op']} {r})"
+    if k == "neg":
+        return f"-({to_sql(node['x'], ctx)})"
+    if k == "fn":
+        args = [to_sql(a, ctx) for a in node["args"]]
+        if node["f"] == "round":
+            return f"round(({args[0]})::numeric{', ' + args[1] if len(args) > 1 else ''})"
+        return f"coalesce({', '.join(args)})"
+    if k == "if":
+        return f"case when {to_sql(node['c'], ctx)} then {to_sql(node['a'], ctx)} else {to_sql(node['b'], ctx)} end"
+    raise ExprError(f"unknown node {k}")

@@ -55,6 +55,10 @@ def post(data: dict) -> int:
                                     f"{root / METAMODEL_FILE}. Update the metamodel in the same change, then "
                                     "`npm run model:sync` and, after applying the migration locally, `npm run model:drift`.")
         return 0
+    if path.name == "BEHAVIOR.md" and path.parent.name == "docs" and _app_root(path.parent.parent):
+        _context("PostToolUse", f"modeler: docs/BEHAVIOR.md is generated from {BEHAVIOR_FILE} (`npm run model:sync`) and "
+                                f"rewritten every time: the change belongs in {BEHAVIOR_FILE}.")
+        return 0
     if path.name == "DOMAIN.md" and path.parent.name == "docs" and _app_root(path.parent.parent):
         _context("PostToolUse", "modeler: docs/DOMAIN.md is generated from domain.ecore.yaml (`npm run model:sync`). "
                                 "If this is the user's note to translate, leave it; otherwise the change belongs in "

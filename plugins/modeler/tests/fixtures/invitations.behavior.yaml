@@ -23,7 +23,18 @@ derivations:
       and (mealsMethod = none or mealsAmount.isSet())
       and (travelMethod = none or travelAmount.isSet())
       and fundsTotal = totalAmount
-    # compensationAmount, accommodationPerNight, mealsPerDay, totalAmount: arithmetic, still computed in code
+    compensationAmount: >
+      if compensationType = hourly then round(coalesce(hours, 0) * coalesce(hourlyRate, 0), 2)
+      else if compensationType = flat then coalesce(flatAmount, 0) else 0
+    accommodationPerNight: >
+      if accommodationMethod <> none and accommodationAmount.isSet()
+      then round(accommodationAmount / (if endDate - startDate > 1 then endDate - startDate else 1), 2) else 0
+    mealsPerDay: if mealsMethod <> none and mealsAmount.isSet() then round(mealsAmount / (endDate - startDate + 1), 2) else 0
+    totalAmount: >
+      compensationAmount
+      + (if accommodationMethod <> none then coalesce(accommodationAmount, 0) else 0)
+      + (if mealsMethod <> none then coalesce(mealsAmount, 0) else 0)
+      + (if travelMethod <> none then coalesce(travelAmount, 0) else 0)
 
 workflows:
   Invitation:

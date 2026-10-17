@@ -23,9 +23,13 @@ Riferimenti completi, da leggere prima di scrivere i file:
   [references/behavior-notation.md](references/behavior-notation.md).
 
 Comandi utili (dal plugin `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/modeler.py" …`, nell'app `npm run model:*`):
-- `validate` (metamodello e, se c'è, `behavior.yaml` contro di esso), `show --format emfatic|mermaid|markdown|storage|json|yaml`;
-- `sync [--force]` (rigenera `metamodel.json` e `docs/DOMAIN.md`), `docs` (stato di `docs/DOMAIN.md`: allineato,
+- `validate` (metamodello e, se c'è, `behavior.yaml` contro di esso), `show --format emfatic|mermaid|markdown|storage|json|yaml`,
+  `behavior --format markdown|mermaid|json|sql|engine` (il comportamento spiegato, i diagrammi di stato, le
+  espressioni tipizzate con il loro SQL, le versioni del workflow come le memorizza il motore);
+- `sync [--force]` (rigenera `metamodel.json` e `docs/DOMAIN.md`; con `behavior.yaml` anche `behavior.json` e
+  `docs/BEHAVIOR.md`), `docs` (stato di `docs/DOMAIN.md`: allineato,
   da rigenerare, o modifiche a mano da tradurre nel metamodello);
 - `diff <vecchio> <nuovo>` (yaml, `.ecore` o proposta `.json`);
 - `export -o <nome>.ecore` / `import <file>.ecore` per Eclipse EMF ed Epsilon;
-- `reverse --db <DSN>` e `drift [--db <DSN>]` contro un database reale.
+- `reverse --db <DSN>` e `drift [--db <DSN>]` contro un database reale (`drift` confronta anche i workflow con la
+  versione pubblicata nelle tabelle `workflow_*`, se l'app le ha).
