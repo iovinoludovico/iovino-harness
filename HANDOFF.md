@@ -1,5 +1,5 @@
 # Handoff — comportamento nel modellatore web e bus dei connettori (plugin modeler)
-_Aggiornato: 2026-10-17 · branch `feat/modeler-behavior-view` (4 commit avanti a `origin/main`, non pushato)_
+_Aggiornato: 2026-10-17 · branch `main` (PR #11 unita, `d2c3b6a`)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`), installato con `./install.sh`. Questa sessione
@@ -8,8 +8,8 @@ il modello di comportamento (`behavior.yaml`) accanto alla struttura nel modella
 classi puntano alla stessa.
 
 ## Stato
-- `origin/main` è alla PR #10 (`eb765a9`): **core 0.9.1, modeler 0.13.0**. Nessun branch remoto aperto.
-- Il branch locale `feat/modeler-behavior-view` contiene, già con il commit di release `1a50ab3` (**modeler 0.14.0**):
+- `origin/main` è alla PR #11 (`d2c3b6a`, squash dei commit sotto): **core 0.9.1, modeler 0.14.0**. Nessun branch remoto aperto.
+- La PR #11 ha portato (release `1a50ab3`, **modeler 0.14.0**):
   - `cbe096d` comportamento nel modellatore web: l'editor (`plugins/modeler/kit/metamodel-editor.js`) accetta la
     proprietà `behavior` (`src/lib/modeler/behavior.json`): attributi derivati `/nome` con formula nel tooltip e nel
     pannello, attributo di stato `⟳` con conteggio di stati e transizioni, transizioni nel pannello, evento `select`
@@ -30,7 +30,7 @@ classi puntano alla stessa.
     → 134 pass, 0 todo (hub(8) a ogni dimensione: un bus di 8, una freccia, un'etichetta)
   - typecheck di `metamodel-modeler.tsx` e `behavior-view.tsx` con `tsc` (strict, stub di `metamodel-actions`) → ok
   - `claude plugin validate .` → passed; `python3 scripts/release.py` → fatto (`--write`, modeler 0.14.0)
-- Non committato: nulla (solo questo `HANDOFF.md`).
+- Non committato: nulla.
 
 ## Decisioni
 - Il comportamento nel web è **solo lettura**: le proposte dal modellatore restano sul metamodello; `behavior.yaml`
@@ -46,8 +46,8 @@ classi puntano alla stessa.
   etichetta per sorgente alla porta di uscita; bus instradati prima dei connettori singoli.
 
 ## Problemi aperti
-- Il branch non è ancora su GitHub: niente PR, niente CI. `gh` 2.102 è installato e autenticato (account
-  iovinoludovico): `/core:ship` funziona da qui.
+- Il repository non ha CI (`.github/workflows` assente): i controlli sono quelli locali. `gh` 2.102 è installato
+  e autenticato (account iovinoludovico): `/core:ship` funziona da qui.
 - La vista del comportamento e il bus non sono ancora stati visti in un'app reale (solo test di layout e tsc):
   da controllare in guest-invitations-af dopo `/modeler:install` (0.14.0), con `behavior.yaml` e la pagina che passa
   `behavior={behavior}`.
@@ -60,8 +60,7 @@ classi puntano alla stessa.
   grafico e le proposte sul behavior dal web).
 
 ## Prossimi passi
-1. Pubblicare con `/core:ship` (push, PR, CI); merge su `main` solo dopo conferma. Dopo il merge, sugli altri computer
-   `claude plugin update modeler@iovino-harness` (0.14.0).
+1. Sugli altri computer `claude plugin update modeler@iovino-harness` (0.14.0).
 2. In guest-invitations-af: `/reload-plugins`, `/modeler:install` (barra dell'editor `v0.14.0`); se manca,
    `behavior.yaml` da `plugins/modeler/tests/fixtures/invitations.behavior.yaml` e `derived: true` sugli attributi
    calcolati; nella pagina admin togliere il commento a `import behavior from "@/lib/modeler/behavior.json"` e passare
