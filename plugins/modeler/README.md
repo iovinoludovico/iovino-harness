@@ -40,9 +40,10 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   prints derivations and guards as PostgreSQL, `--format engine` the workflow versions as the runtime engine
   stores them (clauses, principals, timed triggers); `drift` compares the workflows with the versions published in
   the database. In the web modeler, when the page passes `behavior.json` (`install` says so while it does not),
-  the diagram shows the behaviour next to the structure: a class with a workflow has a «workflow» head and its
-  **state diagram as a satellite** under the box (states in their colour, transitions in the colour of the target,
-  timed ones dashed, final sinks on a bus, hover highlight; toggle `⟳ Workflow` in the toolbar), derived
+  the diagram shows the behaviour next to the structure: a class with a workflow has a «workflow» head and,
+  when selected, its **state diagram in a panel under the canvas** (laid out at the panel's width with the real
+  text widths: states in their colour, transitions in the colour of the target, timed ones dashed, final sinks on a
+  bus, hover highlight; the panel follows the selection, so the domain diagram stays clean), derived
   attributes are marked `/name` with the formula in the tooltip and in the panel, the state attribute `⟳`, and the
   features the behaviour uses (formulas, guards, principals, recipients, role scopes: the `uses` map of
   `behavior.json`) carry ` ·ƒ` with "used by" in the tooltip, a class without a workflow but involved has `ƒ` in its

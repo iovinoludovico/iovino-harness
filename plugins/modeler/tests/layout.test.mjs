@@ -218,6 +218,10 @@ const checkWorkflow = (L, what) => {
   }
   for (const b of L.boxes) assert.ok(b.w >= Layout.WF.minBox, `${what}: state ${b.key} narrower than minBox`);
   for (const e of L.edges) assert.equal(e.arrow.length, 4, `${what}: arrow of ${e.id}`);
+  // every label (its background) inside the diagram, and wide enough for its text (as measured)
+  for (const l of labels) {
+    assert.ok(l.x >= 0 && l.y >= 0 && l.x + l.w <= L.width + 0.01 && l.y + l.h <= L.height + 0.01, `${what}: label of ${l.id} outside the diagram`);
+  }
 };
 
 test("workflowLayout: the invitations workflow (11 states, a 7-source cancel bus, a timed transition)", () => {
@@ -225,7 +229,7 @@ test("workflowLayout: the invitations workflow (11 states, a 7-source cancel bus
   const model = Layout.workflowModel(bh.workflows.Invitation, "it");
   assert.equal(model.states.length, 11);
   assert.equal(model.states.find((s) => s.key === "draft").label, "Bozza");
-  for (const width of [320, 420, 560, 800]) {
+  for (const width of [320, 560, 800, 1100]) {
     const L = Layout.workflowLayout(model.states, model.transitions, width);
     checkWorkflow(L, `invitations at ${width}`);
     assert.ok(L.width >= width);
@@ -261,40 +265,28 @@ test("workflowLayout: a 4-state workflow at small widths", () => {
   assert.deepEqual(Layout.workflowLayout([], [], 300), { width: 300, height: 0, boxes: [], edges: [] });
 });
 
-test("satellites: the state diagram sits under its class, is an obstacle for connectors and labels, is not stored", () => {
-  const raw = fixture("invitations.ecore.yaml");
+// the editor measures the real font: wider text gives wider labels and state boxes, and the invariants still hold
+test("workflowLayout: with a measure of the real text the labels fit their text", () => {
   const bh = behaviorFixture("invitations.ecore.yaml", "invitations.behavior.yaml");
-  const sizes = [];
-  for (let w = 400; w <= 1900; w += 250) for (const h of [480, 900]) sizes.push([w, h]);
-  for (const [w, h] of sizes) {
-    const mm = Layout.normalize(raw);
-    const opts = (n) => ({ state: bh.workflows[n]?.state || null, uses: bh.uses?.[n] || null, workflow: !!bh.workflows[n] });
-    const box = (n) => Layout.boxSize(mm, n, opts(n));
-    const sats = Object.fromEntries(Object.keys(mm.classes).filter((n) => bh.workflows[n]).map((n) => [n, Layout.satelliteOf(mm, n, bh.workflows[n], "it", opts(n))]));
-    assert.deepEqual(Object.keys(sats), ["Invitation"]);
-    const foot = (n) => Layout.footSize(box(n), sats[n] || null);
-    assert.ok(foot("Invitation").h > box("Invitation").h + sats.Invitation.h, "the footprint holds class, gap and satellite");
-    const before = Object.keys(mm.diagram).sort();
-    Object.assign(mm.diagram, Layout.autoLayout(mm, foot, { force: true, width: w, height: h }));
-    assert.deepEqual(Object.keys(mm.diagram).sort(), [...Object.keys(mm.classes), ...Object.keys(mm.enums)].sort(), "only classes and enums are placed");
-    assert.ok(before.length <= Object.keys(mm.diagram).length);
-    const extra = Object.entries(sats).map(([n, sat]) => [`sat:${n}`, Layout.satObstacle(mm.diagram[n], sat)]);
-    const { edges, boxes } = Layout.routeEdges(mm, box, { extra, uses: bh.uses });
-    const satRects = Object.fromEntries(Object.entries(sats).map(([n, sat]) => [`sat:${n}`, Layout.satRect(mm.diagram[n], sat)]));
-    const R = satRects["sat:Invitation"], B = boxes.Invitation;
-    assert.equal(R.x, B.x, `${w}x${h}: satellite under its class`);
-    assert.equal(R.y, B.y + B.h + Layout.WF.satGap);
-    // the satellite is a box like the others: nothing overlaps it, no connector or label runs over it
-    // (the other invariants of this 13-class model are a known limit of the masonry layout: NOTES.md 2026-10-17)
-    for (const [n, box] of Object.entries(boxes)) assert.ok(!overlap(R, box), `${w}x${h}: ${n} overlaps the satellite`);
-    const obstacle = Object.fromEntries(extra)["sat:Invitation"];
-    for (const e of edges) for (const r of runs(e)) for (const sg of segs(r.pts)) {
-      assert.ok(!inside(sg, obstacle, -1), `${w}x${h}: connector ${e.key} crosses the satellite`);
+  const model = Layout.workflowModel(bh.workflows.Invitation, "it");
+  const wide = (text, font, bold = false) => text.length * font * (bold ? 0.78 : 0.73);   // 1.3x the estimate
+  for (const width of [560, 1100]) {
+    const est = Layout.workflowLayout(model.states, model.transitions, width);
+    const L = Layout.workflowLayout(model.states, model.transitions, width, { measure: wide });
+    checkWorkflow(L, `measured invitations at ${width}`);
+    for (const e of L.edges) {
+      const other = est.edges.find((x) => x.id === e.id);
+      assert.ok(e.label.w >= other.label.w, `label of ${e.id} not wider with the wider measure`);
+      for (const line of e.label.lines) assert.ok(wide(line, Layout.WF.labelFont) <= e.label.w, `line "${line}" wider than its label`);
     }
-    for (const e of edges) for (const l of e.labels) assert.ok(!overlap(l, R), `${w}x${h}: label "${l.text}" covers the satellite`);
-    // the reference labels of the features the behaviour uses carry the mark
-    assert.ok(edges.some((e) => e.labels.some((l) => l.text.endsWith(" ·ƒ"))), `${w}x${h}: a used reference is marked`);
+    for (const b of L.boxes) for (const line of b.lines) assert.ok(wide(line, Layout.WF.font, true) <= b.w, `state line "${line}" wider than its box`);
   }
+  // a long label wraps on at most 3 lines, by measure
+  const long = Layout.workflowModel({ states: { a: { initial: true }, b: { final: true } },
+    transitions: { go: { from: ["a"], to: "b", by: ["admin"], label: { it: "Una transizione con un'etichetta davvero molto lunga che va a capo" } } } }, "it");
+  const L = Layout.workflowLayout(long.states, long.transitions, 400, { measure: wide });
+  assert.ok(L.edges[0].label.lines.length <= 3 && L.edges[0].label.lines.length >= 2);
+  assert.ok(L.edges[0].label.lines[L.edges[0].label.lines.length - 1].endsWith("…") || L.edges[0].label.lines.join(" ").includes("capo"));
 });
 
 test("rows: involved features are marked and the workflow head adds the stereotype height", () => {
