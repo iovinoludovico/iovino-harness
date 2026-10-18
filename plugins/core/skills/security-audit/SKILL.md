@@ -93,7 +93,10 @@ I casi visti al primo deploy di un'app, da controllare uno per uno contro `docs/
 - registrazioni attive solo se l'hook di dominio è attivo (A.1 e A.4);
 - proxy host in NPM con i buffer per i cookie di Supabase (`proxy_buffer_size 128k; proxy_buffers 4 256k;
   proxy_busy_buffers_size 256k;`): senza, 502 sul callback dopo il login (non leggibile da fuori: chiedere
-  all'utente di controllare la scheda Advanced).
+  all'utente di controllare la scheda Advanced);
+- build in esercizio: il badge nell'header dell'app in produzione (`#<commit> · <sha>`, sezione «Build visibile» di
+  `core:deploy`) corrisponde all'ultimo commit di `main` (`gh api repos/<owner>/<repo>/commits/main --jq .sha | cut -c1-7`);
+  se manca il badge o lo SHA è vecchio, il deploy non è arrivato (Watchtower, credenziali GHCR: `core:deploy` §8).
 
 ## Rapporto
 Tabella, un controllo per riga: blocco e controllo → esito (**OK** / **da correggere** / **da verificare a

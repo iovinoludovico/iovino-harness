@@ -1,5 +1,5 @@
-# Handoff — workflow nel modellatore (pannello in basso, livelli di coinvolgimento) e sandbox eseguibile
-_Aggiornato: 2026-10-18 · branch `main` (PR #14 unita, `c4998fd`)_
+# Handoff — revisione delle note: comportamento modificabile dal web, router a griglia, build visibile
+_Aggiornato: 2026-10-18 · branch `feat/core-harness-review-2026-10-18` (commit avanti a `origin/main`, non pushato)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: (1) la sandbox
@@ -10,6 +10,25 @@ quelle coinvolte dal comportamento e quelle solo strutturali.
 
 ## Stato
 - `origin/main` è alla PR #14 (`c4998fd`): **core 0.9.3, modeler 0.16.0**. Nessun branch remoto aperto.
+- Il branch locale `feat/core-harness-review-2026-10-18` (release **core 0.10.0, modeler 0.17.0**) applica le tre note aperte
+  di `NOTES.md` (tutte chiuse come applicate):
+  - `feat(core)`: build in esercizio nell'header (riga nelle convenzioni, «7b. Build visibile» in `core:deploy`, controllo nel
+    blocco F di `core:security-audit`);
+  - `feat(modeler)` router a griglia: `gridRoute` (corridoi liberi lungo i lati dei box e corsie nei varchi, cammino minimo per
+    lunghezza, svolte, tratti condivisi) usato quando nessuna Z/L è pulita; varco tra le colonne dimensionato sull'etichetta più
+    larga; candidati per le etichette lungo tutto il connettore; `invitations.ecore.yaml` nel ciclo delle invarianti (39
+    dimensioni: 0 attraversamenti, prima 22);
+  - `feat(modeler)` proposte del comportamento dal web: CLI (`behavior.from_editor/dumps/diff`, `proposals`/`pull`/`apply` con la
+    chiave `behavior`, `apply` valida contro il metamodello proposto, backup e commenti elencati, riscrive `behavior.yaml`) ed
+    editor (pannello del workflow con tabelle di stati, transizioni, ritorno; barra laterale: flag `derived` e formule, workflow
+    di una classe, eventi, ruoli, reazioni; `_behaviorIssues`; `save`/`change` con `behavior`; `Layout.behaviorSource/behaviorDiff`
+    testati contro la CLI; wrapper e azioni con la colonna `behavior` di `model_change_requests`, aggiunta al kit SQL in modo
+    idempotente, con fallback senza colonna).
+- Verificato (2026-10-18): `unittest` core 23 OK, modeler 94 OK (8 skip); `node --test` 179 pass (compreso `behavior.test.mjs`);
+  `tsc` sui TSX del kit; `claude plugin validate .`; nella sandbox il ciclo completo: stato `paused` e transizione `pause` aggiunti
+  dal pannello, letterale aggiunto all'enum, proposta salvata con `behavior`, `model:proposals` con le righe `behaviour: …`,
+  `model:apply --write` che riscrive `behavior.yaml` e `domain.ecore.yaml`, `sync`, `model:engine --write` e `db:engine`. La
+  sandbox è poi tornata ai modelli committati (modellatore 0.17.0 installato e committato).
 - La PR #14 (release modeler 0.16.0, core 0.9.3) sposta il diagramma degli stati dal satellite nella tela a un **pannello sotto la tela** che segue la selezione (compare selezionando una classe con workflow, sparisce altrimenti), con le larghezze del testo misurate su un canvas 2D (`workflowLayout(..., {measure})`, `wfWrap` a misura, spazio per la parola più lunga): le etichette restano dentro le forme. Rimossi satelliti, ingombro/ostacolo e toggle; `routeEdges(mm, size, {uses})`. Test: etichette dentro il diagramma e larghe quanto il testo misurato.
 - La PR #13 aveva portato (release `95866f8` modeler 0.15.0, `112ecf8` core 0.9.2):
   - `6b8e061` fix: `<entity>_available_transitions` restituiva righe avvolte in `{"jsonb_build_object": …}`; ora un array di oggetti (`engine.py`, test del testo SQL).
@@ -32,16 +51,18 @@ quelle coinvolte dal comportamento e quelle solo strutturali.
 - Il bug del layout masonry su modelli grandi non è stato affrontato qui: nota in `NOTES.md`, test del satellite limitato alle sue invarianti.
 
 ## Problemi aperti
-- Layout masonry: sul fixture `invitations.ecore.yaml` 22 dimensioni su 39 hanno un connettore che attraversa una classe, anche senza satelliti (nota 2026-10-17 in `NOTES.md`; script di misura: `tests/` non ancora, vedi la nota).
-- Proposte sul `behavior.yaml` dal modellatore web: non ancora fatte (resto della nota 2026-10-17).
 - Ereditati: motore generato non provato su un'app vera (la sandbox sì); `psql` assente sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. Sugli altri computer `claude plugin update modeler@iovino-harness` (0.16.0) e `core@iovino-harness` (0.9.3).
+1. `/core:ship` del branch `feat/core-harness-review-2026-10-18`; poi sugli altri computer `claude plugin update
+   modeler@iovino-harness` (0.17.0) e `core@iovino-harness` (0.10.0).
 2. Nella sandbox: provare lo scenario dalla UI con i quattro utenti (README «Scenario da provare»); modificare `behavior.yaml` (es. nuovo stato o reazione), `npm run model:sync && npm run model:engine -- --write && npm run db:engine` e vedere satellite, tabelle e motore seguire.
 3. In invitations-af: `/modeler:install` (0.15.0), passare `behavior={behavior}` nella pagina admin e guardare il satellite a 11 stati su un'app vera.
-4. Nota sul layout masonry: misurare e intervenire su `autoLayout`/router (vedi `NOTES.md`).
-5. Proposte sul comportamento dal web (resto della nota 2026-10-17).
+4. In invitations-af: migrazione `alter table public.model_change_requests add column if not exists behavior jsonb;`, badge di
+   build secondo `core:deploy` §7b se manca; provare una modifica del comportamento dal web e `model:apply`.
+5. Editing del comportamento dal web: il pannello si ridisegna a ogni modifica (scroll conservato, focus perso: un campo per volta);
+   le etichette degli stati nuovi vanno scritte a mano; un'enum come attributo di stato richiede il letterale corrispondente (il
+   controllo lo segnala). Da migliorare se dà fastidio nell'uso reale.
 
 ## Per riprendere
 `cd <clone> && claude` — i plugin si caricano da questa cartella: dopo una modifica usa `/reload-plugins`.

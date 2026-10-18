@@ -139,6 +139,14 @@ def _load_any(path: Path) -> dict[str, Any]:
     return E.load(path)
 
 
+def _behavior_of(path: Path) -> dict[str, Any] | None:
+    """The behaviour a proposal carries (`behavior` of the JSON, as the web modeler saves it), else None."""
+    if path.suffix != ".json":
+        return None
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    return B.from_editor(doc["behavior"]) if isinstance(doc, dict) and isinstance(doc.get("behavior"), dict) else None
+
+
 # --------------------------------------------------------------------------- #
 # Commands on the metamodel
 # --------------------------------------------------------------------------- #
@@ -342,9 +350,14 @@ def cmd_proposals(a) -> int:
               "in production `npm run model:pull` copies them from model_change_requests)")
         return 0
     current = E.load(meta_path)
+    bpath = behavior_file(meta_path)
+    bcurrent = B.load(bpath) if bpath is not None else {}
     for f in files:
         doc = json.loads(f.read_text(encoding="utf-8"))
         changes = E.diff(current, E.from_editor(doc.get("metamodel", doc)))
+        bprop = _behavior_of(f)
+        if bprop is not None:
+            changes += [f"behaviour: {c}" for c in B.diff(bcurrent, bprop)]
         print(f"{f.name}  by {doc.get('author', '?')}  {doc.get('note', '')}")
         for c in changes[:20]:
             print(f"    {c}")
@@ -378,7 +391,19 @@ def cmd_apply(a) -> int:
         print("\nThe proposal is not a valid metamodel: nothing was written.")
         return 1
     bpath = behavior_file(meta_path)
-    if bpath is not None:
+    bprop = _behavior_of(src)                                    # a proposal may carry the behaviour too
+    bchanges: list[str] = []
+    if bprop is not None:
+        bold = B.load(bpath) if bpath is not None else {}
+        bchanges = B.diff(bold, bprop)
+        print(f"\nBehaviour ({B.BEHAVIOR_FILE}):")
+        print("\n".join(f"  {c}" for c in bchanges) if bchanges else "  no changes")
+        brep = B.validate(bprop, new)
+        print(brep.render())
+        if not brep.ok:
+            print("\nThe proposal's behaviour is not valid against its metamodel: nothing was written.")
+            return 1
+    elif bpath is not None:
         brep = validate_behavior(new, bpath)
         if not brep.ok:
             print(f"\nThe proposal breaks {bpath.name} (fix the behaviour in the same change):\n" + brep.render())
@@ -416,6 +441,19 @@ def cmd_apply(a) -> int:
             E.dump(new, meta_path)
     else:
         E.dump(new, meta_path)
+    if bprop is not None and (bchanges or bpath is None):
+        # the behaviour is rewritten whole: its comments are not kept (the backup has them)
+        target = bpath or B.behavior_path(meta_path)
+        if target.exists():
+            bak = meta_path.parent / STATE_DIR / "backups" / f"{B.BEHAVIOR_FILE}.{dt.datetime.now():%Y%m%d-%H%M%S}"
+            bak.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(target, bak)
+            lost = E.comment_lines(target.read_text(encoding="utf-8"))
+            if lost:
+                print(f"\nwarning: {len(lost)} comment line(s) of {B.BEHAVIOR_FILE} are not kept (copy in {bak}):")
+                print("\n".join(f"  {line.strip()}" for line in lost[:10]))
+        B.dump(bprop, target)
+        print(f"wrote {target}")
     moved = []
     pending = src.resolve().parent == proposals_dir(meta_path).resolve()   # not a downloaded file elsewhere
     for f in ([src] if pending else []) + included:
@@ -478,7 +516,7 @@ def _other_proposals(meta_path: Path, src: Path, old: dict[str, Any],
 PULL_SQL = """
 with picked as (
   update public.model_change_requests set status = 'pulled'
-   where status = 'open' returning id, metamodel, note, author_email, created_at)
+   where status = 'open' returning *)
 select coalesce(json_agg(picked order by created_at), '[]') from picked
 """
 
@@ -557,8 +595,11 @@ def cmd_pull(a) -> int:
     d = proposals_dir(meta_path)
     for r in rows:
         name = str(r["created_at"]).replace(":", "-").replace(" ", "T")[:19] + f"-{str(r['id'])[:8]}.json"
-        _write_json(d / name, {"id": r["id"], "author": r.get("author_email"), "note": r.get("note"),
-                               "created_at": r["created_at"], "metamodel": r["metamodel"]})
+        doc = {"id": r["id"], "author": r.get("author_email"), "note": r.get("note"),
+               "created_at": r["created_at"], "metamodel": r["metamodel"]}
+        if r.get("behavior") is not None:                       # column added with the behaviour proposals
+            doc["behavior"] = r["behavior"]
+        _write_json(d / name, doc)
         print(f"  + {d / name}")
     print(f"{len(rows)} proposal(s) pulled" + ("; review them with `proposals`" if rows else ""))
     return 0

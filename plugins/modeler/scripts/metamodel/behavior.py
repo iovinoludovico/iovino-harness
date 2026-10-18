@@ -67,6 +67,207 @@ def loads(text: str) -> dict[str, Any]:
     return M.loads(text)
 
 
+class _Flow(dict):
+    """A mapping written on one line (flow style) by dumps()."""
+
+
+def _dumper():
+    yaml, Dumper = E._flow_dumper()
+    Dumper.add_representer(_Flow, lambda d, data: d.represent_mapping("tag:yaml.org,2002:map", data.items(), flow_style=True))
+    return yaml, Dumper
+
+
+def _expr_text(x: Any) -> str:
+    """An expression as one line: its canonical text when it parses, else its words joined by one space."""
+    try:
+        return X.to_text(X.parse(str(x)))
+    except X.ExprError:
+        return " ".join(str(x).split())
+
+
+def _tidy(raw: dict[str, Any]) -> dict[str, Any]:
+    """Expressions on one line (a folded `>` text keeps its newlines when loaded) before writing the file."""
+    r = copy.deepcopy(raw)
+    for cn, ders in _mapping(r.get("derivations")).items():
+        r["derivations"][cn] = {an: " ".join(str(x).split()) for an, x in _mapping(ders).items()}
+    for w in _mapping(r.get("workflows")).values():
+        for t in _mapping(_mapping(w).get("transitions")).values():
+            for k in ("when", "guard"):
+                if isinstance(_mapping(t).get(k), str):
+                    t[k] = " ".join(t[k].split())
+    for rx in _list(r.get("reactions")):
+        if isinstance(_mapping(rx).get("when"), str):
+            rx["when"] = " ".join(rx["when"].split())
+    return r
+
+
+def _clean(v: Any) -> Any:
+    """Drops what the notation leaves implicit: None, empty strings and lists, false flags. An empty mapping
+    stays: `boss: {}` declares a role, `expired: {}` an event."""
+    if isinstance(v, dict):
+        out = {}
+        for k, x in v.items():
+            if k in ("initial", "final") and x is False:
+                continue
+            c = _clean(x)
+            if c is None or c == "" or c == []:
+                continue
+            out[k] = c
+        return out
+    if isinstance(v, list):
+        return [_clean(x) for x in v if x is not None and x != ""]
+    return v
+
+
+def from_editor(doc: dict[str, Any]) -> dict[str, Any]:
+    """A behaviour proposal saved by the web modeler, back to the structure of behavior.yaml: typed expressions
+    ({text, type, ast, sql}) become their text, the runtime keys (entities, uses) go, implicit values are dropped,
+    a `from` of one state is written as that state."""
+    def text(x: Any) -> Any:
+        return x["text"] if isinstance(x, dict) and "text" in x and ("type" in x or "ast" in x) else x
+
+    raw: dict[str, Any] = {}
+    for key in ("metamodel", "doc"):
+        if doc.get(key):
+            raw[key] = doc[key]
+    raw["roles"] = {rn: {k: v for k, v in (r or {}).items()} for rn, r in _mapping(doc.get("roles")).items()}
+    raw["derivations"] = {cn: {an: text(ex) for an, ex in _mapping(ders).items()} for cn, ders in _mapping(doc.get("derivations")).items()}
+    raw["workflows"] = {}
+    for cn, w in _mapping(doc.get("workflows")).items():
+        w = _mapping(w)
+        states = {sn: {k: v for k, v in _mapping(st).items()} for sn, st in _mapping(w.get("states")).items()}
+        transitions = {}
+        for tn, t in _mapping(w.get("transitions")).items():
+            t = {k: (text(v) if k in ("when", "guard") else v) for k, v in _mapping(t).items()}
+            if isinstance(t.get("from"), list) and len(t["from"]) == 1:
+                t["from"] = t["from"][0]
+            transitions[tn] = t
+        raw["workflows"][cn] = {**{k: v for k, v in w.items() if k not in ("states", "transitions")}, "states": states, "transitions": transitions}
+    raw["events"] = {cn: {en: (ev or {}) for en, ev in _mapping(evs).items()} for cn, evs in _mapping(doc.get("events")).items()}
+    raw["reactions"] = [{k: (text(v) if k == "when" else v) for k, v in _mapping(r).items()} for r in _list(doc.get("reactions"))]
+    raw["subscriptions"] = [dict(_mapping(sub)) for sub in _list(doc.get("subscriptions"))]
+    return _clean(raw)
+
+
+def dumps(raw: dict[str, Any]) -> str:
+    """behavior.yaml from its structure: one section per key, one block per class, states, transitions,
+    reactions and subscriptions one per line (flow style), as the notation reference writes them.
+    Comments are not kept: callers back the file up and say so."""
+    yaml, Dumper = _dumper()
+    dump = lambda v: yaml.dump(v, Dumper=Dumper, sort_keys=False, allow_unicode=True, width=200).rstrip("\n")  # noqa: E731
+    block = E._Block                                                     # a mapping written one key per line
+    flow_map = lambda m: block({k: (_Flow(v) if isinstance(v, dict) else v) for k, v in m.items()})  # noqa: E731
+    r = _clean(_tidy(raw))
+    out = ["# Behaviour of the domain (behavior.yaml): roles, derivations, workflows, events, reactions.",
+           "# Edit it from the prompt (/modeler:metamodel), in the app's modeler (/admin/model) or by hand; `npm run",
+           "# model:validate` checks it against domain.ecore.yaml.", ""]
+    for key in ("metamodel", "doc"):
+        if r.get(key):   # a scalar: never a flow mapping at the top level (it would end the document)
+            scalar = yaml.safe_dump(r[key], allow_unicode=True, width=1000).strip()
+            out.append(f"{key}: {scalar.split(chr(10))[0] if scalar.endswith('...') else scalar}")
+    if r.get("roles"):
+        out += ["", dump(block({"roles": flow_map(r["roles"])}))]
+    if r.get("derivations"):
+        out += ["", "derivations:"]
+        for cn, ders in r["derivations"].items():
+            out += ["  " + line for line in dump(block({cn: block(ders)})).split("\n")]
+    if r.get("workflows"):
+        out += ["", "workflows:"]
+        for cn, w in r["workflows"].items():
+            body = block({k: v for k, v in w.items() if k not in ("states", "transitions", "revert")})
+            body["states"] = flow_map(w.get("states", {}))
+            body["transitions"] = flow_map(w.get("transitions", {}))
+            if w.get("revert"):
+                body["revert"] = _Flow(w["revert"])
+            out += ["  " + line for line in dump(block({cn: body})).split("\n")]
+    if r.get("events"):
+        out += ["", "events:"]
+        for cn, evs in r["events"].items():
+            out += ["  " + line for line in dump(block({cn: flow_map(evs)})).split("\n")]
+    for key in ("reactions", "subscriptions"):
+        if r.get(key):
+            out += ["", f"{key}:"] + ["  - " + dump(_Flow(item)) for item in r[key]]
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def dump(raw: dict[str, Any], path: str | Path) -> None:
+    Path(path).write_text(dumps(raw), encoding="utf-8")
+
+
+def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
+    """Human-readable changes between two behaviour models (for reviews and proposals), on the canonical form."""
+    a, b = expand(old), expand(new)
+    out: list[str] = []
+    EXPR = ("when", "guard", "at")
+
+    def same(x: Any, y: Any, key: str | None = None) -> bool:
+        if key in EXPR and isinstance(x, str) and isinstance(y, str):
+            return _expr_text(x) == _expr_text(y)          # the same expression written differently
+        return json_text({"v": x}) == json_text({"v": y})
+
+    def changed_keys(x: dict[str, Any], y: dict[str, Any], keys: tuple[str, ...]) -> list[str]:
+        return [k for k in keys if not same(x.get(k), y.get(k), k)]
+
+    for rn in b["roles"]:
+        if rn not in a["roles"]:
+            out.append(f"+ role {rn}" + (f" (per {b['roles'][rn]['scope']})" if b["roles"][rn].get("scope") else ""))
+        elif changed_keys(a["roles"][rn], b["roles"][rn], ("scope", "label")):
+            out.append(f"~ role {rn}: {', '.join(changed_keys(a['roles'][rn], b['roles'][rn], ('scope', 'label')))}")
+    out += [f"- role {rn}" for rn in a["roles"] if rn not in b["roles"]]
+    for cn in b["derivations"]:
+        for an, ex in b["derivations"][cn].items():
+            old_ex = a["derivations"].get(cn, {}).get(an)
+            if old_ex is None:
+                out.append(f"+ derivation {cn}.{an} = {_expr_text(ex)}")
+            elif _expr_text(old_ex) != _expr_text(ex):
+                out.append(f"~ derivation {cn}.{an} = {_expr_text(ex)}")
+    for cn in a["derivations"]:
+        out += [f"- derivation {cn}.{an}" for an in a["derivations"][cn] if an not in b["derivations"].get(cn, {})]
+    for cn, w in b["workflows"].items():
+        ow = a["workflows"].get(cn)
+        if ow is None:
+            out.append(f"+ workflow {cn} on {w['state']}: {len(w['states'])} states, {len(w['transitions'])} transitions")
+            continue
+        if ow["state"] != w["state"]:
+            out.append(f"~ workflow {cn}: state attribute {ow['state']} -> {w['state']}")
+        for sn, st in w["states"].items():
+            if sn not in ow["states"]:
+                out.append(f"+ state {cn}.{sn}")
+            else:
+                ks = changed_keys(ow["states"][sn], st, ("initial", "final", "label", "color", "owner", "editable_by", "reminder"))
+                if ks:
+                    out.append(f"~ state {cn}.{sn}: {', '.join(ks)}")
+        out += [f"- state {cn}.{sn}" for sn in ow["states"] if sn not in w["states"]]
+        for tn, tr in w["transitions"].items():
+            if tn not in ow["transitions"]:
+                out.append(f"+ transition {cn}.{tn}: {', '.join(tr['from'])} -> {tr['to']}")
+            else:
+                ks = changed_keys(ow["transitions"][tn], tr, ("from", "to", "by", "when", "guard", "comment", "at", "emits", "label"))
+                if ks:
+                    out.append(f"~ transition {cn}.{tn}: {', '.join(ks)}")
+        out += [f"- transition {cn}.{tn}" for tn in ow["transitions"] if tn not in w["transitions"]]
+        if not same(ow.get("revert"), w.get("revert")):
+            out.append(f"~ workflow {cn}: revert")
+    out += [f"- workflow {cn}" for cn in a["workflows"] if cn not in b["workflows"]]
+    for cn, evs in b["events"].items():
+        out += [f"+ event {cn}.{en}" for en in evs if en not in a["events"].get(cn, {})]
+    for cn, evs in a["events"].items():
+        out += [f"- event {cn}.{en}" for en in evs if en not in b["events"].get(cn, {})]
+    by_name = lambda lst: {str(r.get("name") or i): r for i, r in enumerate(lst)}  # noqa: E731
+    ar, br = by_name(a["reactions"]), by_name(b["reactions"])
+    for name, r in br.items():
+        if name not in ar:
+            out.append(f"+ reaction {name} on {r.get('event')}")
+        elif changed_keys(ar[name], r, ("event", "when", "notify", "template")):
+            out.append(f"~ reaction {name}: {', '.join(changed_keys(ar[name], r, ('event', 'when', 'notify', 'template')))}")
+    out += [f"- reaction {name}" for name in ar if name not in br]
+    asub, bsub = by_name(a["subscriptions"]), by_name(b["subscriptions"])
+    out += [f"+ subscription {n}" for n in bsub if n not in asub]
+    out += [f"~ subscription {n}" for n in bsub if n in asub and not same(asub[n], bsub[n])]
+    out += [f"- subscription {n}" for n in asub if n not in bsub]
+    return out
+
+
 def behavior_path(meta_path: str | Path) -> Path:
     """Where the behaviour model of a metamodel lives: next to it."""
     return Path(meta_path).parent / BEHAVIOR_FILE

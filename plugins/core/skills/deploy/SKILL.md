@@ -103,6 +103,25 @@ NPM inoltra `X-Forwarded-Proto` e `X-Forwarded-For`, che servono a Next per i co
    fermare Watchtower (`docker stop <app>-watchtower-1`) finché non c'è un `latest` buono, altrimenti torna a
    `latest`. Lo schema non torna indietro.
 
+## 7b. Build visibile
+Con il deploy automatico non si capisce dall'app se il server ha già preso l'ultimo rilascio: ogni app mostra
+nell'header la build in esercizio, `#<numero di commit di main> · <sha breve>`, lo stesso SHA del tag `sha-<commit>`
+dell'immagine (collaudato in invitations-af, customizzazione `build-badge`).
+- `src/lib/build-info.ts`: `parseBuild(commits, sha)`, `buildInfo()` (legge `process.env.NEXT_PUBLIC_APP_COMMITS` e
+  `process.env.NEXT_PUBLIC_APP_SHA` **con riferimenti letterali**: Next.js inlinea solo `process.env.NEXT_PUBLIC_X`
+  scritto per esteso; letti da un parametro o da `process.env[k]` restano vuoti nel bundle), `formatBuild()` →
+  `#123 · ab12cd3`; test unitario su `parseBuild`/`formatBuild`.
+- Badge accanto al nome dell'app nell'header, con tooltip tradotto (`nav.build`); senza valori il badge non compare.
+- `next.config.ts`: `env: { NEXT_PUBLIC_APP_COMMITS, NEXT_PUBLIC_APP_SHA }` dai build args `APP_COMMITS`/`APP_SHA`
+  (immagine), altrimenti da `git rev-list --count HEAD` e `git rev-parse --short HEAD` se c'è un checkout (sviluppo),
+  altrimenti vuoti.
+- `Dockerfile`: `ARG APP_COMMITS` e `ARG APP_SHA` passati come `ENV` prima della build; workflow di deploy con
+  `actions/checkout` a `fetch-depth: 0` e uno step che calcola conteggio e SHA e li passa come `build-args`.
+- Verifica: dopo la build cercare lo SHA nei chunk (`grep -rl <sha> .next/server | head -1`); in produzione il badge
+  deve corrispondere all'ultimo commit di `main` (`gh api repos/<owner>/<repo>/commits/main --jq .sha | cut -c1-7`);
+  dopo un rollback (`APP_TAG=sha-<commit>`) il badge torna al numero precedente: è il modo di vedere che ha funzionato.
+- Registrare la personalizzazione in `docs/customizations.md` e la riga nel `docs/deploy.md` dell'app.
+
 ## 8. Diagnosi
 - **Il server non si aggiorna** (Actions ha pubblicato `latest`, la produzione resta indietro):
   `docker logs --tail=20 <app>-watchtower-1`; `403 Forbidden`, `auth: "not present"`, `denied` = credenziali GHCR

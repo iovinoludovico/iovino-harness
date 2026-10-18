@@ -46,7 +46,10 @@ rivedilo **con l'utente**:
   `DOMAIN.md` e lo dice: rinominalo (es. `docs/behavior.md`) aggiornando i riferimenti in `CLAUDE.md` e README, o
   cancellalo se `DOMAIN.md` lo sostituisce, poi `npm run model:sync`,
 - `tools/modeler/` (la CLI, con `VERSION`) e gli script `model:*` in `package.json`,
-- `supabase/migrations/<ts>_model_change_requests.sql` (solo la prima volta).
+- `supabase/migrations/<ts>_model_change_requests.sql` (solo la prima volta; ha la colonna `behavior jsonb` per le
+  proposte che portano il comportamento). In un'app installata prima di questa colonna aggiungi una migrazione con
+  `alter table public.model_change_requests add column if not exists behavior jsonb;` (il modellatore in
+  produzione lo segnala salvando "senza il comportamento" finché manca).
 
 ## 4. Adattamento all'app (solo alla prima installazione)
 - `access.ts`: usa il controllo admin e il client Supabase server dell'app (l'import di default è
@@ -62,8 +65,9 @@ rivedilo **con l'utente**:
   hanno il prefisso `/` (formula nel tooltip e nel pannello), l'attributo di stato il segno `⟳`, le feature usate dal
   comportamento ` ·ƒ` (tooltip «usato da»), le classi coinvolte senza workflow `ƒ` in testata, con una legenda dei tre
   livelli; sotto l'editor compare il comportamento e la classe selezionata evidenzia il suo workflow. `install` lo segnala ("behavior.yaml found: …") finché la
-  pagina non lo passa, anche nelle reinstallazioni. Le modifiche del comportamento restano in `behavior.yaml`
-  (`/modeler:metamodel`): dal web non si propone ancora.
+  pagina non lo passa, anche nelle reinstallazioni. Nel pannello del workflow e nella barra laterale si modificano
+  stati, transizioni, ritorno, formule dei derivati, eventi, ruoli e reazioni: «Salva» produce una proposta con
+  metamodello e comportamento, che `/modeler:apply` porta in `domain.ecore.yaml` e `behavior.yaml`.
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
 - `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`); non ignorare
   `.modeler/proposals/` (le proposte si rivedono nel repository).

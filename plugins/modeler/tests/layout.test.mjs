@@ -84,7 +84,7 @@ const checkDiagram = (edges, boxes, extra = {}) => {
   }
 };
 
-for (const [name, raw] of [["anagrafica", () => fixture("anagrafica.ecore.yaml")], ["hub", hub], ["hub8", () => hub(8)]]) {
+for (const [name, raw] of [["anagrafica", () => fixture("anagrafica.ecore.yaml")], ["invitations", () => fixture("invitations.ecore.yaml")], ["hub", hub], ["hub8", () => hub(8)]]) {
   // canvas sizes from a phone to a wide screen, as the editor measures them (window minus bar and margins)
   const sizes = [];
   for (let w = 400; w <= 1900; w += 125) for (const h of [480, 630, 900]) sizes.push([w, h]);

@@ -5,11 +5,15 @@
 create table if not exists public.model_change_requests (
   id           uuid primary key default gen_random_uuid(),
   metamodel    jsonb not null,
+  behavior     jsonb,            -- the behaviour (behavior.yaml) the proposal carries, when the app has one
   note         text,
   author_email text,
   status       text not null default 'open' check (status in ('open', 'pulled', 'applied', 'rejected')),
   created_at   timestamptz not null default now()
 );
+
+-- tables created before the behaviour proposals: the column is added (idempotent)
+alter table public.model_change_requests add column if not exists behavior jsonb;
 
 alter table public.model_change_requests enable row level security;
 
