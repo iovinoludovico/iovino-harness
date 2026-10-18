@@ -25,8 +25,11 @@ type Workflow = {
 };
 type Reaction = { name?: string; event?: string; when?: Typed; notify?: string[]; template?: string };
 type Subscription = { name?: string; url?: string; url_env?: string; events?: string[] };
+type Use = { kind: string; of: string };
+type Uses = Record<string, { attributes?: Record<string, Use[]>; references?: Record<string, Use[]>; class?: Use[] }>;
 export type Behavior = {
   doc?: string;
+  uses?: Uses;
   roles?: Record<string, { scope?: string | null; label?: Label }>;
   derivations?: Record<string, Record<string, Typed>>;
   workflows?: Record<string, Workflow>;
@@ -55,6 +58,9 @@ const TEXT = {
     comment: "Commento", required: "obbligatorio", optional: "facoltativo", emits: "Eventi", system: (at: string) => `sistema: ${at}`,
     revert: (by: string, finalBy: string, c: string) => `Ritorno a uno stato precedente: ${by}; da uno stato finale: ${finalBy}; commento ${c}.`,
     derivations: "Attributi calcolati", cls: "Classe", attribute: "Attributo", formula: "Formula", inCode: "calcolato nel codice",
+    involved: "Classi coinvolte nel comportamento", feature: "Attributo o riferimento", usedBy: "Usato da",
+    involvedNote: "Classi senza workflow di cui il comportamento legge o usa attributi e riferimenti (formule, condizioni, destinatari, ambiti dei ruoli).",
+    kinds: { derivation: "derivazione", guard: "requisito", when: "condizione", at: "scadenza", by: "chi", owner: "in attesa di", editable_by: "modificabile da", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo" } as Record<string, string>,
     events: "Eventi", event: "Evento", description: "Descrizione",
     lifecycle: "Ogni classe emette created, updated, deleted; una classe con workflow anche transitioned, completed, reverted, reminder.",
     reactions: "Reazioni", name: "Nome", recipients: "Destinatari", template: "Template",
@@ -71,6 +77,9 @@ const TEXT = {
     comment: "Comment", required: "required", optional: "optional", emits: "Events", system: (at: string) => `system: ${at}`,
     revert: (by: string, finalBy: string, c: string) => `Back to a previous state: ${by}; from a final state: ${finalBy}; comment ${c}.`,
     derivations: "Derived attributes", cls: "Class", attribute: "Attribute", formula: "Formula", inCode: "computed in code",
+    involved: "Classes involved in the behaviour", feature: "Attribute or reference", usedBy: "Used by",
+    involvedNote: "Classes without a workflow whose attributes and references the behaviour reads or points to (formulas, conditions, recipients, role scopes).",
+    kinds: { derivation: "derivation", guard: "requirement", when: "condition", at: "due", by: "who", owner: "waiting for", editable_by: "editable by", notify: "recipient", revert: "revert", scope: "role scope" } as Record<string, string>,
     events: "Events", event: "Event", description: "Description",
     lifecycle: "Every class emits created, updated, deleted; a class with a workflow also transitioned, completed, reverted, reminder.",
     reactions: "Reactions", name: "Name", recipients: "Recipients", template: "Template",
@@ -143,6 +152,15 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
   }
   const hi = (cn: string) => (cn === selected ? "bg-sky-50 dark:bg-sky-950" : "");
   const roles = Object.entries(b.roles ?? {});
+  // classes without a workflow that the behaviour uses: the involvement the tables above do not show
+  const involved: [string, string, Use[]][] = [];
+  for (const [cn, g] of Object.entries(b.uses ?? {})) {
+    if (workflows[cn]) continue;
+    for (const [fn, us] of Object.entries(g.attributes ?? {})) involved.push([cn, fn, us]);
+    for (const [fn, us] of Object.entries(g.references ?? {})) involved.push([cn, fn, us]);
+    if (g.class?.length) involved.push([cn, "—", g.class]);
+  }
+  const usedBy = (us: Use[]) => us.map((u) => `${t.kinds[u.kind] ?? u.kind}: ${u.of}`).join(", ");
   const events = Object.entries(b.events ?? {}).flatMap(([cn, evs]) => Object.entries(evs ?? {}).map(([en, ev]) => [cn, en, ev?.doc ?? ""] as const));
   const reactions = b.reactions ?? [];
   const subscriptions = b.subscriptions ?? [];
@@ -222,6 +240,21 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
               <span key="c" className={`rounded px-1 ${hi(cn)}`}>{cn}</span>,
               <Code key="a">{`/${an}`}</Code>,
               f?.text ? <Code key="f">{f.text}</Code> : <em key="f" className="text-muted-foreground">{t.inCode}</em>,
+            ])}
+          />
+        </div>
+      )}
+
+      {involved.length > 0 && (
+        <div className="space-y-1">
+          <h3 className="font-medium">{t.involved}</h3>
+          <p className="text-xs text-muted-foreground">{t.involvedNote}</p>
+          <Table
+            head={[t.cls, t.feature, t.usedBy]}
+            rows={involved.map(([cn, fn, us]) => [
+              <span key="c" className={`rounded px-1 ${hi(cn)}`}>{cn}</span>,
+              fn === "—" ? "—" : <Code key="f">{fn}</Code>,
+              <span key="u" className="text-xs">{usedBy(us)}</span>,
             ])}
           />
         </div>

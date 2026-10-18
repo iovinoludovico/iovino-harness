@@ -54,6 +54,36 @@ const collinear = ([p, q], [r, s]) => {
   return false;
 };
 
+// the invariants of core:diagrams on a routed diagram: no two boxes overlap, no two connectors share a run, no
+// connector runs inside a box (its own boxes aside), no label covers a box or another label. `extra`: more
+// rectangles (e.g. workflow satellites) that connectors and labels must avoid too.
+const checkDiagram = (edges, boxes, extra = {}) => {
+  const rects = { ...boxes, ...extra };
+  const names = Object.keys(rects);
+  for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+    assert.ok(!overlap(rects[names[i]], rects[names[j]]), `boxes ${names[i]} and ${names[j]} overlap`);
+  }
+  const lines = edges.flatMap((e) => runs(e).map((r) => ({ ...r, key: e.key })));
+  for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
+    for (const s of segs(lines[i].pts)) for (const t of segs(lines[j].pts)) {
+      assert.ok(!collinear(s, t), `connectors ${lines[i].key} and ${lines[j].key} share a run`);
+    }
+  }
+  for (const l of lines) {
+    for (const [n, R] of Object.entries(rects)) {
+      const own = l.own.includes(n);
+      for (const s of segs(l.pts)) assert.ok(!inside(s, R, own ? 2 : -1), `connector ${l.key} crosses ${n}`);
+    }
+  }
+  const labels = edges.flatMap((e) => e.labels.map((l) => ({ ...l, key: e.key })));
+  for (const l of labels) {
+    for (const [n, R] of Object.entries(rects)) assert.ok(!overlap(l, R), `label "${l.text}" covers ${n}`);
+  }
+  for (let i = 0; i < labels.length; i++) for (let j = i + 1; j < labels.length; j++) {
+    assert.ok(!overlap(labels[i], labels[j]), `labels "${labels[i].text}" and "${labels[j].text}" overlap`);
+  }
+};
+
 for (const [name, raw] of [["anagrafica", () => fixture("anagrafica.ecore.yaml")], ["hub", hub], ["hub8", () => hub(8)]]) {
   // canvas sizes from a phone to a wide screen, as the editor measures them (window minus bar and margins)
   const sizes = [];
@@ -61,32 +91,9 @@ for (const [name, raw] of [["anagrafica", () => fixture("anagrafica.ecore.yaml")
   for (const [w, h] of sizes) {
     test(`${name} at ${w}x${h}`, () => {
       const { mm, edges, boxes } = laidOut(raw(), w, h);
-      const names = Object.keys(boxes);
-      assert.equal(names.length, Object.keys(mm.classes).length + Object.keys(mm.enums).length, "every box is placed");
+      assert.equal(Object.keys(boxes).length, Object.keys(mm.classes).length + Object.keys(mm.enums).length, "every box is placed");
       assert.ok(edges.length > 0);
-
-      for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
-        assert.ok(!overlap(boxes[names[i]], boxes[names[j]]), `boxes ${names[i]} and ${names[j]} overlap`);
-      }
-      const lines = edges.flatMap((e) => runs(e).map((r) => ({ ...r, key: e.key })));
-      for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
-        for (const s of segs(lines[i].pts)) for (const t of segs(lines[j].pts)) {
-          assert.ok(!collinear(s, t), `connectors ${lines[i].key} and ${lines[j].key} share a run`);
-        }
-      }
-      for (const l of lines) {
-        for (const [n, R] of Object.entries(boxes)) {
-          const own = l.own.includes(n);
-          for (const s of segs(l.pts)) assert.ok(!inside(s, R, own ? 2 : -1), `connector ${l.key} crosses ${n}`);
-        }
-      }
-      const labels = edges.flatMap((e) => e.labels.map((l) => ({ ...l, key: e.key })));
-      for (const l of labels) {
-        for (const [n, R] of Object.entries(boxes)) assert.ok(!overlap(l, R), `label "${l.text}" covers ${n}`);
-      }
-      for (let i = 0; i < labels.length; i++) for (let j = i + 1; j < labels.length; j++) {
-        assert.ok(!overlap(labels[i], labels[j]), `labels "${labels[i].text}" and "${labels[j].text}" overlap`);
-      }
+      checkDiagram(edges, boxes);
     });
   }
 }
@@ -185,4 +192,123 @@ test("derived attributes and the workflow state are marked in the rows of a clas
   assert.ok(marked.w >= plain.w && marked.w <= 380);
   // without a behaviour nothing is marked as state
   assert.ok(!Layout.rowItems(mm.classes.Invitation, true).some((r) => r.state));
+});
+
+// ---- the state diagram of a workflow (Layout.workflowLayout, port of workflow-layout.ts of guest-invitations-af)
+// and the satellite that draws it under its class in the canvas
+const wfSegs = (p) => p.slice(1).map((q, i) => [p[i], q]);
+const checkWorkflow = (L, what) => {
+  for (let i = 0; i < L.boxes.length; i++) for (let j = i + 1; j < L.boxes.length; j++) {
+    assert.ok(!overlap(L.boxes[i], L.boxes[j]), `${what}: states ${L.boxes[i].key} and ${L.boxes[j].key} overlap`);
+  }
+  const lines = L.edges.flatMap((e) => e.paths.map((pts) => ({ id: e.id, pts })));
+  for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
+    if (lines[i].id === lines[j].id) continue;
+    for (const s of wfSegs(lines[i].pts)) for (const t of wfSegs(lines[j].pts)) {
+      assert.ok(!collinear(s, t), `${what}: ${lines[i].id} and ${lines[j].id} share a run`);
+    }
+  }
+  for (const l of lines) for (const b of L.boxes) for (const s of wfSegs(l.pts)) {
+    assert.ok(!inside(s, b, 1), `${what}: ${l.id} runs through ${b.key}`);
+  }
+  const labels = L.edges.map((e) => ({ ...e.label, id: e.id }));
+  for (const l of labels) for (const b of L.boxes) assert.ok(!overlap(l, b), `${what}: label of ${l.id} covers ${b.key}`);
+  for (let i = 0; i < labels.length; i++) for (let j = i + 1; j < labels.length; j++) {
+    assert.ok(!overlap(labels[i], labels[j]), `${what}: labels of ${labels[i].id} and ${labels[j].id} overlap`);
+  }
+  for (const b of L.boxes) assert.ok(b.w >= Layout.WF.minBox, `${what}: state ${b.key} narrower than minBox`);
+  for (const e of L.edges) assert.equal(e.arrow.length, 4, `${what}: arrow of ${e.id}`);
+};
+
+test("workflowLayout: the invitations workflow (11 states, a 7-source cancel bus, a timed transition)", () => {
+  const bh = behaviorFixture("invitations.ecore.yaml", "invitations.behavior.yaml");
+  const model = Layout.workflowModel(bh.workflows.Invitation, "it");
+  assert.equal(model.states.length, 11);
+  assert.equal(model.states.find((s) => s.key === "draft").label, "Bozza");
+  for (const width of [320, 420, 560, 800]) {
+    const L = Layout.workflowLayout(model.states, model.transitions, width);
+    checkWorkflow(L, `invitations at ${width}`);
+    assert.ok(L.width >= width);
+    const cancelled = L.boxes.find((b) => b.key === "cancelled");
+    for (const b of L.boxes) if (b.key !== "cancelled") assert.ok(b.y + b.h <= cancelled.y, `${b.key} not above cancelled`);
+    const cancel = L.edges.filter((e) => e.key === "cancel");
+    assert.equal(cancel.length, 1, "cancel from 7 states is one bus");
+    assert.equal(cancel[0].arrow[0].y, cancelled.y, "the bus arrow ends on top of cancelled");
+    assert.ok(L.edges.filter((e) => e.key === "visit_ended").every((e) => e.timed));
+    assert.ok(L.edges.find((e) => e.key === "visit_ended").label.lines[0].startsWith("⏱ "));
+  }
+});
+
+// a tiny workflow like the sandbox's Task: 4 states, a timed transition, cancel from two states (no bus: below sinkSources)
+const tiny = {
+  state: "state",
+  states: { todo: { initial: true, label: { it: "Da fare" }, color: "#64748b" }, doing: { label: { it: "In corso" }, color: "#2563eb" },
+    done: { final: true, label: { it: "Fatta" }, color: "#16a34a" }, cancelled: { final: true, label: { it: "Annullata" }, color: "#71717a" } },
+  transitions: { start: { from: ["todo"], to: "doing", by: ["self.assignee"], label: { it: "Avvia" } },
+    finish: { from: ["doing"], to: "done", by: ["manager"], label: { it: "Completa" } },
+    cancel: { from: ["todo", "doing"], to: "cancelled", by: ["manager"], label: { it: "Annulla" } },
+    expire: { from: ["todo"], to: "cancelled", at: "dueDate + 30d", label: { it: "Scaduta" } } },
+};
+test("workflowLayout: a 4-state workflow at small widths", () => {
+  const model = Layout.workflowModel(tiny, "it");
+  for (const width of [240, 400]) {
+    const L = Layout.workflowLayout(model.states, model.transitions, width);
+    checkWorkflow(L, `tiny at ${width}`);
+    assert.equal(L.edges.filter((e) => e.key === "cancel").length, 2, "cancel from two states: two edges, no bus");
+    assert.ok(L.edges.find((e) => e.key === "expire").timed);
+    assert.equal(L.edges.length, 5);
+  }
+  assert.deepEqual(Layout.workflowLayout([], [], 300), { width: 300, height: 0, boxes: [], edges: [] });
+});
+
+test("satellites: the state diagram sits under its class, is an obstacle for connectors and labels, is not stored", () => {
+  const raw = fixture("invitations.ecore.yaml");
+  const bh = behaviorFixture("invitations.ecore.yaml", "invitations.behavior.yaml");
+  const sizes = [];
+  for (let w = 400; w <= 1900; w += 250) for (const h of [480, 900]) sizes.push([w, h]);
+  for (const [w, h] of sizes) {
+    const mm = Layout.normalize(raw);
+    const opts = (n) => ({ state: bh.workflows[n]?.state || null, uses: bh.uses?.[n] || null, workflow: !!bh.workflows[n] });
+    const box = (n) => Layout.boxSize(mm, n, opts(n));
+    const sats = Object.fromEntries(Object.keys(mm.classes).filter((n) => bh.workflows[n]).map((n) => [n, Layout.satelliteOf(mm, n, bh.workflows[n], "it", opts(n))]));
+    assert.deepEqual(Object.keys(sats), ["Invitation"]);
+    const foot = (n) => Layout.footSize(box(n), sats[n] || null);
+    assert.ok(foot("Invitation").h > box("Invitation").h + sats.Invitation.h, "the footprint holds class, gap and satellite");
+    const before = Object.keys(mm.diagram).sort();
+    Object.assign(mm.diagram, Layout.autoLayout(mm, foot, { force: true, width: w, height: h }));
+    assert.deepEqual(Object.keys(mm.diagram).sort(), [...Object.keys(mm.classes), ...Object.keys(mm.enums)].sort(), "only classes and enums are placed");
+    assert.ok(before.length <= Object.keys(mm.diagram).length);
+    const extra = Object.entries(sats).map(([n, sat]) => [`sat:${n}`, Layout.satObstacle(mm.diagram[n], sat)]);
+    const { edges, boxes } = Layout.routeEdges(mm, box, { extra, uses: bh.uses });
+    const satRects = Object.fromEntries(Object.entries(sats).map(([n, sat]) => [`sat:${n}`, Layout.satRect(mm.diagram[n], sat)]));
+    const R = satRects["sat:Invitation"], B = boxes.Invitation;
+    assert.equal(R.x, B.x, `${w}x${h}: satellite under its class`);
+    assert.equal(R.y, B.y + B.h + Layout.WF.satGap);
+    // the satellite is a box like the others: nothing overlaps it, no connector or label runs over it
+    // (the other invariants of this 13-class model are a known limit of the masonry layout: NOTES.md 2026-10-17)
+    for (const [n, box] of Object.entries(boxes)) assert.ok(!overlap(R, box), `${w}x${h}: ${n} overlaps the satellite`);
+    const obstacle = Object.fromEntries(extra)["sat:Invitation"];
+    for (const e of edges) for (const r of runs(e)) for (const sg of segs(r.pts)) {
+      assert.ok(!inside(sg, obstacle, -1), `${w}x${h}: connector ${e.key} crosses the satellite`);
+    }
+    for (const e of edges) for (const l of e.labels) assert.ok(!overlap(l, R), `${w}x${h}: label "${l.text}" covers the satellite`);
+    // the reference labels of the features the behaviour uses carry the mark
+    assert.ok(edges.some((e) => e.labels.some((l) => l.text.endsWith(" ·ƒ"))), `${w}x${h}: a used reference is marked`);
+  }
+});
+
+test("rows: involved features are marked and the workflow head adds the stereotype height", () => {
+  const mm = Layout.normalize(fixture("invitations.ecore.yaml"));
+  const bh = behaviorFixture("invitations.ecore.yaml", "invitations.behavior.yaml");
+  const rows = Layout.rowItems(mm.classes.Invitation, true, "more", "state", bh.uses.Invitation);
+  const dc = rows.find((r) => r.attr === "dataComplete");
+  assert.ok(dc.text.endsWith(" ·ƒ") && dc.used.some((u) => u.kind === "guard" && u.of === "Invitation.submit"));
+  assert.ok(rows.find((r) => r.ref === "issuer").used.some((u) => u.kind === "notify"));
+  assert.ok(!rows.find((r) => r.ref === "createdBy").used);
+  const plain = Layout.boxSize(mm, "Invitation", { allAttrs: true });
+  const marked = Layout.boxSize(mm, "Invitation", { allAttrs: true, uses: bh.uses.Invitation });
+  assert.equal(marked.h, plain.h);
+  assert.ok(marked.w >= plain.w);
+  assert.equal(Layout.boxSize(mm, "Invitation", { allAttrs: true, workflow: true }).h, plain.h + Layout.STEREO_H);
+  assert.equal(Layout.boxSize(mm, "Guest", {}).h, Layout.boxSize(mm, "Guest", { uses: bh.uses.Guest }).h);
 });

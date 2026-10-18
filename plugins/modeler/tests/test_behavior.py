@@ -120,6 +120,14 @@ class ExpressionTests(unittest.TestCase):
         self.assertEqual(X.to_text(node), "not (agencyBookingRequired or dataComplete) and reason.compensationType in [hourly, flat]")
         self.assertEqual(X.features_used(node), [("Invitation", "agencyBookingRequired"), ("Invitation", "dataComplete"),
                                                  ("Invitation", "reason", "compensationType")])
+        # every hop attributed to the class that owns the feature (features_used keeps the context class only)
+        self.assertEqual(X.hops_used(node), [("Invitation", "agencyBookingRequired"), ("Invitation", "dataComplete"),
+                                             ("Invitation", "reason"), ("InvitationReason", "compensationType")])
+        node, _ = self.check("invitationFunds.amount.sum() > 0 and guest.email.isSet()")
+        self.assertEqual(X.hops_used(node), [("Invitation", "invitationFunds"), ("InvitationFund", "amount"),
+                                             ("Invitation", "guest"), ("Guest", "email")])
+        self.assertEqual(X.hops_used(X.check("transition = submit", X.Context(self.e, "Invitation", {"transition": X.ENUM + "@transition"},
+                                                                                {"@transition": ["submit"]}))[0]), [])
         node, _ = self.check("state = 'it''s'".replace("''", "\\'"))
         self.assertEqual(X.to_text(X.parse(X.to_text(node))), X.to_text(node))
 
@@ -569,6 +577,8 @@ class GenerationTests(unittest.TestCase):
                      "| `withdraw` | Cancel | draft, rejected → cancelled | `self.issuer`, `office` |", "| `reject` | Reject | pending_director → rejected | `director` |  |  | required |  |",
                      "Back to a previous state: `office`, `director`; from a final state: `office`; comment required.",
                      "## Derived attributes", "| Invitation | `fundsTotal` | `invitationFunds.amount.sum()` |",
+                     "## Classes involved in the behaviour", "| Guest | `email` | notify: `notify_bookings_guest` |",
+                     "| Department | — | scope: `issuer`, scope: `director` |",
                      "## Events", "| Invitation | `visit_ended` | La visita è terminata (passaggio automatico alla data di fine) |",
                      "## Reactions", "| `notify_bookings_guest` | `Invitation.transitioned` | `transition = confirm_bookings` | `self.guest.email` | `bookings_confirmed_guest` |",
                      "| `notify_reverted` | `Invitation.reverted` |  | `self.issuer` | `invitation_reverted` |",
@@ -578,12 +588,41 @@ class GenerationTests(unittest.TestCase):
         self.assertIn("# Comportamento del dominio invitations", it)
         self.assertIn("| `draft` | Bozza | iniziale |", it)
         self.assertIn("sistema: `endDate + 1d`", it)
+        self.assertIn("## Classi coinvolte nel comportamento", it)
         self.assertEqual(B.to_markdown(behavior(), meta()), md)                         # deterministic
         self.assertTrue(B.markdown_document(behavior(), meta()).startswith(B.MARKDOWN_MARK + "\n# "))
         m = meta()
         m["classes"]["Invitation"]["attributes"]["extra"] = {"type": "EInt", "derived": True}
         self.assertIn("| Invitation | `extra` | *computed in code* |", B.to_markdown(behavior(), m))
         self.assertIn("*calcolato nel codice*", B.to_markdown(behavior(), m, "it"))
+
+    def test_uses(self):
+        u = B.runtime_json(behavior(), meta())["uses"]
+        # derivations navigate into other classes: their features are involved too
+        self.assertIn({"kind": "derivation", "of": "Invitation.compensationType"}, u["InvitationReason"]["attributes"]["compensationType"])
+        self.assertIn({"kind": "derivation", "of": "Invitation.fundsTotal"}, u["InvitationFund"]["attributes"]["amount"])
+        self.assertIn({"kind": "derivation", "of": "Invitation.fundsTotal"}, u["Invitation"]["references"]["invitationFunds"])
+        inv = u["Invitation"]
+        self.assertIn({"kind": "guard", "of": "Invitation.submit"}, inv["attributes"]["dataComplete"])
+        self.assertIn({"kind": "when", "of": "Invitation.approve"}, inv["attributes"]["agencyBookingRequired"])
+        self.assertIn({"kind": "at", "of": "Invitation.visit_ended"}, inv["attributes"]["endDate"])
+        # principals: self.<reference>, roles held per scope (through the reference that leads to the scope), recipients
+        self.assertIn({"kind": "owner", "of": "Invitation.draft"}, inv["references"]["issuer"])
+        self.assertIn({"kind": "by", "of": "Invitation.submit"}, inv["references"]["issuer"])
+        self.assertIn({"kind": "notify", "of": "notify_approved"}, inv["references"]["issuer"])
+        self.assertIn({"kind": "by", "of": "Invitation.approve"}, inv["references"]["department"])
+        self.assertIn({"kind": "revert", "of": "Invitation"}, inv["references"]["department"])
+        self.assertIn({"kind": "notify", "of": "notify_bookings_guest"}, inv["references"]["guest"])
+        self.assertEqual(u["Guest"]["attributes"]["email"], [{"kind": "notify", "of": "notify_bookings_guest"}])
+        self.assertEqual(u["Department"]["class"], [{"kind": "scope", "of": "issuer"}, {"kind": "scope", "of": "director"}])
+        for cname in ("Fund", "Position", "EconomicRate"):                       # purely structural classes
+            self.assertNotIn(cname, u)
+        self.assertNotIn("@transition", str(u))                                  # the variable of a reaction is not a feature
+        self.assertEqual(json.loads(json.dumps(u)), u)
+        # a derivation that does not type-check contributes nothing (validate reports it)
+        b = behavior()
+        b["derivations"]["Invitation"]["fundsTotal"] = "nope.sum()"
+        self.assertNotIn("fundsTotal", str(B.uses(B.expand(b), E.expand(meta()))["Invitation"]["references"].get("invitationFunds", [])))
 
     def test_runtime_json(self):
         rj = B.runtime_json(behavior(), meta())
@@ -895,6 +934,9 @@ class EngineTests(unittest.TestCase):
                      "update public.invitations x set id = x.id where x.reason in (new.id, old.id);",
                      "if new.state is null then new.state := 'draft'; end if;",
                      "raise exception 'Transition not available: %', p_key;",
+                     # the list is a plain array of objects, not rows wrapped in {"jsonb_build_object": …}
+                     "return coalesce((select jsonb_agg(t.j) from (",
+                     "'guard_ok', coalesce(r.data_complete, false), 'guard', 'dataComplete') as j\n     where r.state = any (array['draft']::text[])",
                      "if p_key = 'approve' then\n    v_from := array['pending_director']::text[]; v_to := 'in_management'; v_allowed := array['director']::text[];",
                      "v_cond := coalesce(not (r.agency_booking_required), false);",
                      "v_guard := coalesce(r.data_complete, false); v_guard_text := 'dataComplete';",

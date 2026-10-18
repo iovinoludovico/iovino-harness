@@ -317,14 +317,17 @@ def _navigate(ctx: Context, node: dict[str, Any], text: str) -> str:
     if not segs and node["call"] is None:
         node["t"] = CLASS + ctx.cls
         node["ref"] = [ctx.cls]
+        node["hops"] = []
         return node["t"]
     if segs and segs[0] in ctx.variables and len(segs) == 1 and node["call"] is None:
         node["t"] = ctx.variables[segs[0]]
         node["ref"] = ["@" + segs[0]]
+        node["hops"] = []
         return node["t"]
     t = CLASS + ctx.cls
     many = False
     ref = [ctx.cls]
+    hops: list[list[str]] = []          # [class that owns the feature, feature] for every segment
     for i, seg in enumerate(segs):
         base = t[len(COLLECTION):] if t.startswith(COLLECTION) else t
         if not base.startswith(CLASS):
@@ -333,14 +336,17 @@ def _navigate(ctx: Context, node: dict[str, Any], text: str) -> str:
         if cname in E.BUILTIN_CLASSES:
             if seg == "email" and cname == "User":
                 nt = "email"
+                hops.append([cname, seg])
             else:
                 raise ExprError(f"{cname} is built in: only 'email' can be navigated (not '{seg}')", node["pos"], text)
         else:
             attrs, refs = E.features(ctx.e, cname)
             if seg in attrs:
                 nt = feature_type(attrs[seg], ctx.e, False)
+                hops.append([str(attrs[seg].get("_owner", cname)), seg])
             elif seg in refs:
                 nt = feature_type(refs[seg], ctx.e, True)
+                hops.append([str(refs[seg].get("_owner", cname)), seg])
             else:
                 hint = " (a bare name is an enum literal only next to an attribute of that enum)" if i == 0 and segs == [seg] else ""
                 raise ExprError(f"'{seg}' is not a feature of {cname}{hint}", node["pos"], text)
@@ -379,6 +385,7 @@ def _navigate(ctx: Context, node: dict[str, Any], text: str) -> str:
             t = "number"
     node["t"] = t
     node["ref"] = ref
+    node["hops"] = hops
     return t
 
 
@@ -518,6 +525,18 @@ def check(text: str, ctx: Context, expect: str | None = None) -> tuple[dict[str,
 def children(node: dict[str, Any]) -> list[dict[str, Any]]:
     out = [node[k] for k in ("x", "l", "r", "c", "a", "b") if isinstance(node.get(k), dict)]
     return out + list(node.get("items", [])) + list(node.get("args", []))
+
+
+def hops_used(node: dict[str, Any]) -> list[tuple[str, str]]:
+    """Every feature a typed tree reads, as (class that owns it, feature), in order of appearance: unlike
+    `features_used`, each hop of a path is attributed to the class it is read on (inherited features to the
+    superclass that declares them)."""
+    out: list[tuple[str, str]] = []
+    if node["k"] == "path":
+        out += [(owner, seg) for owner, seg in node.get("hops", [])]
+    for c in children(node):
+        out += hops_used(c)
+    return out
 
 
 def features_used(node: dict[str, Any]) -> list[tuple[str, ...]]:

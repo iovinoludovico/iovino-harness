@@ -57,9 +57,11 @@ rivedilo **con l'utente**:
   `src/app/(admin)/admin/model/page.tsx`), con layout, titolo e traduzioni dell'app; aggiungi il link nella
   navigazione admin. `lang` segue la lingua dell'utente.
 - Se l'app ha `behavior.yaml`: nella pagina togli il commento a `import behavior from "@/lib/modeler/behavior.json"`
-  e passa `behavior={behavior}` a `<MetamodelModeler>`: nel diagramma gli attributi calcolati hanno il prefisso `/`
-  (formula nel tooltip e nel pannello) e l'attributo di stato il segno `⟳`; sotto l'editor compare il comportamento
-  e la classe selezionata evidenzia il suo workflow. `install` lo segnala ("behavior.yaml found: …") finché la
+  e passa `behavior={behavior}` a `<MetamodelModeler>`: nel diagramma la classe con workflow ha la testata «workflow»
+  e il diagramma degli stati come satellite sotto il riquadro (toggle `⟳ Workflow` in barra), gli attributi calcolati
+  hanno il prefisso `/` (formula nel tooltip e nel pannello), l'attributo di stato il segno `⟳`, le feature usate dal
+  comportamento ` ·ƒ` (tooltip «usato da»), le classi coinvolte senza workflow `ƒ` in testata, con una legenda dei tre
+  livelli; sotto l'editor compare il comportamento e la classe selezionata evidenzia il suo workflow. `install` lo segnala ("behavior.yaml found: …") finché la
   pagina non lo passa, anche nelle reinstallazioni. Le modifiche del comportamento restano in `behavior.yaml`
   (`/modeler:metamodel`): dal web non si propone ancora.
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).

@@ -27,7 +27,7 @@ Comandi utili (dal plugin `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/modeler.py" â€
   `behavior --format markdown|mermaid|json|sql|engine` (il comportamento spiegato, i diagrammi di stato, le
   espressioni tipizzate con il loro SQL, le versioni del workflow come le memorizza il motore),
   `engine [--write]` (la migrazione del motore SQL: funzioni e trigger generati dal comportamento);
-- `sync [--force]` (rigenera `metamodel.json` e `docs/DOMAIN.md`; con `behavior.yaml` anche `behavior.json` e
+- `sync [--force]` (rigenera `metamodel.json` e `docs/DOMAIN.md`; con `behavior.yaml` anche `behavior.json`, con la mappa `uses` delle feature usate dal comportamento, e
   `docs/BEHAVIOR.md`), `docs` (stato di `docs/DOMAIN.md`: allineato,
   da rigenerare, o modifiche a mano da tradurre nel metamodello);
 - `diff <vecchio> <nuovo>` (yaml, `.ecore` o proposta `.json`);
