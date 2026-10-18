@@ -44,10 +44,10 @@
   const BUS_MIN = 4;                       // references entering the same side of a class that share a bus
   const BUS_GAP = 28;                      // distance of the trunk of a bus from the side of the class
   const STEREO_H = 12;                     // extra head height of a box with a stereotype line («enumeration», «workflow»)
-  // the state diagram of a workflow drawn as a satellite under its class (compact: smaller than the app's diagrams)
-  const WF = { font: 10, keyFont: 9, labelFont: 9, minBox: 72, maxBox: 150, minGap: 44, maxLabel: 90, margin: 6,
-    lane: 7, laneInset: 9, channel: 22, sinkSources: 3, pad: 5, arrow: 7, lOffset: 3, head: 16,
-    satGap: 18, satRatio: 2.5, satMax: 560, color: "#64748b", charW: 0.56 };
+  const WF_PAD = 10, WF_HEAD = 30;         // padding of the workflow panel and height of its heading line
+  // the state diagram of the selected workflow, drawn in the panel under the canvas
+  const WF = { font: 11, keyFont: 9, labelFont: 10, minBox: 96, maxBox: 200, minGap: 56, maxLabel: 110, margin: 8,
+    lane: 8, laneInset: 12, channel: 26, sinkSources: 3, pad: 6, arrow: 8, lOffset: 3.5, color: "#64748b", charW: 0.56 };
 
   const Layout = (() => {
     const rowItems = (c, allAttrs = false, more = "more", state = null, uses = null) => {
@@ -249,22 +249,25 @@
      * skill core:diagrams: states in columns by distance from the initial one (the main path on the first row),
      * final states reached from many states on a bottom row with their transitions as a bus, orthogonal connectors
      * each in its own lane (between columns) and channel (between rows), labels where they cover the least. */
+    // text widths: an estimate by default (tests, no DOM); the editor measures the real font (opts.measure)
     const wfCharW = (font, bold = false) => font * (bold ? WF.charW + 0.04 : WF.charW);
     const wfTextWidth = (s, font, bold = false) => s.length * wfCharW(font, bold);
-    const wfWrap = (text, maxWidth, font, maxLines, bold = false) => {
-      const max = Math.max(4, Math.floor(maxWidth / wfCharW(font, bold)));
+    // word wrap to at most `maxLines` lines no wider than `maxWidth`, by measure; the last line is cut with an ellipsis
+    const wfWrap = (text, maxWidth, font, maxLines, bold = false, measure = wfTextWidth) => {
+      const fits = (l) => measure(l, font, bold) <= maxWidth;
+      const cut = (l) => { let c = l; while (c.length > 1 && !fits(`${c}…`)) c = c.slice(0, -1); return `${c}…`; };
       const lines = [];
       let cur = "";
       for (const word of String(text).split(/\s+/).filter(Boolean)) {
         const next = cur ? `${cur} ${word}` : word;
-        if (next.length <= max) cur = next;
+        if (fits(next)) cur = next;
         else { if (cur) lines.push(cur); cur = word; }
       }
       if (cur) lines.push(cur);
-      const out = lines.slice(0, maxLines).map((l) => (l.length > max ? `${l.slice(0, max - 1)}…` : l));
+      const out = lines.slice(0, maxLines).map((l) => (fits(l) ? l : cut(l)));
       if (lines.length > maxLines) {
         const last = out[maxLines - 1];
-        out[maxLines - 1] = last.length >= max ? `${last.slice(0, max - 1)}…` : `${last}…`;
+        out[maxLines - 1] = fits(`${last}…`) ? `${last}…` : cut(last);
       }
       return out.length ? out : [""];
     };
@@ -313,10 +316,10 @@
       }
       return out;
     };
-    const wfEmptyLabel = (tr, width) => {
-      const lines = wfWrap(`${tr.timed ? "⏱ " : ""}${tr.label}`, width - 8, WF.labelFont, 3);
-      const w = Math.max(...lines.map((l) => wfTextWidth(l, WF.labelFont))) + 8;
-      return { x: 0, y: 0, w, h: lines.length * (WF.labelFont + 2) + 5, lines };
+    const wfEmptyLabel = (tr, width, measure) => {
+      const lines = wfWrap(`${tr.timed ? "⏱ " : ""}${tr.label}`, width - 10, WF.labelFont, 3, false, measure);
+      const w = Math.ceil(Math.max(...lines.map((l) => measure(l, WF.labelFont)))) + 10;
+      return { x: 0, y: 0, w, h: lines.length * (WF.labelFont + 3) + 6, lines };
     };
     const wfOverlapArea = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
     // each label on its own connector, where it covers the fewest boxes, labels and other connectors
@@ -348,8 +351,10 @@
         if (best) { Object.assign(e.label, best); placed.push(best); }
       }
     };
-    // { width, height, boxes: [{key,label,color,kind,x,y,w,h,lines}], edges: [{id,key,color,timed,paths,arrow,dots,label}] }
-    const workflowLayout = (states, transitions, width) => {
+    // { width, height, boxes: [{key,label,color,kind,x,y,w,h,lines}], edges: [{id,key,color,timed,paths,arrow,dots,label}]
+    // opts.measure(text, font, bold) -> px: the real text widths (default: the estimate wfTextWidth)
+    const workflowLayout = (states, transitions, width, opts = {}) => {
+      const measure = opts.measure || wfTextWidth;
       if (!states.length) return { width, height: 0, boxes: [], edges: [] };
       const byKey = new Map(states.map((s) => [s.key, s]));
       const pairs = transitions.flatMap((tr) => tr.from.filter((f) => f !== tr.to && byKey.has(f) && byKey.has(tr.to)).map((f) => ({ tr, f })));
@@ -455,8 +460,8 @@
         }
       }
       // widths: gaps sized by their lanes and by the longest word of a label, boxes fill the rest
-      const word = Math.max(0, ...transitions.flatMap((t) => t.label.split(/\s+/)).map((w) => wfTextWidth(w, WF.labelFont)));
-      const labelW = Math.min(WF.maxLabel, Math.max(WF.minGap - 4, word + 8));
+      const word = Math.max(0, ...transitions.flatMap((t) => t.label.split(/\s+/)).map((w) => measure(w, WF.labelFont)));
+      const labelW = Math.min(WF.maxLabel, Math.max(WF.minGap - 4, word + 14));   // the longest word always fits a label
       const minGap = Math.max(WF.minGap, labelW + 4);
       const gapLanes = Array.from({ length: nCols + 1 }, (_, g) => lanes.filter((l) => l.gap === g));
       const gapNeed = gapLanes.map((ls, g) => {
@@ -471,7 +476,7 @@
         if (nCols > 1) for (let g = 1; g < nCols; g++) gaps[g] += extra / (nCols - 1);
         else { gaps[0] += extra / 2; gaps[1] += extra / 2; }
       }
-      const stateWord = Math.max(0, ...states.flatMap((s) => s.label.split(/\s+/)).map((w) => wfTextWidth(w, WF.font, true)));
+      const stateWord = Math.max(0, ...states.flatMap((s) => s.label.split(/\s+/)).map((w) => measure(w, WF.font, true)));
       box = Math.max(Math.min(WF.maxBox, Math.max(WF.minBox, Math.ceil(stateWord + 2 * WF.pad))), Math.floor(box));
       const colX = [];
       let x = 0;
@@ -486,9 +491,9 @@
       });
       // box heights: the longest label decides, all boxes the same height
       const lineH = WF.font + 3;
-      const boxLines = new Map(states.map((s) => [s.key, wfWrap(`${s.kind === "initial" ? "▶ " : ""}${s.label}`, box - 2 * WF.pad, WF.font, 3, true)]));
+      const boxLines = new Map(states.map((s) => [s.key, wfWrap(`${s.kind === "initial" ? "▶ " : ""}${s.label}`, box - 2 * WF.pad, WF.font, 3, true, measure)]));
       const maxLines = Math.max(...[...boxLines.values()].map((l) => l.length));
-      const boxH = 10 + maxLines * lineH + WF.keyFont + 8;
+      const boxH = 12 + maxLines * lineH + WF.keyFont + 10;
       // channels: horizontal segments get their own height where their x ranges overlap
       const portX = (p, key) => colX[col.get(key)] + box * (p.frac ?? 0.5);
       for (const e of normals) if (e.h) { e.h.x1 = Math.min(e.l1.x, e.l2.x); e.h.x2 = Math.max(e.l1.x, e.l2.x); }
@@ -535,7 +540,7 @@
         if (!e.l1) pts = [a, b];
         else if (!e.l2) pts = [a, { x: e.l1.x, y: a.y }, { x: e.l1.x, y: b.y }, b];
         else pts = [a, { x: e.l1.x, y: a.y }, { x: e.l1.x, y: e.h.y }, { x: e.l2.x, y: e.h.y }, { x: e.l2.x, y: b.y }, b];
-        edges.push({ id: `${e.tr.key}:${e.f}`, key: e.tr.key, color: color(e.tr.to), timed: e.tr.timed, paths: [wfSimplify(pts)], arrow: wfArrowAt(pts), dots: [], label: wfEmptyLabel(e.tr, labelW) });
+        edges.push({ id: `${e.tr.key}:${e.f}`, key: e.tr.key, color: color(e.tr.to), timed: e.tr.timed, paths: [wfSimplify(pts)], arrow: wfArrowAt(pts), dots: [], label: wfEmptyLabel(e.tr, labelW, measure) });
       }
       for (const b of buses) {
         const paths = [], dots = [];
@@ -551,7 +556,7 @@
         paths.push(drop);
         const keep = dots.filter((d) => d.y !== b.h.y || (d.x > b.h.x1 + 0.5 && d.x < b.h.x2 - 0.5));
         if (t.x > b.h.x1 + 0.5 && t.x < b.h.x2 - 0.5) keep.push({ x: t.x, y: b.h.y });
-        edges.push({ id: `${b.tr.key}:bus`, key: b.tr.key, color: color(b.tr.to), timed: b.tr.timed, paths, arrow: wfArrowAt(drop), dots: keep, label: wfEmptyLabel(b.tr, labelW) });
+        edges.push({ id: `${b.tr.key}:bus`, key: b.tr.key, color: color(b.tr.to), timed: b.tr.timed, paths, arrow: wfArrowAt(drop), dots: keep, label: wfEmptyLabel(b.tr, labelW, measure) });
       }
       for (const e of edges) {   // the arrow head replaces the last few pixels of each connector
         const last = e.paths[e.paths.length - 1];
@@ -560,21 +565,6 @@
       wfPlaceLabels(edges, boxes, { x: 0, y: 0, w: totalW, h: height });
       return { width: totalW, height, boxes, edges };
     };
-    // the satellite of a class with a workflow: its state diagram, drawn under the class box (same x, `dy` below
-    // its top) and moving with it; never stored in mm.diagram. opts: the boxSize options of the class.
-    const satelliteOf = (mm, name, wf, lang, opts = {}) => {
-      if (!wf || !mm.classes[name]) return null;
-      const box = boxSize(mm, name, opts);
-      const model = workflowModel(wf, lang);
-      const layout = workflowLayout(model.states, model.transitions, Math.min(WF.satMax, Math.round(box.w * WF.satRatio)));
-      return { dy: box.h + WF.satGap, w: layout.width, h: WF.head + layout.height, layout };
-    };
-    const satRect = (pos, sat) => ({ x: pos.x, y: pos.y + sat.dy, w: sat.w, h: sat.h });
-    // the room a class takes with its satellite (autoLayout, fit, separate, freeSpot), and the obstacle the
-    // satellite and the gap above it are for connectors and labels (routeEdges opts.extra)
-    const footSize = (box, sat) => ({ w: Math.max(box.w, sat ? sat.w : 0), h: box.h + (sat ? WF.satGap + sat.h : 0) });
-    const satObstacle = (pos, sat) => ({ x: pos.x, y: pos.y + sat.dy - WF.satGap, w: sat.w, h: WF.satGap + sat.h });
-
     const edgesOf = (mm, uses = null) => {
       // EMF / Ecore Tools notation: reference = open arrow at the target; containment = filled diamond at the
       // container; a pair of opposite references = one connector with both ends; inheritance = hollow triangle
@@ -610,14 +600,13 @@
       // A bus (BUS_MIN or more references entering the same side of a class, core:diagrams) is one edge: `pts` the
       // stub with the arrow, `trunk` the line parallel to the side, `branches` [{key, a, start, pts}] one per source,
       // one label when the references read the same, else one at each source.
-      // opts.extra: more obstacles ([name, rect], e.g. the workflow satellites) that connectors and labels avoid;
       // opts.uses: the `uses` map of behavior.json (marks the labels of the references the behaviour uses).
       const rects = {};
       for (const n of [...Object.keys(mm.classes), ...Object.keys(mm.enums)]) {
         const p = mm.diagram[n];
         if (p) { const s = size(n); rects[n] = { x: p.x, y: p.y, w: s.w, h: s.h }; }
       }
-      const boxes = [...Object.entries(rects), ...(opts.extra || [])];
+      const boxes = Object.entries(rects);
       const crosses = (pts, skip) => {
         let n = 0;
         for (const [name, R] of boxes) {
@@ -741,7 +730,6 @@
       const placed = [];
       const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
       const grow = (x0, y0, x1, y1) => { ext.x0 = Math.min(ext.x0, x0); ext.y0 = Math.min(ext.y0, y0); ext.x1 = Math.max(ext.x1, x1); ext.y1 = Math.max(ext.y1, y1); };
-      for (const [, R] of opts.extra || []) grow(R.x, R.y, R.x + R.w, R.y + R.h);
       const label = (pt, side, text, below) => {
         const w = text.length * LABEL_CHAR_W + 4, h = LABEL_H;
         const [ox, oy] = out[side];
@@ -814,8 +802,7 @@
       return { x: Math.round(start.x), y: Math.round(bottom) };
     };
 
-    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot,
-      workflowModel, workflowLayout, satelliteOf, satRect, footSize, satObstacle, WF, STEREO_H };
+    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, workflowModel, workflowLayout, WF, STEREO_H };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -940,7 +927,7 @@
 :host(:fullscreen) { height:100vh; background:var(--bg); }
 :host([theme="dark"]) { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151; --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --wf:#064e3b; --inv:#f59e0b; --accent:#60a5fa; }
 * { box-sizing:border-box; }
-.wrap { display:grid; grid-template-rows:auto 1fr; height:100%; min-height:520px; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--bg); }
+.wrap { display:grid; grid-template-rows:auto 1fr auto; height:100%; min-height:520px; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--bg); }
 .bar { display:flex; gap:6px; align-items:center; padding:6px 8px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
 .bar .grow { flex:1; }
 button { font:inherit; border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:6px; padding:4px 10px; cursor:pointer; }
@@ -977,16 +964,17 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .box.workflow rect.head { fill:var(--wf); }
 .box text.inv { fill:var(--inv); }
 .box text.mark { fill:var(--inv); font-weight:700; font-size:12px; }
-.sat { cursor:move; }
-.sat rect.satbody { fill:var(--panel); stroke:var(--line); stroke-dasharray:4 3; }
-.sat path.stub { stroke:var(--muted); stroke-dasharray:3 3; stroke-width:1.4; fill:none; }
-.sat text.stereo { fill:var(--muted); font-size:10px; }
-.wfe { fill:none; stroke-width:1.6; }
+.wfpanel { display:none; border-top:1px solid var(--line); background:var(--panel); overflow:auto; }
+.wfpanel.on { display:block; }
+.wfhead { display:flex; gap:8px; align-items:baseline; padding:6px 10px 0; font-size:12px; color:var(--muted); white-space:nowrap; }
+.wfhead strong { color:var(--fg); font-size:13px; }
+.wfpanel svg { display:block; font:11px system-ui,sans-serif; }
+.wfe { fill:none; stroke-width:1.75; }
 .wfs { fill:var(--bg); }
-.wfst { font-size:10px; font-weight:600; }
+.wfst { font-size:11px; font-weight:600; }
 .wfkey { font-size:9px; fill:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-.wfl-bg { fill:var(--bg); fill-opacity:.92; stroke-width:1; stroke-opacity:.5; }
-.wfl { font-size:9px; fill:var(--fg); }
+.wfl-bg { fill:var(--bg); fill-opacity:.95; stroke-width:1; stroke-opacity:.55; }
+.wfl { font-size:10px; fill:var(--fg); }
 .wfa { stroke:none; }
 svg.hover .wfe:not(.hi), svg.hover .wfa:not(.hi), svg.hover .wfdot:not(.hi), svg.hover .wfl:not(.hi), svg.hover .wfl-bg:not(.hi) { opacity:.15; }
 .wfe.hi { stroke-width:2.6; }
@@ -1057,14 +1045,13 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this._showIssues = false;
       this._hover = null;          // key of the connector under the mouse: highlighted, the others dimmed
       this._bh = null;             // behavior.json (optional): formulas of the derived attributes, workflows, uses
-      this._showWf = true;         // workflow satellites drawn under their classes
-      this._sats = new Map();      // satellite layouts, per class (cleared when behaviour, model, lang or rows change)
+      this._wfCache = new Map();   // state-diagram layouts of the panel, per class, language and width
       this._lastSel = undefined;   // the selection last announced with the `select` event
       this.attachShadow({ mode: "open" });
     }
 
     static get observedAttributes() { return ["lang", "readonly", "save-label"]; }
-    attributeChangedCallback() { this._sats.clear(); if (this.isConnected) this._render(); }
+    attributeChangedCallback() { this._wfCache.clear(); if (this.isConnected) this._render(); }
     connectedCallback() { this._render(); }
 
     get t() { return T[(this.getAttribute("lang") || "it").slice(0, 2)] || T.it; }
@@ -1074,7 +1061,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     set metamodel(mm) {
       const m = Layout.normalize(mm);
       this._mm = m;
-      this._sats.clear();
+      this._wfCache.clear();
       this._orig = clone(m);
       this._sel = null;
       this._panel = false;
@@ -1085,7 +1072,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     }
     get metamodel() { return clone(this._mm); }
     // the behaviour model (src/lib/modeler/behavior.json): read only, shown next to the structure it refers to
-    set behavior(b) { this._bh = b && typeof b === "object" ? b : null; this._sats.clear(); if (this.isConnected) { this._separate(); this._render(); this._refit(); } }
+    set behavior(b) { this._bh = b && typeof b === "object" ? b : null; this._wfCache.clear(); if (this.isConnected) this._render(); }
     get behavior() { return this._bh; }
     _workflow(cn) { return this._bh?.workflows?.[cn] || null; }
     _formula(cn, an) { return this._bh?.derivations?.[cn]?.[an]?.text ?? null; }
@@ -1138,7 +1125,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       // the place of the box of `name` (just added to the model, not yet to the diagram): see Layout.freeSpot
       const mm = this._mm;
       const occupied = Object.keys(mm.diagram).filter((n) => n !== name && (mm.classes[n] || mm.enums[n]))
-        .map((n) => ({ ...mm.diagram[n], ...this._footSize(n) }));
+        .map((n) => ({ ...mm.diagram[n], ...this._boxSize(n) }));
       const size = this._boxSize(name);
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
       const v = this._view;
@@ -1285,26 +1272,13 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     _sizeOpts(cn) { return { allAttrs: this._allAttrs, more: this.t.more, state: this._workflow(cn)?.state || null, uses: this._uses(cn), workflow: !!this._workflow(cn) }; }
     _rows(cn) { return Layout.rowItems(this._mm.classes[cn], this._allAttrs, this.t.more, this._workflow(cn)?.state || null, this._uses(cn)); }
     _boxSize(name) { return Layout.boxSize(this._mm, name, this._sizeOpts(name)); }
-    // the satellite (state diagram) of a class with a workflow, memoised per class, language and box width
-    _satellite(cn) {
-      const w = this._showWf && this._mm.classes[cn] ? this._workflow(cn) : null;
-      if (!w) return null;
-      const key = `${cn}|${this._lang()}|${this._boxSize(cn).w}`;
-      if (!this._sats.has(key)) this._sats.set(key, Layout.satelliteOf(this._mm, cn, w, this._lang(), this._sizeOpts(cn)));
-      return this._sats.get(key);
-    }
-    _footSize(name) { return Layout.footSize(this._boxSize(name), this._satellite(name)); }
-    _satellites() {
-      return Object.keys(this._mm.classes).filter((n) => this._mm.diagram[n] && this._satellite(n))
-        .map((n) => ({ name: n, sat: this._satellite(n), rect: Layout.satRect(this._mm.diagram[n], this._satellite(n)) }));
-    }
     _workflowText(cn) {
       const w = this._workflow(cn), t = this.t;
       return w ? `${t.workflow}: ${Object.keys(w.states || {}).length} ${t.states}, ${Object.keys(w.transitions || {}).length} ${t.transitions}` : "";
     }
     _autoLayout(force) {
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
-      const pos = Layout.autoLayout(this._mm, (n) => this._footSize(n),
+      const pos = Layout.autoLayout(this._mm, (n) => this._boxSize(n),
         { force, width: r ? r.width - 2 * MARGIN : 0, height: r ? r.height - 2 * MARGIN : 0 });
       Object.assign(this._mm.diagram, pos);
     }
@@ -1314,7 +1288,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       if (!r || r.width < 50 || r.height < 50 || !pos.length) return;
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (const [n, p] of pos) {
-        const s = this._footSize(n);
+        const s = this._boxSize(n);
         x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x + s.w); y1 = Math.max(y1, p.y + s.h);
       }
       if (this._ext) {   // connectors that run around the boxes stay in view
@@ -1331,12 +1305,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       const names = Object.keys(mm.diagram).filter((n) => mm.classes[n] || mm.enums[n]).sort((a, b) => mm.diagram[a].y - mm.diagram[b].y);
       const done = [];
       for (const n of names) {
-        const p = mm.diagram[n], s = this._footSize(n);
+        const p = mm.diagram[n], s = this._boxSize(n);
         let moved = true;
         while (moved) {
           moved = false;
           for (const o of done) {
-            const q = mm.diagram[o], t = this._footSize(o);
+            const q = mm.diagram[o], t = this._boxSize(o);
             if (p.x < q.x + t.w && q.x < p.x + s.w && p.y < q.y + t.h + GAP_Y / 2 && q.y < p.y + s.h) {
               p.y = q.y + t.h + GAP_Y;
               moved = true;
@@ -1360,10 +1334,24 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         root.append(el("style", {}, css));
         const wrap = el("div", { class: "wrap" },
           el("div", { class: "bar" }),
-          el("div", { class: "main" }, el("div", { class: "canvas" }), el("div", { class: "side" })));
+          el("div", { class: "main" }, el("div", { class: "canvas" }), el("div", { class: "side" })),
+          el("div", { class: "wfpanel" }));
         root.append(wrap);
         const canvas = root.querySelector(".canvas");
         this._bindCanvas(canvas);
+        // the workflow panel: re-laid out at its width, hover like the canvas
+        const panel = root.querySelector(".wfpanel");
+        let panelPending = false;
+        new ResizeObserver(() => {
+          if (panelPending) return;
+          panelPending = true;
+          requestAnimationFrame(() => { panelPending = false; this._renderWorkflowPanel(); });
+        }).observe(panel);
+        panel.addEventListener("pointerover", (ev) => {
+          const key = ev.target.closest?.("[data-edge]")?.dataset.edge || null;
+          if (key !== this._hover) { this._hover = key; this._applyHover(); }
+        });
+        panel.addEventListener("pointerleave", () => { if (this._hover) { this._hover = null; this._applyHover(); } });
         // keep the diagram fitted to the canvas (window resized, panel opened, full screen) until the user zooms
         let pending = false;
         new ResizeObserver(() => {
@@ -1385,12 +1373,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         this.readonly ? null : el("button", { onclick: () => this._addEnum(), title: t.addEnum }, `+ ${t.addEnum}`),
         el("button", { onclick: () => { this._autoLayout(true); this._refit(); this._changed(); }, disabled: this.readonly }, t.layout),
         el("button", { onclick: () => this._refit() }, t.fit),
-        el("button", { class: this._allAttrs ? "on" : "", onclick: () => { this._allAttrs = !this._allAttrs; this._sats.clear(); this._separate(); this._render(); this._refit(); } },
+        el("button", { class: this._allAttrs ? "on" : "", onclick: () => { this._allAttrs = !this._allAttrs; this._separate(); this._render(); this._refit(); } },
           this._allAttrs ? t.compact : t.allAttrs),
-        Object.keys(this._bh?.workflows || {}).length ? el("button", {
-          class: this._showWf ? "on" : "", title: t.legendWf,
-          onclick: () => { this._showWf = !this._showWf; this._sats.clear(); this._separate(); this._render(); this._refit(); },
-        }, `⟳ ${t.workflow}`) : null,
         el("button", { class: this._panel ? "on" : "", onclick: () => { this._panel = !this._panel; this._render(); } }, t.panel),
         el("button", { onclick: () => this._toggleFullscreen() }, document.fullscreenElement === this ? t.exitFullscreen : t.fullscreen),
         el("span", {
@@ -1408,6 +1392,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       ].filter(Boolean));
       this._renderDiagram();
       this._renderSide();
+      this._renderWorkflowPanel();
       const selName = this._sel?.name ?? null;
       if (selName !== this._lastSel) {   // the page follows the selection (e.g. the behaviour of the class)
         this._lastSel = selName;
@@ -1428,10 +1413,10 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     _bindCanvas(canvas) {
       let drag = null;
       canvas.addEventListener("pointerdown", (ev) => {
-        const box = ev.target.closest?.(".box, .sat");
+        const box = ev.target.closest?.(".box");
         const p = { x: ev.clientX, y: ev.clientY };
         if (box) {
-          const name = box.dataset.name || box.dataset.sat;
+          const name = box.dataset.name;
           this._sel = { kind: this._mm.classes[name] ? "class" : "enum", name };
           this._panel = true;
           const start = { ...(this._mm.diagram[name] || { x: 0, y: 0 }) };
@@ -1530,10 +1515,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         const last = pts[pts.length - 1];
         return d + ` L${last.x},${last.y}`;
       };
-      const sats = this._satellites();
-      const routed = Layout.routeEdges(mm, (n) => this._boxSize(n), {
-        extra: sats.map((s) => [`sat:${s.name}`, Layout.satObstacle(mm.diagram[s.name], s.sat)]), uses: this._bh?.uses || null,
-      });
+      const routed = Layout.routeEdges(mm, (n) => this._boxSize(n), { uses: this._bh?.uses || null });
       for (const e of routed.edges) {
         // a bus: the stub with the arrow, the trunk and a branch per source, with a dot where each joins the trunk
         const runs = [{ pts: e.pts, start: e.start, end: e.end }];
@@ -1598,25 +1580,67 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         for (const l of e.literals) { b.append(svg("text", { x: 8, y }, l.name)); y += ROW_H; }
         boxes.append(b);
       }
-      const satsG = svg("g", {});
-      for (const { name, sat, rect } of sats) satsG.append(this._drawSatellite(name, sat, rect));
       this._ext = routed.ext;
-      g.append(edges, satsG, boxes, labels);   // lines under the boxes, satellites between, labels on top
+      g.append(edges, boxes, labels);   // lines under the boxes, labels on top
       const root = svg("svg", { role: "img", "aria-label": "metamodel diagram" }, defs, g);
       const old = canvas.querySelector("svg");
       if (old) old.replaceWith(root); else canvas.prepend(root);
       this._applyHover();
     }
-    // a workflow satellite: dashed frame under the class, a stub to it, the state diagram (Layout.workflowLayout):
-    // states in their colour (thick border when final), connectors in the colour of the target state (dashed when
-    // timed) with a filled arrow head, labels on a background. Every part carries data-edge="wf:<class>:<transition>".
-    _drawSatellite(cn, sat, R) {
-      const t = this.t, wf = this._workflow(cn), L = sat.layout;
-      const g = svg("g", { class: "sat", "data-sat": cn, transform: `translate(${R.x},${R.y})` },
-        svg("path", { class: "stub", d: `M16,${-WF.satGap} L16,0` }),
-        svg("rect", { class: "satbody", width: R.w, height: R.h, rx: 8 }),
-        svg("text", { x: 8, y: 11, class: "stereo" }, `«workflow» ⟳ ${wf.state} · ${L.boxes.length} ${t.states}, ${Object.keys(wf.transitions || {}).length} ${t.transitions}`));
-      const inner = svg("g", { transform: `translate(0,${WF.head})` });
+    // real text widths for the state diagram (a canvas 2D context; the estimate when there is none)
+    _measure() {
+      if (this._mctx === undefined) {
+        const c = document.createElement("canvas");
+        this._mctx = c.getContext?.("2d") || null;
+        this._mcache = new Map();
+      }
+      if (!this._mctx) return undefined;
+      return (text, font, bold = false) => {
+        const k = `${bold ? 1 : 0}|${font}|${text}`;
+        let w = this._mcache.get(k);
+        if (w === undefined) {
+          this._mctx.font = `${bold ? 600 : 400} ${font}px system-ui, sans-serif`;
+          w = this._mctx.measureText(text).width;
+          this._mcache.set(k, w);
+        }
+        return w;
+      };
+    }
+    // the panel under the canvas: the state diagram of the selected class with a workflow (Layout.workflowLayout at
+    // the panel's width, measured text), hidden when the selection is anything else. The diagram fills the width;
+    // below the width of the longest state name it scrolls (core:diagrams).
+    _renderWorkflowPanel() {
+      const panel = this.shadowRoot.querySelector(".wfpanel");
+      if (!panel) return;
+      const cn = this._sel?.kind === "class" ? this._sel.name : null;
+      const wf = cn ? this._workflow(cn) : null;
+      if (!wf) {
+        if (panel.classList.contains("on")) { panel.classList.remove("on"); panel.replaceChildren(); panel.style.height = ""; }
+        return;
+      }
+      panel.classList.add("on");
+      const width = Math.max(240, Math.floor(panel.clientWidth) - 2 * WF_PAD);
+      const key = `${cn}|${this._lang()}|${width}`;
+      let L = this._wfCache.get(key);
+      if (!L) {
+        const model = Layout.workflowModel(wf, this._lang());
+        L = Layout.workflowLayout(model.states, model.transitions, width, { measure: this._measure() });
+        this._wfCache.set(key, L);
+      }
+      const t = this.t;
+      const head = el("div", { class: "wfhead" }, el("strong", {}, cn),
+        el("span", {}, `«workflow» ⟳ ${wf.state} · ${L.boxes.length} ${t.states}, ${Object.keys(wf.transitions || {}).length} ${t.transitions}`));
+      panel.replaceChildren(head, this._workflowSvg(cn, L));
+      const h = Math.min(320, Math.max(160, L.height + WF_HEAD));
+      if (panel.style.height !== `${h}px`) panel.style.height = `${h}px`;
+      this._applyHover();
+    }
+    // the state diagram as SVG: states in their colour (thick border when final), connectors in the colour of the
+    // target state (dashed when timed) with a filled arrow head, dots at bus junctions, labels on a background.
+    // Every part carries data-edge="wf:<class>:<transition>" for the hover highlight.
+    _workflowSvg(cn, L) {
+      const root = svg("svg", { width: L.width + 2 * WF_PAD, height: L.height + WF_PAD, role: "img", "aria-label": `workflow ${cn}` });
+      const inner = svg("g", { transform: `translate(${WF_PAD},${WF_PAD / 2})` });
       const pathD = (pts) => pts.map((q, i) => `${i ? "L" : "M"}${q.x},${q.y}`).join(" ");
       for (const e of L.edges) {
         const key = `wf:${cn}:${e.key}`;
@@ -1624,32 +1648,32 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           inner.append(svg("path", { d: pathD(p), class: "ehit", "data-edge": key }));
           inner.append(svg("path", { d: pathD(p), class: "wfe", stroke: e.color, "stroke-dasharray": e.timed ? "5 4" : null, "data-edge": key }));
         }
-        for (const q of e.dots) inner.append(svg("circle", { cx: q.x, cy: q.y, r: 2.2, class: "wfdot", fill: e.color, "data-edge": key }));
+        for (const q of e.dots) inner.append(svg("circle", { cx: q.x, cy: q.y, r: 2.4, class: "wfdot", fill: e.color, "data-edge": key }));
         inner.append(svg("polygon", { points: [e.arrow[0], e.arrow[2], e.arrow[3]].map((q) => `${q.x},${q.y}`).join(" "), class: "wfa", fill: e.color, "data-edge": key }));
       }
       for (const b of L.boxes) {
-        inner.append(svg("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 6, class: "wfs", stroke: b.color, "stroke-width": b.kind === "final" ? 3 : 1.5 }));
-        const text = svg("text", { x: b.x + b.w / 2, y: b.y + 8 + WF.font, "text-anchor": "middle", class: "wfst", fill: b.color });
+        inner.append(svg("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 7, class: "wfs", stroke: b.color, "stroke-width": b.kind === "final" ? 3 : 1.5 }));
+        const text = svg("text", { x: b.x + b.w / 2, y: b.y + 9 + WF.font, "text-anchor": "middle", class: "wfst", fill: b.color });
         b.lines.forEach((line, i) => text.append(svg("tspan", { x: b.x + b.w / 2, dy: i ? WF.font + 3 : 0 }, line)));
-        inner.append(text, svg("text", { x: b.x + b.w / 2, y: b.y + b.h - 5, "text-anchor": "middle", class: "wfkey" }, b.key));
+        inner.append(text, svg("text", { x: b.x + b.w / 2, y: b.y + b.h - 6, "text-anchor": "middle", class: "wfkey" }, b.key));
       }
       for (const e of L.edges) {   // labels on top of the lines
         const key = `wf:${cn}:${e.key}`, l = e.label;
         inner.append(svg("rect", { x: l.x, y: l.y, width: l.w, height: l.h, rx: 3, class: "wfl-bg", stroke: e.color, "data-edge": key }));
-        const text = svg("text", { x: l.x + l.w / 2, y: l.y + WF.labelFont + 2, "text-anchor": "middle", class: "wfl", "data-edge": key });
-        l.lines.forEach((line, i) => text.append(svg("tspan", { x: l.x + l.w / 2, dy: i ? WF.labelFont + 2 : 0 }, line)));
+        const text = svg("text", { x: l.x + l.w / 2, y: l.y + WF.labelFont + 3, "text-anchor": "middle", class: "wfl", "data-edge": key });
+        l.lines.forEach((line, i) => text.append(svg("tspan", { x: l.x + l.w / 2, dy: i ? WF.labelFont + 3 : 0 }, line)));
         inner.append(text);
       }
-      g.append(inner);
-      return g;
+      root.append(inner);
+      return root;
     }
     _applyHover() {
-      const root = this.shadowRoot.querySelector(".canvas svg");
-      if (!root) return;
-      const known = this._hover && [...root.querySelectorAll("[data-edge]")].some((n) => n.dataset.edge === this._hover);
-      if (!known) this._hover = null;
-      root.classList.toggle("hover", !!this._hover);
-      for (const n of root.querySelectorAll("[data-edge]")) n.classList.toggle("hi", n.dataset.edge === this._hover);
+      const roots = [...this.shadowRoot.querySelectorAll(".canvas svg, .wfpanel svg")];
+      if (!roots.length) return;
+      const all = roots.flatMap((r) => [...r.querySelectorAll("[data-edge]")]);
+      if (this._hover && !all.some((n) => n.dataset.edge === this._hover)) this._hover = null;
+      for (const r of roots) r.classList.toggle("hover", !!this._hover);
+      for (const n of all) n.classList.toggle("hi", n.dataset.edge === this._hover);
     }
 
     _multSelect(f, onchange, disabled) {
