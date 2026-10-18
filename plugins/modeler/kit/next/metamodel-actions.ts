@@ -95,23 +95,26 @@ export async function listMetamodelProposals(): Promise<PendingProposal[]> {
     return out;
   }
   const db = await modelerDb();
-  // `behavior` exists only in tables created or migrated after the behaviour proposals: without it, select the rest
-  let { data, error } = await db
+  // `behavior` exists only in tables created or migrated after the behaviour proposals: without it, select the rest.
+  // supabase-js infers the row shape from the select string, so the two queries have different types: both are
+  // read as `ProposalRow` (the fallback simply has no `behavior`).
+  type ProposalRow = { id: unknown; metamodel: unknown; behavior?: unknown; note?: string | null;
+                       author_email?: string | null; status: unknown; created_at: unknown };
+  const select = (columns: string) => db
     .from("model_change_requests")
-    .select("id, metamodel, behavior, note, author_email, status, created_at")
+    .select(columns)
     .in("status", ["open", "pulled"])
     .order("created_at", { ascending: true });
+  let { data, error } = (await select("id, metamodel, behavior, note, author_email, status, created_at")) as
+    { data: ProposalRow[] | null; error: { message: string } | null };
   if (error && /behavior/.test(error.message)) {
-    ({ data, error } = await db
-      .from("model_change_requests")
-      .select("id, metamodel, note, author_email, status, created_at")
-      .in("status", ["open", "pulled"])
-      .order("created_at", { ascending: true }));
+    ({ data, error } = (await select("id, metamodel, note, author_email, status, created_at")) as
+      { data: ProposalRow[] | null; error: { message: string } | null });
   }
   if (error) throw new Error(error.message);
   return (data ?? []).map((r) => ({ id: String(r.id), author: r.author_email ?? null, note: r.note ?? null,
                                     createdAt: String(r.created_at), status: String(r.status), metamodel: r.metamodel,
-                                    behavior: (r as { behavior?: unknown }).behavior ?? undefined }));
+                                    behavior: r.behavior ?? undefined }));
 }
 
 /** Rejects a pending proposal: moved to .modeler/proposals/rejected/ in development, status `rejected` in production. */
