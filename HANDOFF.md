@@ -1,5 +1,5 @@
-# Handoff — workflow nel modellatore (satellite, livelli di coinvolgimento) e sandbox eseguibile
-_Aggiornato: 2026-10-18 · branch `main` (PR #13 unita, `f0d02e5`)_
+# Handoff — workflow nel modellatore (pannello in basso, livelli di coinvolgimento) e sandbox eseguibile
+_Aggiornato: 2026-10-18 · branch `feat/modeler-workflow-panel` (commit avanti a `origin/main`, non pushato)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: (1) la sandbox
@@ -9,8 +9,9 @@ workflow è disegnato accanto alla classe (satellite «workflow») e il diagramm
 quelle coinvolte dal comportamento e quelle solo strutturali.
 
 ## Stato
-- `origin/main` è alla PR #13 (`f0d02e5`, squash dei commit sotto): **core 0.9.2, modeler 0.15.0**. Nessun branch remoto aperto.
-- La PR #13 ha portato (release `95866f8` modeler 0.15.0, `112ecf8` core 0.9.2):
+- `origin/main` è alla PR #13 (`f0d02e5`): **core 0.9.2, modeler 0.15.0**. Nessun branch remoto aperto.
+- Il branch locale `feat/modeler-workflow-panel` (release **modeler 0.16.0**) sposta il diagramma degli stati dal satellite nella tela a un **pannello sotto la tela** che segue la selezione (compare selezionando una classe con workflow, sparisce altrimenti), con le larghezze del testo misurate su un canvas 2D (`workflowLayout(..., {measure})`, `wfWrap` a misura, spazio per la parola più lunga): le etichette restano dentro le forme. Rimossi satelliti, ingombro/ostacolo e toggle; `routeEdges(mm, size, {uses})`. Test: etichette dentro il diagramma e larghe quanto il testo misurato.
+- La PR #13 aveva portato (release `95866f8` modeler 0.15.0, `112ecf8` core 0.9.2):
   - `6b8e061` fix: `<entity>_available_transitions` restituiva righe avvolte in `{"jsonb_build_object": …}`; ora un array di oggetti (`engine.py`, test del testo SQL).
   - `5d30f7d` `uses` in `behavior.json`: `expr.py` annota ogni passo di un path con la classe proprietaria (`hops`, `hops_used`); `behavior.uses(b, e)` → `{Class: {attributes, references, class: [{kind, of}]}}` (derivation, when, guard, at, by, owner, editable_by, revert, notify, scope); `BEHAVIOR.md` ha «Classi coinvolte nel comportamento». Test `test_uses`.
   - `f1c7613` editor (`kit/metamodel-editor.js`): `Layout.workflowLayout` (porting di `workflow-layout.ts` + `state-path.ts` di invitations-af), `workflowModel`, `satelliteOf`/`satRect`/`footSize`/`satObstacle`, `routeEdges(mm, size, {extra, uses})`, `FRACS` (tratto centrale delle Z a più frazioni), testata «workflow» (`STEREO_H`), marcatori ` ·ƒ`/`ƒ`, legenda, toggle `⟳ Workflow`, satellite trascinabile con la classe, hover `wf:<Class>:<transition>`. `behavior-view.tsx`: tabella «Classi coinvolte». Test: `workflowLayout` su invitations (11 stati, bus `cancel`, `visit_ended` a tempo) e su 4 stati; satellite in tela; righe marcate.
@@ -21,7 +22,7 @@ quelle coinvolte dal comportamento e quelle solo strutturali.
   - harness: `unittest` core 23 OK, modeler 92 OK (8 skip senza `MODELER_PG`); `node --test` 138 pass; `tsc` sui TSX del kit ok; `claude plugin validate .` passed.
   - sandbox: `tsc --noEmit` e `lint` puliti; scenario end-to-end eseguito (UI + psql): guardia `ready`, permessi per ruolo/assegnatario, destinatari delle reazioni (manager all'avvio, owner al completamento), commento obbligatorio, `expire` a tempo con `task.expired`, reminder dopo invecchiamento, revert, blocco dell'update diretto dello stato.
   - browser su `/admin/model`: satellite sotto `Task` (todo→doing→done, `expire` tratteggiata ⏱, `cancelled`), `ƒ` su `Project`, ` ·ƒ` su `tasks 0..*`, legenda, toggle, hover.
-- Non committato: nulla (solo questo `HANDOFF.md`).
+- Non committato: nulla.
 
 ## Decisioni
 - Satellite derivato dalla posizione della classe, mai salvato in `mm.diagram`: `domain.ecore.yaml` resta pulito.
@@ -32,12 +33,11 @@ quelle coinvolte dal comportamento e quelle solo strutturali.
 
 ## Problemi aperti
 - Layout masonry: sul fixture `invitations.ecore.yaml` 22 dimensioni su 39 hanno un connettore che attraversa una classe, anche senza satelliti (nota 2026-10-17 in `NOTES.md`; script di misura: `tests/` non ancora, vedi la nota).
-- Il satellite di un workflow con 11 stati è largo ~1060 px: domina la colonna e `_fit` riduce lo zoom (accettato; il toggle lo nasconde).
 - Proposte sul `behavior.yaml` dal modellatore web: non ancora fatte (resto della nota 2026-10-17).
 - Ereditati: motore generato non provato su un'app vera (la sandbox sì); `psql` assente sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. Sugli altri computer `claude plugin update modeler@iovino-harness` (0.15.0) e `core@iovino-harness` (0.9.2).
+1. `/core:ship` del branch `feat/modeler-workflow-panel`; poi sugli altri computer `claude plugin update modeler@iovino-harness` (0.16.0) e `core@iovino-harness` (0.9.3).
 2. Nella sandbox: provare lo scenario dalla UI con i quattro utenti (README «Scenario da provare»); modificare `behavior.yaml` (es. nuovo stato o reazione), `npm run model:sync && npm run model:engine -- --write && npm run db:engine` e vedere satellite, tabelle e motore seguire.
 3. In invitations-af: `/modeler:install` (0.15.0), passare `behavior={behavior}` nella pagina admin e guardare il satellite a 11 stati su un'app vera.
 4. Nota sul layout masonry: misurare e intervenire su `autoLayout`/router (vedi `NOTES.md`).
