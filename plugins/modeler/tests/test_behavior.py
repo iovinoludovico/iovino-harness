@@ -624,6 +624,48 @@ class GenerationTests(unittest.TestCase):
         b["derivations"]["Invitation"]["fundsTotal"] = "nope.sum()"
         self.assertNotIn("fundsTotal", str(B.uses(B.expand(b), E.expand(meta()))["Invitation"]["references"].get("invitationFunds", [])))
 
+    def test_dumps_from_editor_and_diff(self):
+        # dumps writes behavior.yaml back: same model once loaded
+        text = B.dumps(behavior())
+        self.assertTrue(text.startswith("# Behaviour of the domain (behavior.yaml)"))
+        self.assertIn("\ndoc: Inviti dei visiting researcher", text)
+        self.assertIn("\nroles:\n  office: {label: {it: Uffici amministrativi, en: Administrative offices}}\n", text)
+        self.assertIn("      submit: {from: draft, to: pending_director, by: [self.issuer], guard: dataComplete, label: {it: Emetti, en: Submit}}", text)
+        self.assertIn("\nreactions:\n  - {name: notify_submitted, event: Invitation.transitioned, when: 'transition in [submit, resubmit]'", text)
+        self.assertNotIn("\n\n      '", text)                                                         # folded texts on one line
+        # the expressions in their canonical text (to_text normalises parentheses, spaces and folded lines)
+        def canon(b):
+            e = B.expand(b)
+            for cn, ders in e["derivations"].items():
+                e["derivations"][cn] = {an: X.to_text(X.parse(str(x))) for an, x in ders.items()}
+            return e
+        self.assertEqual(canon(B.loads(text)), canon(behavior()))
+        # a proposal saved by the web modeler (runtime form) comes back to the structure of the file
+        fe = B.from_editor(B.runtime_json(behavior(), meta()))
+        self.assertNotIn("entities", fe)
+        self.assertNotIn("uses", fe)
+        self.assertEqual(fe["workflows"]["Invitation"]["transitions"]["submit"]["from"], "draft")      # one source: a scalar
+        self.assertEqual(fe["workflows"]["Invitation"]["transitions"]["submit"]["guard"], "dataComplete")
+        self.assertNotIn("final", fe["workflows"]["Invitation"]["states"]["draft"])                     # implicit false dropped
+        self.assertEqual(canon(fe), canon(behavior()))
+        self.assertEqual(B.validate(fe, meta()).errors, [])
+        # the differences a reviewer reads
+        new = copy.deepcopy(behavior())
+        w = new["workflows"]["Invitation"]
+        w["states"]["paused"] = {"label": {"it": "Sospeso"}}
+        w["transitions"]["pause"] = {"from": "in_management", "to": "paused", "by": ["office"]}
+        w["transitions"]["submit"]["guard"] = "dataComplete and hours > 0"
+        del new["reactions"][0]
+        new["roles"]["boss"] = {}
+        new["derivations"]["Invitation"]["fundsTotal"] = "invitationFunds.amount.sum() + 1"
+        self.assertEqual(B.diff(behavior(), new), [
+            "+ role boss", "~ derivation Invitation.fundsTotal = invitationFunds.amount.sum() + 1",
+            "+ state Invitation.paused", "~ transition Invitation.submit: guard",
+            "+ transition Invitation.pause: in_management -> paused", "- reaction notify_submitted"])
+        self.assertEqual(B.diff(behavior(), behavior()), [])
+        self.assertEqual(B.diff({}, behavior())[:1], ["+ role office"])
+        self.assertIn("+ workflow Invitation on state: 11 states, 15 transitions", B.diff({}, behavior()))
+
     def test_runtime_json(self):
         rj = B.runtime_json(behavior(), meta())
         self.assertEqual(rj["entities"]["Invitation"], "invitation")

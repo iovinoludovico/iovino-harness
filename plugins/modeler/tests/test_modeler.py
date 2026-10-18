@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from metamodel import __version__  # noqa: E402
 from metamodel import cli  # noqa: E402
 from metamodel import dbschema as D  # noqa: E402
+from metamodel import behavior as B  # noqa: E402
 from metamodel import ecore as E  # noqa: E402
 from metamodel import sqlgen as G  # noqa: E402
 
@@ -788,6 +789,47 @@ class AppTests(unittest.TestCase):
         self.assertEqual(cli.cmd_apply(ns), 1)
         self.assertNotIn("Ghost", (self.app / "domain.ecore.yaml").read_text())
 
+
+    def test_apply_writes_the_behaviour_of_a_proposal(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures"
+        (self.app / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        (self.app / "behavior.yaml").write_text("# hand comment\n" + (fixtures / "invitations.behavior.yaml").read_text())
+        cli.install(self.app)
+        meta = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
+        beh = json.loads((self.app / "src/lib/modeler/behavior.json").read_text())      # what the web modeler holds
+        beh["workflows"]["Invitation"]["states"]["paused"] = {"label": {"it": "Sospeso", "en": "Paused"}, "owner": ["office"]}
+        beh["workflows"]["Invitation"]["transitions"]["pause"] = {"from": ["in_management"], "to": "paused", "by": ["office"], "label": {"it": "Sospendi"}}
+        beh["workflows"]["Invitation"]["transitions"]["resume"] = {"from": ["paused"], "to": "in_management", "by": ["office"]}
+        prop_dir = self.app / ".modeler" / "proposals"
+        prop_dir.mkdir(parents=True, exist_ok=True)
+        (prop_dir / "p1.json").write_text(json.dumps({"note": "pausa", "metamodel": meta, "behavior": beh}))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_proposals(argparse.Namespace(path=str(self.app))), 0)
+        self.assertIn("behaviour: + state Invitation.paused", out.getvalue())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_apply(argparse.Namespace(path=str(self.app), proposal=None, write=True)), 0)
+        text = (self.app / "behavior.yaml").read_text()
+        self.assertIn("+ transition Invitation.pause: in_management -> paused", out.getvalue())
+        self.assertIn("3 comment line(s) of behavior.yaml are not kept", out.getvalue())        # the hand one and the header
+        self.assertNotIn("~ derivation", out.getvalue())                                           # same formulas, written otherwise
+        self.assertIn("paused: {label: {it: Sospeso, en: Paused}, owner: [office]}", text)
+        self.assertIn("pause: {from: in_management, to: paused, by: [office], label: {it: Sospendi}}", text)
+        self.assertNotIn("hand comment", text)
+        self.assertTrue(any(f.name.startswith("behavior.yaml.") for f in (self.app / ".modeler" / "backups").iterdir()))
+        self.assertIn('"paused"', (self.app / "src/lib/modeler/behavior.json").read_text())           # synced
+        self.assertIn("`paused`", (self.app / "docs/BEHAVIOR.md").read_text())
+        self.assertEqual(B.validate(B.load(self.app / "behavior.yaml"), E.load(self.app / "domain.ecore.yaml")).errors, [])
+        # a behaviour that does not fit the metamodel is refused as a whole: nothing written
+        beh["workflows"]["Invitation"]["transitions"]["pause"]["guard"] = "nope > 1"
+        (self.app / "bad.json").write_text(json.dumps({"metamodel": meta, "behavior": beh}))
+        before = text
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_apply(argparse.Namespace(path=str(self.app), proposal=str(self.app / "bad.json"), write=True)), 1)
+        self.assertIn("not valid against its metamodel", out.getvalue())
+        self.assertEqual((self.app / "behavior.yaml").read_text(), before)
 
     def test_apply_changes_only_the_changed_lines(self):
         # a proposal from production comes back from a jsonb column: keys sorted by length, then name
