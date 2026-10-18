@@ -48,8 +48,10 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   features the behaviour uses (formulas, guards, principals, recipients, role scopes: the `uses` map of
   `behavior.json`) carry ` ·ƒ` with "used by" in the tooltip, a class without a workflow but involved has `ƒ` in its
   head; a legend tells the three levels apart (workflow, involved, structure only). Under the diagram the
-  behaviour is listed read only (roles, workflows, derivations, classes involved, events, reactions), following
-  the class selected. `model:engine -- --write` generates the SQL engine itself as one idempotent migration: derived
+  behaviour is listed (roles, workflows, derivations, classes involved, events, reactions), following the class
+  selected, and edited: states, transitions, revert, formulas, events, roles and reactions; a save is a proposal
+  with metamodel and behaviour, and `apply` writes `behavior.yaml` as well (validated against the proposed
+  metamodel, backed up, comments listed). `model:engine -- --write` generates the SQL engine itself as one idempotent migration: derived
   attributes computed by triggers (and refreshed when the rows they navigate to change), `<entity>_perform_transition`
   with principals, conditions, guards, comments, history and events with the recipients of the reactions,
   `_available_transitions`, `_revert`, `_run_timed_transitions`, `_run_reminders`, lifecycle events; it relies on
@@ -110,7 +112,7 @@ Eclipse EMF and Epsilon.
 | `src/lib/modeler/behavior.json`, `docs/BEHAVIOR.md` | generated from `behavior.yaml` (when the app has one) | refreshed (`model:sync`), always rewritten |
 | `src/lib/modeler/access.ts` | app (admin check, Supabase client) | kept |
 | admin page (from `kit/next/page.tsx`) | app | kept |
-| `supabase/migrations/<ts>_model_change_requests.sql` | app | written once |
+| `supabase/migrations/<ts>_model_change_requests.sql` (with `behavior jsonb`) | app | written once |
 
 ## Requirements
 Python 3.10+ (PyYAML if installed, else the vendored pure-Python copy in `scripts/vendor`); `psql` for

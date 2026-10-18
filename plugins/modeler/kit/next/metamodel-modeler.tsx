@@ -5,7 +5,9 @@
 // The page passes the metamodel (src/lib/modeler/metamodel.json) and a server action that stores the proposal.
 // The proposals saved and not yet applied are listed above the editor: each can be opened or rejected.
 // With `behavior` (src/lib/modeler/behavior.json, when the app has a behavior.yaml) the editor marks derived
-// attributes and workflow states, and the behaviour is shown read only below the editor (<BehaviorView>).
+// attributes and workflow states, shows and edits the workflow of the selected class in its bottom panel, and the
+// behaviour is listed below the editor (<BehaviorView>). A save carries the behaviour too: the proposal updates
+// behavior.yaml as well when applied (/modeler:apply).
 
 import Script from "next/script";
 import { useCallback, useEffect, useRef, useState, type DetailedHTMLProps, type HTMLAttributes, type Ref } from "react";
@@ -21,11 +23,11 @@ type Props = {
   lang?: string;
   saveLabel?: string;
   downloadLabel?: string;
-  onSave: (json: string, note: string) => Promise<ProposalResult>;
+  onSave: (json: string, note: string, behaviorJson?: string | null) => Promise<ProposalResult>;
 };
 
-type EditorElement = HTMLElement & { metamodel: unknown; behavior: unknown; changesTo: (mm: unknown) => string[] };
-type SaveDetail = { metamodel: unknown; note: string };
+type EditorElement = HTMLElement & { metamodel: unknown; behavior: unknown; changesTo: (mm: unknown, bh?: unknown) => string[] };
+type SaveDetail = { metamodel: unknown; behavior: unknown | null; note: string };
 type SelectDetail = { kind: "class" | "enum" | null; name: string | null };
 type Pending = PendingProposal & { lines: string[] };
 
@@ -90,7 +92,7 @@ export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "
       return list.map((p) => {
         let lines: string[] = [];
         try {
-          lines = ref.current?.changesTo?.(p.metamodel) ?? [];
+          lines = ref.current?.changesTo?.(p.metamodel, p.behavior ?? undefined) ?? [];
         } catch {
           // no differences shown
         }
@@ -147,7 +149,7 @@ export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "
       setLast(detail);
       setResult(null);
       try {
-        setResult(await onSave(JSON.stringify(detail.metamodel), detail.note));
+        setResult(await onSave(JSON.stringify(detail.metamodel), detail.note, detail.behavior ? JSON.stringify(detail.behavior) : null));
       } catch (err) {
         setResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
       }
@@ -160,12 +162,13 @@ export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "
   const openProposal = (p: Pending) => {
     if (!ref.current) return;
     ref.current.metamodel = p.metamodel;
+    if (p.behavior) ref.current.behavior = p.behavior;      // the proposal's behaviour too, when it carries one
     setOpened({ proposal: p, over: metamodel });
   };
 
   // changesTo compares with the metamodel loaded in the editor: back on the running one, the differences are recomputed.
   const backToRunning = async () => {
-    if (ref.current) ref.current.metamodel = metamodel;
+    if (ref.current) { ref.current.metamodel = metamodel; ref.current.behavior = behavior ?? null; }
     setOpened(null);
     setPending(await loadPending());
   };
@@ -180,7 +183,7 @@ export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "
 
   const download = () => {
     if (!last) return;
-    const blob = new Blob([JSON.stringify({ note: last.note, created_at: new Date().toISOString(), metamodel: last.metamodel }, null, 2)], {
+    const blob = new Blob([JSON.stringify({ note: last.note, created_at: new Date().toISOString(), metamodel: last.metamodel, ...(last.behavior ? { behavior: last.behavior } : {}) }, null, 2)], {
       type: "application/json",
     });
     const a = document.createElement("a");

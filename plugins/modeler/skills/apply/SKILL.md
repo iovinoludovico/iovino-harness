@@ -20,7 +20,9 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
      non hanno un terminale e `psql` non può chiedere la password. Mai chiedere la password in chat, scriverla
      in file del repository o nel comando.
    - Manca lo script `model:pull`: il modellatore installato è vecchio, aggiornalo con `/modeler:install`.
-2. `npm run model:proposals`: elenca le proposte con le differenze rispetto a `domain.ecore.yaml`.
+2. `npm run model:proposals`: elenca le proposte con le differenze rispetto a `domain.ecore.yaml` e, per le proposte
+   che portano anche il comportamento (chiave `behavior`, salvata dal modellatore quando l'app ha `behavior.yaml`),
+   le righe `behaviour: …` (ruoli, derivazioni, stati, transizioni, ritorno, eventi, reazioni).
 3. `npm run model:apply -- [file]` (prova a vuoto; senza file, la proposta più recente): mostra all'utente le
    modifiche e la validazione; segnala ciò che comporta perdita di dati (classi, feature o letterali rimossi) e
    chiedi conferma. Ogni proposta è un metamodello intero: la prova a vuoto elenca le altre proposte già
@@ -28,7 +30,12 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    applicare una per una indicando il file o da scartare dal modellatore.
 4. Con conferma: `npm run model:apply -- [file] --write` (backup in `.modeler/backups/`, proposta spostata in
    `.modeler/proposals/applied/` insieme a quelle che contiene, `metamodel.json` aggiornato: da qui la proposta
-   non compare più tra quelle in attesa nel modellatore locale). Il file cambia solo nelle righe di ciò che è
+   non compare più tra quelle in attesa nel modellatore locale). Se la proposta porta il comportamento, `apply` lo
+   valida contro il metamodello proposto (se non è valido non scrive nulla, né metamodello né comportamento) e
+   riscrive `behavior.yaml` per intero (backup in `.modeler/backups/`; i commenti del file non si conservano e
+   vengono elencati): controlla `git diff behavior.yaml` e riporta a mano i commenti che contano. Poi `sync`
+   rigenera `behavior.json` e `docs/BEHAVIOR.md`; se il comportamento è cambiato, `npm run model:engine -- --write`
+   rigenera il motore (una migrazione sostituita) e `npm run model:drift` confronta i workflow. Il file cambia solo nelle righe di ciò che è
    cambiato (ordine, stile e commenti restano); le posizioni del diagramma salvate dall'editor non entrano (il
    file tiene le sue). Se la modifica non si può scrivere riga per riga (intestazione del package, file con un
    layout insolito) `--write` si ferma senza scrivere: applicala a mano, oppure, solo se l'utente accetta di

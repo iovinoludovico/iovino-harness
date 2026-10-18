@@ -7,10 +7,11 @@
  *   const el = document.querySelector("metamodel-editor");
  *   el.metamodel = json;            // canonical form: src/lib/modeler/metamodel.json (`npm run model:sync`)
  *   el.behavior = json;             // optional: src/lib/modeler/behavior.json (behavior.yaml as the app reads it);
- *                                   // derived attributes show their formula, the state attribute its workflow
+ *                                   // the workflow of the selected class is shown and edited in the bottom panel,
+ *                                   // derived attributes show their formula, roles and reactions are in the side panel
  *   el.readonly = false;
- *   el.addEventListener("change", (e) => e.detail.metamodel);
- *   el.addEventListener("save", (e) => { e.detail.metamodel; e.detail.note; });
+ *   el.addEventListener("change", (e) => { e.detail.metamodel; e.detail.behavior; });
+ *   el.addEventListener("save", (e) => { e.detail.metamodel; e.detail.behavior; e.detail.note; });   // behavior: for behavior.yaml
  *   el.addEventListener("select", (e) => e.detail.name);   // the class or enum selected (null: none)
  *
  * Attributes: lang="it|en", save-label="…", readonly.
@@ -964,6 +965,71 @@
   };
   Layout.diff = diff;
 
+  /* ------------------------------------------------------------------ the behaviour as a proposal
+   * The editor holds behavior.json (typed expressions {text, type, ast, sql}, runtime keys). A proposal carries the
+   * behaviour as behavior.yaml is written: expressions as their text, no `entities`/`uses` (the CLI normalises the
+   * rest: `behavior.from_editor`). behaviorDiff lists the changes as the CLI's `behavior.diff`, for the pending list. */
+  const exprText = (x) => (x && typeof x === "object" && "text" in x ? x.text : x);
+  const behaviorSource = (bh) => {
+    if (!bh || typeof bh !== "object") return null;
+    const b = JSON.parse(JSON.stringify(bh));   // (clone is defined after this module's early return for Node)
+    delete b.entities; delete b.uses;
+    for (const ders of Object.values(b.derivations || {})) for (const an of Object.keys(ders)) ders[an] = exprText(ders[an]);
+    for (const w of Object.values(b.workflows || {})) for (const t of Object.values(w.transitions || {})) { t.when = exprText(t.when); t.guard = exprText(t.guard); }
+    for (const r of b.reactions || []) r.when = exprText(r.when);
+    return b;
+  };
+  const behaviorDiff = (oldBh, newBh) => {
+    const a = behaviorSource(oldBh) || {}, b = behaviorSource(newBh) || {};
+    const out = [];
+    const same = (x, y) => JSON.stringify(x ?? null) === JSON.stringify(y ?? null);
+    const norm = (x) => (typeof x === "string" ? x.split(/\s+/).join(" ") : x);
+    const keysChanged = (x, y, keys) => keys.filter((k) => !same(norm(x?.[k]), norm(y?.[k])));
+    const ar = a.roles || {}, br = b.roles || {};
+    for (const rn of Object.keys(br)) {
+      if (!ar[rn]) out.push(`+ role ${rn}`);
+      else { const ks = keysChanged(ar[rn], br[rn], ["scope", "label"]); if (ks.length) out.push(`~ role ${rn}: ${ks.join(", ")}`); }
+    }
+    for (const rn of Object.keys(ar)) if (!br[rn]) out.push(`- role ${rn}`);
+    const ad = a.derivations || {}, bd = b.derivations || {};
+    for (const [cn, ders] of Object.entries(bd)) for (const [an, ex] of Object.entries(ders)) {
+      if (ad[cn]?.[an] === undefined) out.push(`+ derivation ${cn}.${an} = ${ex}`);
+      else if (norm(ad[cn][an]) !== norm(ex)) out.push(`~ derivation ${cn}.${an} = ${ex}`);
+    }
+    for (const [cn, ders] of Object.entries(ad)) for (const an of Object.keys(ders)) if (bd[cn]?.[an] === undefined) out.push(`- derivation ${cn}.${an}`);
+    const aw = a.workflows || {}, bw = b.workflows || {};
+    for (const [cn, w] of Object.entries(bw)) {
+      const ow = aw[cn];
+      if (!ow) { out.push(`+ workflow ${cn} on ${w.state}: ${Object.keys(w.states || {}).length} states, ${Object.keys(w.transitions || {}).length} transitions`); continue; }
+      if (ow.state !== w.state) out.push(`~ workflow ${cn}: state attribute ${ow.state} -> ${w.state}`);
+      for (const [sn, st] of Object.entries(w.states || {})) {
+        if (!ow.states?.[sn]) out.push(`+ state ${cn}.${sn}`);
+        else { const ks = keysChanged(ow.states[sn], st, ["initial", "final", "label", "color", "owner", "editable_by", "reminder"]); if (ks.length) out.push(`~ state ${cn}.${sn}: ${ks.join(", ")}`); }
+      }
+      for (const sn of Object.keys(ow.states || {})) if (!w.states?.[sn]) out.push(`- state ${cn}.${sn}`);
+      for (const [tn, tr] of Object.entries(w.transitions || {})) {
+        if (!ow.transitions?.[tn]) out.push(`+ transition ${cn}.${tn}: ${[].concat(tr.from || []).join(", ")} -> ${tr.to}`);
+        else { const ks = keysChanged(ow.transitions[tn], tr, ["from", "to", "by", "when", "guard", "comment", "at", "emits", "label"]); if (ks.length) out.push(`~ transition ${cn}.${tn}: ${ks.join(", ")}`); }
+      }
+      for (const tn of Object.keys(ow.transitions || {})) if (!w.transitions?.[tn]) out.push(`- transition ${cn}.${tn}`);
+      if (!same(ow.revert, w.revert)) out.push(`~ workflow ${cn}: revert`);
+    }
+    for (const cn of Object.keys(aw)) if (!bw[cn]) out.push(`- workflow ${cn}`);
+    const ae = a.events || {}, be = b.events || {};
+    for (const [cn, evs] of Object.entries(be)) for (const en of Object.keys(evs || {})) if (!ae[cn]?.[en]) out.push(`+ event ${cn}.${en}`);
+    for (const [cn, evs] of Object.entries(ae)) for (const en of Object.keys(evs || {})) if (!be[cn]?.[en]) out.push(`- event ${cn}.${en}`);
+    const byName = (lst) => Object.fromEntries((lst || []).map((r, i) => [String(r.name || i), r]));
+    const arx = byName(a.reactions), brx = byName(b.reactions);
+    for (const [n, r] of Object.entries(brx)) {
+      if (!arx[n]) out.push(`+ reaction ${n} on ${r.event}`);
+      else { const ks = keysChanged(arx[n], r, ["event", "when", "notify", "template"]); if (ks.length) out.push(`~ reaction ${n}: ${ks.join(", ")}`); }
+    }
+    for (const n of Object.keys(arx)) if (!brx[n]) out.push(`- reaction ${n}`);
+    return out;
+  };
+  Layout.behaviorSource = behaviorSource;
+  Layout.behaviorDiff = behaviorDiff;
+
   if (typeof module === "object" && module.exports) module.exports = Layout;
   if (typeof customElements === "undefined" || customElements.get("metamodel-editor")) return;
 
@@ -988,6 +1054,14 @@
       legendWf: "classe con workflow", legendInvolved: "coinvolta nel comportamento", legendStruct: "solo struttura",
       usedBy: "usato da", derivation: "derivazione", guard: "requisito", when: "condizione", at: "scadenza", by: "chi",
       owner: "in attesa di", editable_by: "modificabile da", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo",
+      addWorkflow: "Workflow", removeWorkflow: "Rimuovi workflow", stateAttr: "attributo di stato", stateAttrHint: "serve un attributo EString o enum",
+      state: "Stato", kind: "Tipo", initial: "iniziale", final: "finale", color: "Colore", reminder: "Sollecito",
+      transition: "Transizione", from: "Da", to: "A", who: "Chi", comment: "Commento", required: "obbligatorio", optional: "facoltativo",
+      emits: "Eventi", events: "Eventi dichiarati", roles: "Ruoli", reactions: "Reazioni", event: "Evento", template: "Template",
+      derivedFlag: "calcolato (ƒ)", derivedHint: "formula in behavior.yaml", listHint: "separati da virgola", editHint: "modifica il comportamento: le modifiche entrano nella proposta",
+      wfNoInitial: "nessuno stato iniziale", wfManyInitial: "più stati iniziali", wfNoFinal: "nessuno stato finale",
+      wfBadState: "stato sconosciuto", wfNoActor: "senza chi né scadenza", wfBadKey: "chiave non valida", wfStateAttr: "attributo di stato mancante",
+      wfEnumStates: "gli stati devono essere i letterali dell'enum", rxBadEvent: "evento Classe.evento",
     },
     en: {
       addClass: "Class", addEnum: "Enum", layout: "Layout", fit: "Fit", save: "Save", note: "Change note",
@@ -1009,6 +1083,14 @@
       legendWf: "class with a workflow", legendInvolved: "involved in the behaviour", legendStruct: "structure only",
       usedBy: "used by", derivation: "derivation", guard: "requirement", when: "condition", at: "due", by: "who",
       owner: "waiting for", editable_by: "editable by", notify: "recipient", revert: "revert", scope: "role scope",
+      addWorkflow: "Workflow", removeWorkflow: "Remove workflow", stateAttr: "state attribute", stateAttrHint: "needs an EString or enum attribute",
+      state: "State", kind: "Kind", initial: "initial", final: "final", color: "Colour", reminder: "Reminder",
+      transition: "Transition", from: "From", to: "To", who: "Who", comment: "Comment", required: "required", optional: "optional",
+      emits: "Events", events: "Declared events", roles: "Roles", reactions: "Reactions", event: "Event", template: "Template",
+      derivedFlag: "derived (ƒ)", derivedHint: "formula in behavior.yaml", listHint: "comma separated", editHint: "edit the behaviour: the changes go into the proposal",
+      wfNoInitial: "no initial state", wfManyInitial: "several initial states", wfNoFinal: "no final state",
+      wfBadState: "unknown state", wfNoActor: "neither who nor due", wfBadKey: "invalid key", wfStateAttr: "state attribute missing",
+      wfEnumStates: "the states must be the literals of the enum", rxBadEvent: "event as Class.event",
     },
   };
 
@@ -1043,7 +1125,7 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .side h3 { margin:12px 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
 .side h3:first-child { margin-top:0; }
 .row { display:grid; gap:4px; align-items:center; margin-bottom:4px; }
-.attr { grid-template-columns:1fr 92px 58px 22px 22px; }
+.attr { grid-template-columns:1fr 92px 58px 22px 22px 22px; }
 .ref { grid-template-columns:1fr 92px 58px; }
 .ref2 { grid-template-columns:auto 1fr 22px; margin:-2px 0 8px 8px; font-size:12px; color:var(--muted); }
 .lit { grid-template-columns:1fr 1fr 22px; }
@@ -1063,6 +1145,22 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .wfhead { display:flex; gap:8px; align-items:baseline; padding:6px 10px 0; font-size:12px; color:var(--muted); white-space:nowrap; }
 .wfhead strong { color:var(--fg); font-size:13px; }
 .wfpanel svg { display:block; font:11px system-ui,sans-serif; }
+.wfedit { padding:4px 10px 10px; display:grid; gap:8px; }
+.wfedit h4 { margin:6px 0 2px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+.wfedit table { border-collapse:collapse; font-size:12px; }
+.wfedit th { text-align:left; font-weight:500; color:var(--muted); font-size:11px; padding:0 4px 2px; white-space:nowrap; }
+.wfedit td { padding:1px 3px; vertical-align:middle; }
+.wfedit input, .wfedit select { font-size:12px; padding:2px 4px; width:100%; min-width:60px; }
+.wfedit input.k { width:96px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.wfedit input.w { width:118px; }
+.wfedit input.n { width:52px; }
+.wfedit input[type=color] { width:28px; padding:0; height:22px; border:none; background:none; }
+.wfedit .hint { padding:0 2px; }
+.side input.formula { width:100%; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; margin:-2px 0 8px 0; }
+.side table.beh { border-collapse:collapse; width:100%; font-size:12px; }
+.side table.beh th { text-align:left; font-weight:500; color:var(--muted); font-size:11px; padding:0 3px 2px; }
+.side table.beh td { padding:1px 2px; }
+.side table.beh input, .side table.beh select { width:100%; font-size:12px; padding:2px 4px; }
 .wfe { fill:none; stroke-width:1.75; }
 .wfs { fill:var(--bg); }
 .wfst { font-size:11px; font-weight:600; }
@@ -1140,6 +1238,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this._hover = null;          // key of the connector under the mouse: highlighted, the others dimmed
       this._bh = null;             // behavior.json (optional): formulas of the derived attributes, workflows, uses
       this._wfCache = new Map();   // state-diagram layouts of the panel, per class, language and width
+      this._bhOrig = null;         // the behaviour the editor was opened with (changesTo compares with it)
       this._lastSel = undefined;   // the selection last announced with the `select` event
       this.attachShadow({ mode: "open" });
     }
@@ -1166,8 +1265,19 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     }
     get metamodel() { return clone(this._mm); }
     // the behaviour model (src/lib/modeler/behavior.json): read only, shown next to the structure it refers to
-    set behavior(b) { this._bh = b && typeof b === "object" ? b : null; this._wfCache.clear(); if (this.isConnected) this._render(); }
-    get behavior() { return this._bh; }
+    set behavior(b) {
+      this._bh = b && typeof b === "object" ? clone(b) : null;
+      this._bhOrig = this._bh ? clone(this._bh) : null;
+      this._wfCache.clear();
+      if (this.isConnected) this._render();
+    }
+    get behavior() { return this._bh ? clone(this._bh) : null; }
+    // the behaviour as a proposal carries it (behavior.yaml structure, expressions as text), or null
+    behaviorProposal() { return Layout.behaviorSource(this._bh); }
+    // a change of the behaviour from the panel or the side panel: the diagram and the proposal follow
+    _bhChanged() { this._wfCache.clear(); this._changed(); }
+    // comma separated list <-> array of names
+    _list(text) { return String(text || "").split(",").map((x) => x.trim()).filter(Boolean); }
     _workflow(cn) { return this._bh?.workflows?.[cn] || null; }
     _formula(cn, an) { return this._bh?.derivations?.[cn]?.[an]?.text ?? null; }
     _uses(cn) { return this._bh?.uses?.[cn] || null; }
@@ -1182,7 +1292,10 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       return lines.join("\n");
     }
     // the changes from the metamodel the editor was opened with (the running one) to `mm`, as `modeler diff`
-    changesTo(mm) { return Layout.diff(this._orig || {}, mm); }
+    changesTo(mm, bh) {
+      const lines = Layout.diff(this._orig || {}, mm);
+      return bh === undefined ? lines : [...lines, ...Layout.behaviorDiff(this._bhOrig, bh).map((l) => `behaviour: ${l}`)];
+    }
     getMetamodel() { return this.metamodel; }
 
     /* ------------------------------------------------------------------ model edits */
@@ -1193,7 +1306,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     }
     _changed() {
       this._schedule();
-      this.dispatchEvent(new CustomEvent("change", { detail: { metamodel: this.metamodel, issues: this._issues() } }));
+      this.dispatchEvent(new CustomEvent("change", { detail: { metamodel: this.metamodel, behavior: this.behaviorProposal(), issues: this._issues() } }));
     }
 
     _uniqueName(base, taken) { let n = base, i = 2; while (taken.includes(n)) n = base + i++; return n; }
@@ -1359,7 +1472,41 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           }
         }
       }
+      out.push(...this._behaviorIssues());
       return [...new Set(out)];
+    }
+    // what the CLI's validate would refuse at once (the full check against the metamodel runs at apply time)
+    _behaviorIssues() {
+      const t = this.t, mm = this._mm, out = [], bh = this._bh;
+      if (!bh) return out;
+      const KEY = /^[a-z][a-z0-9_]*$/;
+      for (const [cn, w] of Object.entries(bh.workflows || {})) {
+        const c = mm.classes[cn];
+        if (!c) { out.push(`${cn}: ${t.noTarget}`); continue; }
+        const states = Object.keys(w.states || {});
+        const attr = c.attributes[w.state];
+        if (!attr) out.push(`${cn}.${w.state}: ${t.wfStateAttr}`);
+        else if (mm.enums[attr.type]) {
+          const lits = mm.enums[attr.type].literals.map((l) => l.name).sort().join(",");
+          if (lits !== [...states].sort().join(",")) out.push(`${cn}.${w.state}: ${t.wfEnumStates} ${attr.type}`);
+        }
+        const initial = states.filter((sn) => w.states[sn].initial);
+        if (!initial.length) out.push(`${cn}: ${t.wfNoInitial}`);
+        if (initial.length > 1) out.push(`${cn}: ${t.wfManyInitial}`);
+        if (!states.some((sn) => w.states[sn].final)) out.push(`${cn}: ${t.wfNoFinal}`);
+        for (const sn of states) if (!KEY.test(sn)) out.push(`${cn}.${sn}: ${t.wfBadKey}`);
+        for (const [tn, tr] of Object.entries(w.transitions || {})) {
+          if (!KEY.test(tn)) out.push(`${cn}.${tn}: ${t.wfBadKey}`);
+          for (const f of [].concat(tr.from || [])) if (!w.states?.[f]) out.push(`${cn}.${tn}: ${t.wfBadState} ${f}`);
+          if (!w.states?.[tr.to]) out.push(`${cn}.${tn}: ${t.wfBadState} ${tr.to ?? "—"}`);
+          if (!(tr.by || []).length && (tr.at == null || tr.at === "")) out.push(`${cn}.${tn}: ${t.wfNoActor}`);
+        }
+      }
+      for (const r of bh.reactions || []) {
+        const [cn, ev] = String(r.event || "").split(".");
+        if (!cn || !ev || !mm.classes[cn]) out.push(`${r.name || "?"}: ${t.rxBadEvent}`);
+      }
+      return out;
     }
 
     /* ------------------------------------------------------------------ layout */
@@ -1480,7 +1627,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         this.readonly ? null : el("input", { class: "note", placeholder: t.note, size: 24, value: this._note || "", oninput: (e) => { this._note = e.target.value; } }),
         this.readonly ? null : el("button", {
           class: "primary", disabled: issues.length > 0,
-          onclick: () => this.dispatchEvent(new CustomEvent("save", { detail: { metamodel: this.metamodel, note: this._note || "" } })),
+          onclick: () => this.dispatchEvent(new CustomEvent("save", { detail: { metamodel: this.metamodel, behavior: this.behaviorProposal(), note: this._note || "" } })),
         }, this.getAttribute("save-label") || t.save),
         VERSION.startsWith("__") ? null : el("span", { class: "hint", title: `${t.modeler} ${VERSION}` }, `v${VERSION}`),
       ].filter(Boolean));
@@ -1724,10 +1871,63 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       const t = this.t;
       const head = el("div", { class: "wfhead" }, el("strong", {}, cn),
         el("span", {}, `«workflow» ⟳ ${wf.state} · ${L.boxes.length} ${t.states}, ${Object.keys(wf.transitions || {}).length} ${t.transitions}`));
-      panel.replaceChildren(head, this._workflowSvg(cn, L));
-      const h = Math.min(320, Math.max(160, L.height + WF_HEAD));
+      const edit = this.readonly ? null : this._workflowEditor(cn, wf);
+      const scroll = { top: panel.scrollTop, left: panel.scrollLeft };   // an edit re-renders the panel: keep where the user was
+      panel.replaceChildren(head, this._workflowSvg(cn, L), ...(edit ? [edit] : []));
+      panel.scrollTop = scroll.top; panel.scrollLeft = scroll.left;
+      // the panel takes what the diagram (and the editing tables) need, up to half of the editor: the canvas keeps the rest
+      const wrapH = this.shadowRoot.querySelector(".wrap")?.clientHeight || 600;
+      const h = Math.round(Math.min(Math.max(220, wrapH * 0.5), Math.max(160, L.height + WF_HEAD + (edit ? edit.scrollHeight || 220 : 0))));
       if (panel.style.height !== `${h}px`) panel.style.height = `${h}px`;
       this._applyHover();
+    }
+    // the states, transitions and revert of a workflow as tables of inputs; every change goes into the proposal
+    _workflowEditor(cn, w) {
+      const t = this.t, lang = this._lang();
+      const states = w.states || (w.states = {}), trs = w.transitions || (w.transitions = {});
+      const rename = (obj, oldKey, newKey) => { const rebuilt = {}; for (const [k, v] of Object.entries(obj)) rebuilt[k === oldKey ? newKey : k] = v; return rebuilt; };
+      const lbl = (spec) => (typeof spec.label === "string" ? spec.label : spec.label?.[lang] || "");
+      const setLbl = (spec, v) => { if (v) spec.label = typeof spec.label === "object" && spec.label ? { ...spec.label, [lang]: v } : { [lang]: v }; else delete spec.label; };
+      const stateRows = Object.entries(states).map(([sn, st]) => el("tr", {},
+        el("td", {}, el("input", { class: "k", value: sn, onchange: (ev) => { const n = ev.target.value.trim(); if (!n || n === sn) return; w.states = rename(states, sn, n); for (const tr of Object.values(trs)) { tr.from = [].concat(tr.from || []).map((f) => (f === sn ? n : f)); if (tr.to === sn) tr.to = n; } this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "w", value: lbl(st), onchange: (ev) => { setLbl(st, ev.target.value.trim()); this._bhChanged(); } })),
+        el("td", {}, el("input", { type: "color", value: st.color || "#64748b", onchange: (ev) => { st.color = ev.target.value; this._bhChanged(); } })),
+        el("td", {}, el("select", { onchange: (ev) => { st.initial = ev.target.value === "initial"; st.final = ev.target.value === "final"; if (!st.initial) delete st.initial; if (!st.final) delete st.final; this._bhChanged(); } },
+          el("option", { value: "", selected: !st.initial && !st.final }, "—"), el("option", { value: "initial", selected: !!st.initial }, t.initial), el("option", { value: "final", selected: !!st.final }, t.final))),
+        el("td", {}, el("input", { class: "w", value: (st.owner || []).join(", "), title: t.listHint, onchange: (ev) => { st.owner = this._list(ev.target.value); this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "w", value: (st.editable_by || []).join(", "), title: t.listHint, onchange: (ev) => { st.editable_by = this._list(ev.target.value); this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "n", value: st.reminder?.after || "", placeholder: "7d", onchange: (ev) => { const v = ev.target.value.trim(); st.reminder = v ? { ...(st.reminder || {}), after: v } : null; this._bhChanged(); } })),
+        el("td", {}, el("button", { class: "x", title: t.del, onclick: () => { delete states[sn]; this._bhChanged(); } }, "×"))));
+      const stateOptions = (cur) => Object.keys(states).map((sn) => el("option", { value: sn, selected: sn === cur }, sn));
+      const trRows = Object.entries(trs).map(([tn, tr]) => el("tr", {},
+        el("td", {}, el("input", { class: "k", value: tn, onchange: (ev) => { const n = ev.target.value.trim(); if (n && n !== tn) { w.transitions = rename(trs, tn, n); this._bhChanged(); } } })),
+        el("td", {}, el("input", { class: "w", value: lbl(tr), onchange: (ev) => { setLbl(tr, ev.target.value.trim()); this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "w", value: [].concat(tr.from || []).join(", "), title: t.listHint, onchange: (ev) => { tr.from = this._list(ev.target.value); this._bhChanged(); } })),
+        el("td", {}, el("select", { onchange: (ev) => { tr.to = ev.target.value; this._bhChanged(); } }, stateOptions(tr.to))),
+        el("td", {}, el("input", { class: "w", value: (tr.by || []).join(", "), title: t.listHint, placeholder: "self.ref, role", onchange: (ev) => { tr.by = this._list(ev.target.value); this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "w", value: exprText(tr.when) || "", onchange: (ev) => { const v = ev.target.value.trim(); tr.when = v ? { text: v } : null; this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "w", value: exprText(tr.guard) || "", onchange: (ev) => { const v = ev.target.value.trim(); tr.guard = v ? { text: v } : null; this._bhChanged(); } })),
+        el("td", {}, el("select", { onchange: (ev) => { tr.comment = ev.target.value || null; this._bhChanged(); } },
+          el("option", { value: "", selected: !tr.comment }, "—"), el("option", { value: "optional", selected: tr.comment === "optional" }, t.optional), el("option", { value: "required", selected: tr.comment === "required" }, t.required))),
+        el("td", {}, el("input", { class: "w", value: tr.at ?? "", placeholder: "dueDate + 30d", onchange: (ev) => { tr.at = ev.target.value.trim() || null; this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "w", value: (tr.emits || []).join(", "), title: t.listHint, onchange: (ev) => { tr.emits = this._list(ev.target.value); this._bhChanged(); } })),
+        el("td", {}, el("button", { class: "x", title: t.del, onclick: () => { delete trs[tn]; this._bhChanged(); } }, "×"))));
+      const rv = w.revert;
+      return el("div", { class: "wfedit" },
+        el("div", {},
+          el("h4", {}, `${t.states} · ⟳ ${w.state}`),
+          el("table", {}, el("tr", {}, ...[t.name, t.label, t.color, t.kind, t.owner, t.editable_by, t.reminder, ""].map((h) => el("th", {}, h))), ...stateRows),
+          el("button", { onclick: () => { states[this._uniqueName("state", Object.keys(states))] = {}; this._bhChanged(); } }, `+ ${t.state}`)),
+        el("div", {},
+          el("h4", {}, t.transitions),
+          el("table", {}, el("tr", {}, ...[t.name, t.label, t.from, t.to, t.who, t.when, t.guard, t.comment, t.at, t.emits, ""].map((h) => el("th", {}, h))), ...trRows),
+          el("button", { onclick: () => { const keys = Object.keys(states); trs[this._uniqueName("transition", Object.keys(trs))] = { from: [keys[0]].filter(Boolean), to: keys[1] || keys[0] || "", by: [], when: null, guard: null, comment: null, at: null, emits: [] }; this._bhChanged(); } }, `+ ${t.transition}`)),
+        el("div", { class: "wf" }, el("h4", {}, t.revert),
+          el("label", { style: "display:inline-flex;gap:4px;align-items:center;margin-right:10px" }, t.who, el("input", { class: "w", value: (rv?.by || []).join(", "), title: t.listHint, onchange: (ev) => { const by = this._list(ev.target.value); w.revert = by.length || rv?.final_by?.length ? { ...(rv || {}), by, final_by: rv?.final_by || [], comment: rv?.comment || null } : null; this._bhChanged(); } })),
+          el("label", { style: "display:inline-flex;gap:4px;align-items:center;margin-right:10px" }, `${t.final}:`, el("input", { class: "w", value: (rv?.final_by || []).join(", "), title: t.listHint, onchange: (ev) => { const fb = this._list(ev.target.value); w.revert = { ...(rv || { by: [] }), final_by: fb, comment: rv?.comment || null }; this._bhChanged(); } })),
+          el("label", { style: "display:inline-flex;gap:4px;align-items:center" }, t.comment, el("select", { onchange: (ev) => { w.revert = { ...(rv || { by: [], final_by: [] }), comment: ev.target.value || null }; this._bhChanged(); } },
+            el("option", { value: "", selected: !rv?.comment }, "—"), el("option", { value: "optional", selected: rv?.comment === "optional" }, t.optional), el("option", { value: "required", selected: rv?.comment === "required" }, t.required)))),
+        el("p", { class: "hint" }, `${cn} · ${t.editHint}`));
     }
     // the state diagram as SVG: states in their colour (thick border when final), connectors in the colour of the
     // target state (dashed when timed) with a filled arrow head, dots at bus junctions, labels on a background.
@@ -1782,7 +1982,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       side.replaceChildren();
       const sel = this._sel;
       if (!sel || (sel.kind === "class" && !mm.classes[sel.name]) || (sel.kind === "enum" && !mm.enums[sel.name])) {
-        add(side, el("p", { class: "hint" }, t.select), el("p", { class: "hint" }, t.users));
+        add(side, el("p", { class: "hint" }, t.select), el("p", { class: "hint" }, t.users), ...this._globalBehaviorPanel());
         return;
       }
       const commit = () => this._changed();
@@ -1814,15 +2014,23 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         el("div", { class: "field" }, el("label", {}, t.label), el("input", { value: typeof c.label === "string" ? c.label : (c.label?.[this.getAttribute("lang") || "it"] || ""), disabled: ro, onchange: (ev) => { const v = ev.target.value.trim(); if (v) c.label = v; else delete c.label; commit(); } })),
         el("div", { class: "field" }, el("label", {}, t.doc), el("textarea", { rows: 2, disabled: ro, onchange: (ev) => { const v = ev.target.value.trim(); if (v) c.doc = v; else delete c.doc; commit(); } }, c.doc || "")),
         el("h3", {}, t.attributes),
-        el("div", { class: "row attr hint" }, el("span", {}, t.name), el("span", {}, t.type), el("span", {}, t.mult), el("span", { title: "iD" }, t.id), el("span")),
+        el("div", { class: "row attr hint" }, el("span", {}, t.name), el("span", {}, t.type), el("span", {}, t.mult), el("span", { title: "iD" }, t.id), el("span", { title: t.derivedFlag }, "ƒ"), el("span")),
         ...Object.entries(c.attributes).flatMap(([an, a]) => [el("div", { class: "row attr" },
           el("input", { value: an, disabled: ro, title: a.derived ? `${t.derived} (/${an})` : null, onchange: (ev) => { this._renameFeature(cn, "attributes", an, ev.target.value.trim()); commit(); } }),
           el("select", { disabled: ro, onchange: (ev) => { a.type = ev.target.value; delete a.default; commit(); } }, typeOptions(a.type)),
           this._multSelect(a, commit, ro),
           el("input", { type: "checkbox", checked: !!a.id, disabled: ro, title: "iD (unique key)", onchange: (ev) => { if (ev.target.checked) a.id = true; else delete a.id; commit(); } }),
+          ro ? el("span") : el("button", { class: `x${a.derived ? " on" : ""}`, title: t.derivedFlag, style: a.derived ? "color:var(--inv)" : null, onclick: () => { if (a.derived) delete a.derived; else a.derived = true; commit(); } }, "ƒ"),
           ro ? el("span") : el("button", { class: "x", title: t.del, onclick: () => { delete c.attributes[an]; commit(); } }, "×")),
-          // a derived attribute: its formula from behavior.yaml (read only here), or "computed in code"
-          a.derived ? el("div", { class: "formula", title: t.formula }, `= ${this._formula(cn, an) ?? t.inCode}`) : null]),
+          // a derived attribute: its formula from behavior.yaml, editable when the behaviour is loaded
+          a.derived ? (this._bh && !ro
+            ? el("input", { class: "formula", value: this._formula(cn, an) ?? "", placeholder: t.inCode, title: t.derivedHint, onchange: (ev) => {
+                const v = ev.target.value.trim();
+                const ders = (this._bh.derivations ||= {});
+                if (v) (ders[cn] ||= {})[an] = { text: v }; else if (ders[cn]) { delete ders[cn][an]; if (!Object.keys(ders[cn]).length) delete ders[cn]; }
+                this._bhChanged();
+              } })
+            : el("div", { class: "formula", title: t.formula }, `= ${this._formula(cn, an) ?? t.inCode}`)) : null]),
         ro ? null : el("button", { onclick: () => { c.attributes[this._uniqueName("attribute", Object.keys(c.attributes))] = { type: "EString", lower: 0, upper: 1 }; commit(); } }, `+ ${t.add}`),
         el("h3", {}, t.references),
         ...Object.entries(c.references).flatMap(([rn, r]) => {
@@ -1851,17 +2059,74 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         ro ? null : el("button", { class: "danger", onclick: () => { if (confirm(`${t.confirmDelete} ${cn}?`)) { this._deleteClass(cn); commit(); } } }, `${t.del} ${cn}`));
     }
 
-    // the workflow of the selected class (behavior.yaml), read only: state attribute, states, transitions
+    // the behaviour of the selected class in the side panel: the workflow summary (edited in the bottom panel),
+    // a button to give the class a workflow or take it away, the events it declares
     _behaviorPanel(cn) {
-      const w = this._workflow(cn), t = this.t;
-      if (!w) return [];
-      const lang = (this.getAttribute("lang") || "it").slice(0, 2);
+      const w = this._workflow(cn), t = this.t, bh = this._bh, ro = this.readonly, c = this._mm.classes[cn];
+      if (!bh) return w ? [el("h3", {}, t.behavior), el("div", { class: "wf" }, `⟳ ${w.state} · ${this._workflowText(cn).replace(`${t.workflow}: `, "")}`)] : [];
+      const lang = this._lang();
       const label = (spec, key) => (typeof spec?.label === "string" ? spec.label : spec?.label?.[lang]) || key;
+      const out = [el("h3", {}, t.behavior)];
+      if (w) {
+        out.push(el("div", { class: "wf" }, `⟳ ${w.state} · ${this._workflowText(cn).replace(`${t.workflow}: `, "")}`));
+        out.push(...Object.entries(w.transitions || {}).map(([tn, tr]) => el("div", { class: "wf" },
+          label(tr, tn), el("span", { class: "hint" }, `${[].concat(tr.from || []).join(", ")} → ${tr.to}${tr.at != null && tr.at !== "" ? ` · ${tr.at}` : ""}`))));
+        if (!ro) out.push(el("button", { class: "danger", onclick: () => { if (confirm(`${t.removeWorkflow} ${cn}?`)) { delete bh.workflows[cn]; this._bhChanged(); } } }, t.removeWorkflow));
+      } else if (!ro) {
+        // candidates for the state attribute: EString, or an enum whose literals become the states
+        const cands = Object.entries(c.attributes).filter(([, a]) => a.type === "EString" || this._mm.enums[a.type]).map(([an]) => an);
+        out.push(el("div", { class: "wf" }, el("button", { disabled: !cands.length, title: cands.length ? "" : t.stateAttrHint, onclick: () => {
+          const an = cands[0];
+          const enumName = c.attributes[an].type;
+          const lits = this._mm.enums[enumName]?.literals.map((l) => l.name);
+          const states = lits
+            ? Object.fromEntries(lits.map((k, i) => [k, { ...(i === 0 ? { initial: true } : {}), ...(i === lits.length - 1 ? { final: true } : {}) }]))
+            : { draft: { initial: true }, done: { final: true } };
+          (bh.workflows ||= {})[cn] = { state: an, states, transitions: {}, revert: null };
+          (bh.entities ||= {})[cn] = snake(cn);
+          this._bhChanged();
+        } }, `+ ${t.addWorkflow}`), cands.length ? el("span", { class: "hint" }, ` ${t.stateAttr}: ${cands[0]}`) : el("span", { class: "hint" }, ` ${t.stateAttrHint}`)));
+      }
+      // events the class declares (besides the built-in ones), comma separated
+      const evs = bh.events?.[cn] || {};
+      out.push(el("div", { class: "field" }, el("label", { title: t.listHint }, t.events),
+        el("input", { value: Object.keys(evs).join(", "), disabled: ro, placeholder: t.listHint, onchange: (ev) => {
+          const names = this._list(ev.target.value);
+          const next = Object.fromEntries(names.map((n) => [n, evs[n] || {}]));
+          if (names.length) (bh.events ||= {})[cn] = next; else if (bh.events) delete bh.events[cn];
+          this._bhChanged();
+        } })));
+      return out;
+    }
+    // roles and reactions (global to the behaviour), when nothing is selected
+    _globalBehaviorPanel() {
+      const bh = this._bh, t = this.t, ro = this.readonly;
+      if (!bh) return [];
+      const lang = this._lang();
+      const classes = Object.keys(this._mm.classes);
+      const roles = bh.roles || {};
+      const roleRows = Object.entries(roles).map(([rn, r]) => el("tr", {},
+        el("td", {}, el("input", { value: rn, disabled: ro, onchange: (ev) => { const n = ev.target.value.trim(); if (n && n !== rn) { const rebuilt = {}; for (const [k, v] of Object.entries(roles)) rebuilt[k === rn ? n : k] = v; bh.roles = rebuilt; this._bhChanged(); } } })),
+        el("td", {}, el("input", { value: typeof r.label === "string" ? r.label : (r.label?.[lang] || ""), disabled: ro, onchange: (ev) => { const v = ev.target.value.trim(); if (v) r.label = typeof r.label === "object" && r.label ? { ...r.label, [lang]: v } : v; else delete r.label; this._bhChanged(); } })),
+        el("td", {}, el("select", { disabled: ro, onchange: (ev) => { if (ev.target.value) r.scope = ev.target.value; else r.scope = null; this._bhChanged(); } },
+          el("option", { value: "" }, t.none), classes.map((cn) => el("option", { value: cn, selected: r.scope === cn }, cn)))),
+        el("td", {}, ro ? null : el("button", { class: "x", title: t.del, onclick: () => { delete roles[rn]; this._bhChanged(); } }, "×"))));
+      const reactions = bh.reactions || [];
+      const rxRows = reactions.map((r, i) => el("tr", {},
+        el("td", {}, el("input", { value: r.name || "", disabled: ro, onchange: (ev) => { r.name = ev.target.value.trim(); this._bhChanged(); } })),
+        el("td", {}, el("input", { value: r.event || "", disabled: ro, placeholder: "Class.event", onchange: (ev) => { r.event = ev.target.value.trim(); this._bhChanged(); } })),
+        el("td", {}, el("input", { value: exprText(r.when) || "", disabled: ro, onchange: (ev) => { const v = ev.target.value.trim(); r.when = v ? { text: v } : null; this._bhChanged(); } })),
+        el("td", {}, el("input", { value: (r.notify || []).join(", "), disabled: ro, title: t.listHint, onchange: (ev) => { r.notify = this._list(ev.target.value); this._bhChanged(); } })),
+        el("td", {}, el("input", { value: r.template || "", disabled: ro, onchange: (ev) => { r.template = ev.target.value.trim() || undefined; this._bhChanged(); } })),
+        el("td", {}, ro ? null : el("button", { class: "x", title: t.del, onclick: () => { reactions.splice(i, 1); this._bhChanged(); } }, "×"))));
       return [
-        el("h3", {}, t.behavior),
-        el("div", { class: "wf" }, `⟳ ${w.state} · ${this._workflowText(cn).replace(`${t.workflow}: `, "")}`),
-        ...Object.entries(w.transitions || {}).map(([tn, tr]) => el("div", { class: "wf" },
-          label(tr, tn), el("span", { class: "hint" }, `${(tr.from || []).join(", ")} → ${tr.to}${tr.at != null ? ` · ${tr.at}` : ""}`))),
+        el("h3", {}, t.roles),
+        el("table", { class: "beh" }, el("tr", {}, el("th", {}, t.name), el("th", {}, t.label), el("th", {}, t.scope), el("th")), ...roleRows),
+        ro ? null : el("button", { onclick: () => { (bh.roles ||= {})[this._uniqueName("role", Object.keys(bh.roles || {}))] = {}; this._bhChanged(); } }, `+ ${t.add}`),
+        el("h3", {}, t.reactions),
+        el("table", { class: "beh" }, el("tr", {}, el("th", {}, t.name), el("th", {}, t.event), el("th", {}, t.when), el("th", {}, t.notify), el("th", {}, t.template), el("th")), ...rxRows),
+        ro ? null : el("button", { onclick: () => { const cn = Object.keys(bh.workflows || {})[0] || classes[0] || "Class"; (bh.reactions ||= []).push({ name: this._uniqueName("notify", reactions.map((r) => r.name)), event: `${cn}.transitioned`, when: null, notify: [], template: "" }); this._bhChanged(); } }, `+ ${t.add}`),
+        el("p", { class: "hint" }, t.editHint),
       ];
     }
   }

@@ -640,6 +640,17 @@ class GenerationTests(unittest.TestCase):
                 e["derivations"][cn] = {an: X.to_text(X.parse(str(x))) for an, x in ders.items()}
             return e
         self.assertEqual(canon(B.loads(text)), canon(behavior()))
+        # a small behaviour (one derivation, one event, two states) must not fold its blocks into flow mappings
+        small = {"roles": {"manager": {}}, "derivations": {"Task": {"ready": "estimateHours.isSet() and assignee.isSet()"}},
+                 "workflows": {"Task": {"state": "state", "states": {"todo": {"initial": True}, "done": {"final": True}},
+                                        "transitions": {"finish": {"from": "todo", "to": "done", "by": ["manager"]}}}},
+                 "events": {"Task": {"expired": {"doc": "late"}}}}
+        small_text = B.dumps(small)
+        self.assertIn("\nderivations:\n  Task:\n    ready: estimateHours.isSet() and assignee.isSet()\n", small_text)
+        self.assertIn("\nworkflows:\n  Task:\n    state: state\n    states:\n      todo: {initial: true}\n      done: {final: true}\n", small_text)
+        self.assertIn("\nevents:\n  Task:\n    expired: {doc: late}\n", small_text)
+        self.assertIn("\nroles:\n  manager: {}\n", small_text)
+        self.assertEqual(B.expand(B.loads(small_text)), B.expand(small))
         # a proposal saved by the web modeler (runtime form) comes back to the structure of the file
         fe = B.from_editor(B.runtime_json(behavior(), meta()))
         self.assertNotIn("entities", fe)

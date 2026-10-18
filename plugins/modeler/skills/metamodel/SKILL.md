@@ -70,6 +70,8 @@ e sottoscrizioni webhook non vanno nel metamodello né direttamente nel codice: 
   rinomina che rompe una guardia o un destinatario viene segnalata subito); `npm run model:validate` fa lo stesso
   in CI. Se un file non esiste ancora e l'app ha già workflow in codice, proponi di scriverlo a partire da ciò che
   il codice fa (`docs/behavior.md`, migrazioni), senza cambiare il comportamento.
+Il comportamento si modifica anche dal modellatore web (`/admin/model`: pannello del workflow della classe
+selezionata, ruoli e reazioni nella barra laterale): la proposta salvata si applica con `/modeler:apply`.
 Dopo ogni modifica: `npm run model:sync` rigenera `docs/BEHAVIOR.md` e `src/lib/modeler/behavior.json`;
 `npm run model:engine -- --write` rigenera la migrazione del motore (funzioni e trigger: derivazioni,
 `<entità>_perform_transition`, `_available_transitions`, `_revert`, transizioni a tempo, solleciti, eventi con i

@@ -102,14 +102,15 @@ def _tidy(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _clean(v: Any) -> Any:
-    """Drops what the notation leaves implicit: None, empty strings, lists and mappings, false flags."""
+    """Drops what the notation leaves implicit: None, empty strings and lists, false flags. An empty mapping
+    stays: `boss: {}` declares a role, `expired: {}` an event."""
     if isinstance(v, dict):
         out = {}
         for k, x in v.items():
             if k in ("initial", "final") and x is False:
                 continue
             c = _clean(x)
-            if c is None or c == "" or c == [] or c == {}:
+            if c is None or c == "" or c == []:
                 continue
             out[k] = c
         return out
@@ -154,7 +155,8 @@ def dumps(raw: dict[str, Any]) -> str:
     Comments are not kept: callers back the file up and say so."""
     yaml, Dumper = _dumper()
     dump = lambda v: yaml.dump(v, Dumper=Dumper, sort_keys=False, allow_unicode=True, width=200).rstrip("\n")  # noqa: E731
-    flow_map = lambda m: {k: (_Flow(v) if isinstance(v, dict) else v) for k, v in m.items()}  # noqa: E731
+    block = E._Block                                                     # a mapping written one key per line
+    flow_map = lambda m: block({k: (_Flow(v) if isinstance(v, dict) else v) for k, v in m.items()})  # noqa: E731
     r = _clean(_tidy(raw))
     out = ["# Behaviour of the domain (behavior.yaml): roles, derivations, workflows, events, reactions.",
            "# Edit it from the prompt (/modeler:metamodel), in the app's modeler (/admin/model) or by hand; `npm run",
@@ -164,24 +166,24 @@ def dumps(raw: dict[str, Any]) -> str:
             scalar = yaml.safe_dump(r[key], allow_unicode=True, width=1000).strip()
             out.append(f"{key}: {scalar.split(chr(10))[0] if scalar.endswith('...') else scalar}")
     if r.get("roles"):
-        out += ["", dump({"roles": flow_map(r["roles"])})]
+        out += ["", dump(block({"roles": flow_map(r["roles"])}))]
     if r.get("derivations"):
         out += ["", "derivations:"]
         for cn, ders in r["derivations"].items():
-            out += ["  " + line for line in dump({cn: ders}).split("\n")]
+            out += ["  " + line for line in dump(block({cn: block(ders)})).split("\n")]
     if r.get("workflows"):
         out += ["", "workflows:"]
         for cn, w in r["workflows"].items():
-            body = {k: v for k, v in w.items() if k not in ("states", "transitions", "revert")}
+            body = block({k: v for k, v in w.items() if k not in ("states", "transitions", "revert")})
             body["states"] = flow_map(w.get("states", {}))
             body["transitions"] = flow_map(w.get("transitions", {}))
             if w.get("revert"):
                 body["revert"] = _Flow(w["revert"])
-            out += ["  " + line for line in dump({cn: body}).split("\n")]
+            out += ["  " + line for line in dump(block({cn: body})).split("\n")]
     if r.get("events"):
         out += ["", "events:"]
         for cn, evs in r["events"].items():
-            out += ["  " + line for line in dump({cn: flow_map(evs)}).split("\n")]
+            out += ["  " + line for line in dump(block({cn: flow_map(evs)})).split("\n")]
     for key in ("reactions", "subscriptions"):
         if r.get(key):
             out += ["", f"{key}:"] + ["  - " + dump(_Flow(item)) for item in r[key]]
