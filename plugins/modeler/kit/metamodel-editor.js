@@ -41,6 +41,7 @@
   const PORT_STAGGER = 4;                  // incoming ports sit a few px off the outgoing ones
   const LANES = [0, 8, -8, 16, -16, 24, -24, 32, -32];
   const FRACS = [0.5, 0.3, 0.7, 0.15, 0.85, 0.05, 0.95];   // where the middle run of a Z sits between the two boxes
+  const GRID_M = 6, GRID_STUB = 14, GRID_LANES = [0, 8, -8, 16, -16], GRID_BEND = 40, GRID_SHARE = 400, GRID_MAX = 60000;
   const BUS_MIN = 4;                       // references entering the same side of a class that share a bus
   const BUS_GAP = 28;                      // distance of the trunk of a bus from the side of the class
   const STEREO_H = 12;                     // extra head height of a box with a stereotype line («enumeration», «workflow»)
@@ -112,6 +113,10 @@
       const W = opts.width > 50 ? opts.width : 960, H = opts.height > 50 ? opts.height : 600;
       const classes = Object.keys(mm.classes);
       const enums = Object.keys(mm.enums);
+      // the gap between columns holds the connectors and their labels: at least the widest reference label
+      const labelW = Math.max(0, ...edgesOf({ ...mm, diagram: Object.fromEntries([...classes, ...enums].map((n) => [n, { x: 0, y: 0 }])) })
+        .flatMap((e) => [e.labelA, e.labelB]).filter(Boolean).map((t) => t.length * LABEL_CHAR_W + 4));
+      const gapX = Math.max(GAP_X, Math.ceil(labelW) + 30);
       const missing = [...classes, ...enums].filter((n) => force || !mm.diagram[n]);
       if (!missing.length) return {};
       const adj = Object.fromEntries(classes.map((n) => [n, new Set()]));
@@ -161,7 +166,7 @@
           colH[c] += sizes[n].h + GAP_Y;
           colW[c] = Math.max(colW[c], sizes[n].w);
         }
-        const width = colW.reduce((a, b) => a + b, 0) + GAP_X * (cols - 1);
+        const width = colW.reduce((a, b) => a + b, 0) + gapX * (cols - 1);
         const height = Math.max(...colH) - GAP_Y;
         return { at, colW, width, height, k: Math.min(W / width, H / height) };
       };
@@ -173,9 +178,9 @@
       if (!best) return {};
       // new nodes next to the existing diagram (on its right), all nodes from the origin when forced
       const used = Object.entries(mm.diagram).filter(([n]) => !place.includes(n) && (mm.classes[n] || mm.enums[n]));
-      const ox = used.length ? Math.max(...used.map(([n, p]) => p.x + size(n).w)) + GAP_X : 0;
+      const ox = used.length ? Math.max(...used.map(([n, p]) => p.x + size(n).w)) + gapX : 0;
       const colX = [];
-      best.colW.reduce((x, w, i) => { colX[i] = x; return x + w + GAP_X; }, ox);
+      best.colW.reduce((x, w, i) => { colX[i] = x; return x + w + gapX; }, ox);
       const pos = {};
       for (const n of place) {
         const [c, y] = best.at[n];
@@ -565,6 +570,77 @@
       wfPlaceLabels(edges, boxes, { x: 0, y: 0, w: totalW, h: height });
       return { width: totalW, height, boxes, edges };
     };
+    /* ------------------------------------------------------------------ grid router
+     * When no Z or L route is clean, an orthogonal route is searched on a grid of free corridors: the sides of
+     * every box (GRID_M away from it) and lanes in the gaps between them. Shortest path by length, with a cost per
+     * bend and per run shared with a connector already routed; never through a box (the two it joins only through
+     * their ports). Returns the points port→port, or null when the grid is too large or there is no way. */
+    const gridRoute = (pa, sa, pb, sb, rects, own, routedSegs) => {
+      const half = (v) => Math.round(v * 2) / 2;
+      const [ax, ay] = out[sa], [bx, by] = out[sb];
+      const start = { x: half(pa.x + ax * GRID_STUB), y: half(pa.y + ay * GRID_STUB) };
+      const end = { x: half(pb.x + bx * GRID_STUB), y: half(pb.y + by * GRID_STUB) };
+      const obs = Object.entries(rects).map(([n, R]) => {
+        const m = own.includes(n) ? 2 : GRID_M;
+        return { x: R.x - m, y: R.y - m, w: R.w + 2 * m, h: R.h + 2 * m };
+      });
+      const inObs = (p) => obs.some((o) => p.x > o.x && p.x < o.x + o.w && p.y > o.y && p.y < o.y + o.h);
+      if (inObs(start) || inObs(end)) return null;
+      const lines = (a, b, vals) => {
+        const base = [...new Set([a, b, ...vals.map(half)])].sort((p, q) => p - q);
+        const all = [...base];
+        for (let i = 1; i < base.length; i++) {
+          const mid = (base[i - 1] + base[i]) / 2;
+          for (const l of GRID_LANES) { const v = half(mid + l); if (v > base[i - 1] + 3 && v < base[i] - 3) all.push(v); }
+        }
+        return [...new Set(all)].sort((p, q) => p - q);
+      };
+      const xs = lines(start.x, end.x, obs.flatMap((o) => [o.x, o.x + o.w]));
+      const ys = lines(start.y, end.y, obs.flatMap((o) => [o.y, o.y + o.h]));
+      const nx = xs.length, ny = ys.length;
+      if (nx * ny * 4 > GRID_MAX) return null;
+      const si = xs.indexOf(start.x), sj = ys.indexOf(start.y), ei = xs.indexOf(end.x), ej = ys.indexOf(end.y);
+      // a grid step is free when it crosses no obstacle (running along an obstacle's side is fine)
+      const blockedH = (i, j) => { const y = ys[j], x0 = xs[i], x1 = xs[i + 1]; return obs.some((o) => o.y < y && y < o.y + o.h && x1 > o.x && x0 < o.x + o.w); };
+      const blockedV = (i, j) => { const x = xs[i], y0 = ys[j], y1 = ys[j + 1]; return obs.some((o) => o.x < x && x < o.x + o.w && y1 > o.y && y0 < o.y + o.h); };
+      const sharedStep = (p, q) => routedSegs.some((t) => collinear([p, q], t));
+      // Dijkstra over (column, row, direction): 0 right, 1 left, 2 down, 3 up
+      const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+      const dirOf = (dx, dy) => (dx > 0 ? 0 : dx < 0 ? 1 : dy > 0 ? 2 : 3);
+      const N = nx * ny * 4;
+      const key = (i, j, d) => (i * ny + j) * 4 + d;
+      const dist = new Float64Array(N).fill(Infinity), prev = new Int32Array(N).fill(-1);
+      const heap = [];
+      const push = (c, k) => { heap.push([c, k]); let n = heap.length - 1; while (n > 0) { const m = (n - 1) >> 1; if (heap[m][0] <= heap[n][0]) break; [heap[m], heap[n]] = [heap[n], heap[m]]; n = m; } };
+      const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let n = 0; for (;;) { const l = 2 * n + 1, r = l + 1; let m = n; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === n) break; [heap[m], heap[n]] = [heap[n], heap[m]]; n = m; } } return top; };
+      const d0 = dirOf(ax, ay), dIn = dirOf(-bx, -by);
+      dist[key(si, sj, d0)] = 0;
+      push(0, key(si, sj, d0));
+      let found = -1;
+      while (heap.length) {
+        const [c, k] = pop();
+        if (c > dist[k]) continue;
+        const d = k % 4, j = ((k - d) / 4) % ny, i = ((k - d) / 4 - j) / ny;
+        if (i === ei && j === ej) { found = k; break; }
+        for (let nd = 0; nd < 4; nd++) {
+          const [dx, dy] = DIRS[nd];
+          const ni = i + dx, nj = j + dy;
+          if (ni < 0 || ni >= nx || nj < 0 || nj >= ny) continue;
+          if (dx ? blockedH(Math.min(i, ni), j) : blockedV(i, Math.min(j, nj))) continue;
+          const p = { x: xs[i], y: ys[j] }, q = { x: xs[ni], y: ys[nj] };
+          let cost = c + Math.abs(q.x - p.x) + Math.abs(q.y - p.y) + (nd !== d ? GRID_BEND : 0) + (sharedStep(p, q) ? GRID_SHARE : 0);
+          if (ni === ei && nj === ej && nd !== dIn) cost += GRID_BEND;   // arriving sideways to the port bends once more
+          const nk = key(ni, nj, nd);
+          if (cost < dist[nk] - 1e-9) { dist[nk] = cost; prev[nk] = k; push(cost, nk); }
+        }
+      }
+      if (found < 0) return null;
+      const pts = [];
+      for (let k = found; k >= 0; k = prev[k]) { const d = k % 4, j = ((k - d) / 4) % ny, i = ((k - d) / 4 - j) / ny; pts.push({ x: xs[i], y: ys[j] }); }
+      pts.reverse();
+      return wfSimplify([pa, ...pts, pb]);
+    };
+
     const edgesOf = (mm, uses = null) => {
       // EMF / Ecore Tools notation: reference = open arrow at the target; containment = filled diamond at the
       // container; a pair of opposite references = one connector with both ends; inheritance = hollow triangle
@@ -722,6 +798,14 @@
             + Math.abs(lane) + detour * 6 + Math.abs(jog) * 2 + Math.abs(frac - 0.5) * 20;
           if (!best || c < best.c - 1e-6) best = { c, pts, segs };
         }
+        // no clean Z or L: a route on the grid of free corridors, kept when it crosses nothing and shares no more
+        if (e.a !== e.b && (crosses(best.pts, [e.a, e.b]) > 0 || shared(best.segs) > 0)) {
+          const g = gridRoute(e.pa, e.sa, e.pb, e.sb, rects, [e.a, e.b], routed.flatMap((o) => o.segs));
+          if (g) {
+            const gs = segments(g);
+            if (crosses(g, [e.a, e.b]) === 0 && shared(gs) <= shared(best.segs)) best = { c: 0, pts: g, segs: gs };
+          }
+        }
         e.pts = best.pts;
         routed.push({ segs: best.segs });
       }
@@ -730,7 +814,7 @@
       const placed = [];
       const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
       const grow = (x0, y0, x1, y1) => { ext.x0 = Math.min(ext.x0, x0); ext.y0 = Math.min(ext.y0, y0); ext.x1 = Math.max(ext.x1, x1); ext.y1 = Math.max(ext.y1, y1); };
-      const label = (pt, side, text, below) => {
+      const label = (pt, side, text, below, pts = []) => {
         const w = text.length * LABEL_CHAR_W + 4, h = LABEL_H;
         const [ox, oy] = out[side];
         // candidates: along the connector (d) and away from it (s), on the preferred side of the line first
@@ -742,6 +826,16 @@
             : { x: first ? pt.x - s - 2 - w : pt.x + s + 2, y: oy > 0 ? pt.y + d - 2 : pt.y - d + 2 - h, w, h };
           cands.push({ r, near: d + s + flip * 6 });
         }
+        // then, farther from the port, beside every run of the connector (used when the places near the port are taken)
+        segments(pts).forEach(([p, q], k) => {
+          const horiz = Math.abs(p.y - q.y) < 0.5, len = Math.abs(horiz ? q.x - p.x : q.y - p.y);
+          if (len < 12) return;
+          for (const t of [0.5, 0.25, 0.75]) for (const s of [4, 18]) for (const sign of [1, -1]) {
+            const cx = p.x + (q.x - p.x) * t, cy = p.y + (q.y - p.y) * t;
+            const r = horiz ? { x: cx - w / 2, y: sign > 0 ? cy + s : cy - s - h, w, h } : { x: sign > 0 ? cx + s + 2 : cx - s - 2 - w, y: cy - h / 2, w, h };
+            cands.push({ r, near: 160 + k * 20 + Math.abs(t - 0.5) * 40 + s });
+          }
+        });
         let best = null;
         for (const { r, near } of cands) {
           const c = boxes.filter(([, R]) => rectsOverlap(r, R, 1)).length * 1000
@@ -757,14 +851,14 @@
         if (e.bus) continue;
         e.labels = [];
         const pa = e.pts[0], pb = e.pts[e.pts.length - 1];   // the ports, after sliding
-        if (e.labelB) e.labels.push(label(pb, e.sb, e.labelB, e.labelA ? false : e.jb % 2 === 0));   // first port: label on its left
-        if (e.labelA) e.labels.push(label(pa, e.sa, e.labelA, e.ja % 2 === 0));
+        if (e.labelB) e.labels.push(label(pb, e.sb, e.labelB, e.labelA ? false : e.jb % 2 === 0, [...e.pts].reverse()));   // first port: label on its left
+        if (e.labelA) e.labels.push(label(pa, e.sa, e.labelA, e.ja % 2 === 0, e.pts));
         for (const q of e.pts) grow(q.x - 14, q.y - 14, q.x + 14, q.y + 14);
       }
       for (const bus of buses) {   // one label at the arrow when every reference reads the same, else one per source
         bus.labels = [];
-        if (new Set(bus.members.map((e) => e.labelB)).size === 1) bus.labels.push(label(bus.pb, bus.sb, bus.members[0].labelB, bus.jb % 2 === 0));
-        else for (const e of bus.members) bus.labels.push(label(e.pts[0], e.sa, e.labelB, e.ja % 2 === 0));
+        if (new Set(bus.members.map((e) => e.labelB)).size === 1) bus.labels.push(label(bus.pb, bus.sb, bus.members[0].labelB, bus.jb % 2 === 0, [bus.pb, ...bus.trunk]));
+        else for (const e of bus.members) bus.labels.push(label(e.pts[0], e.sa, e.labelB, e.ja % 2 === 0, e.pts));
         for (const q of [...bus.pts, ...bus.trunk, ...bus.members.flatMap((e) => e.pts)]) grow(q.x - 14, q.y - 14, q.x + 14, q.y + 14);
       }
       const edges = [
