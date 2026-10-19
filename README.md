@@ -63,8 +63,6 @@ Differenze rispetto alla strada A:
 
 ### Dopo l'installazione
 - In una sessione già aperta: `/reload-plugins`.
-- appforge (generatore di app da `app.yaml`) è dismesso: se è installato, `install.sh` lo segnala; rimuovilo con
-  `claude plugin uninstall appforge@appforge-marketplace` e `claude plugin marketplace remove appforge-marketplace`.
 
 ## Uso quotidiano
 

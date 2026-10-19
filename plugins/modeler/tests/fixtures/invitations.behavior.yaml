@@ -1,5 +1,5 @@
 # Behaviour of the guest-invitations domain (invitations.ecore.yaml): roles, derivations, the Invitation
-# workflow, events, reactions and the n8n subscription. Translated from the legacy appforge app.yaml.
+# workflow, events, reactions and the n8n subscription.
 doc: Inviti dei visiting researcher, dalla richiesta dell'emittente al pagamento
 
 roles:

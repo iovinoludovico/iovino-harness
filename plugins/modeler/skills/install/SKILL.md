@@ -45,7 +45,7 @@ rivedilo **con l'utente**:
 - `src/lib/modeler/access.ts` (solo se manca: chi è admin e quale client Supabase usare),
 - `src/lib/modeler/metamodel.json` (il metamodello letto dalla pagina),
 - `docs/DOMAIN.md` (la descrizione del dominio generata dal metamodello; si rigenera con `npm run model:sync`).
-  Se in `docs/` c'è già un `domain.md` con altre maiuscole (le app nate con appforge), `install` non scrive
+  Se in `docs/` c'è già un `domain.md` con altre maiuscole (scritto da uno strumento precedente), `install` non scrive
   `DOMAIN.md` e lo dice: rinominalo (es. `docs/behavior.md`) aggiornando i riferimenti in `CLAUDE.md` e README, o
   cancellalo se `DOMAIN.md` lo sostituisce, poi `npm run model:sync`,
 - `tools/modeler/` (la CLI, con `VERSION`) e gli script `model:*` in `package.json`,

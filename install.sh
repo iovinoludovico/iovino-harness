@@ -70,12 +70,5 @@ if [ "$APPLY_SETTINGS" = 1 ]; then
     --allow "Bash(npm run model:proposals:*)"
 fi
 
-if claude plugin list 2>/dev/null | grep -q "appforge@"; then
-  echo
-  echo "Attenzione: appforge è ancora installato ed è dismesso. Rimuovilo con:"
-  echo "  claude plugin uninstall appforge@appforge-marketplace"
-  echo "  claude plugin marketplace remove appforge-marketplace"
-fi
-
 echo
 echo "Fatto. In una sessione già aperta esegui /reload-plugins."

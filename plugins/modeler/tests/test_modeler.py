@@ -190,10 +190,6 @@ class NotationTests(unittest.TestCase):
         self.assertIn("val Indirizzo[*]#persona indirizzi;", E.to_emfatic(meta))
         self.assertIn("Soggetto <|-- Persona", E.to_mermaid(meta))
 
-    def test_legacy_ecore_annotations_are_read(self):
-        text = E.export_ecore(E.load(FIXTURE)).replace('source="modeler"', 'source="appforge"')
-        self.assertEqual(E.expand(E.import_ecore(text))["enums"], E.expand(E.load(FIXTURE))["enums"])
-
 
 def _evolved(meta):
     """The fixture after a typical change: a column, a rename, a join table, a literal, a new class, a drop."""
@@ -490,7 +486,6 @@ class AppTests(unittest.TestCase):
         self.assertEqual(cli.docs_status(self.app)["state"], "aligned")
         doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
         self.assertIn("Persona", doc["classes"])
-        self.assertNotIn("appforge", (self.app / "src/lib/modeler/metamodel-actions.ts").read_text())
         editor = (self.app / "public/modeler/metamodel-editor.js").read_text()
         self.assertIn(f'const VERSION = "{__version__}";', editor)                # shown in the toolbar
         self.assertNotIn(cli.VERSION_PLACEHOLDER, editor)
@@ -552,7 +547,7 @@ class AppTests(unittest.TestCase):
         self.assertIsNone(cli.workflow_hint(self.app))
 
     def test_install_stops_on_a_docs_domain_md_with_other_case(self):
-        other = self.app / "docs" / "domain.md"                          # appforge's document, not hand notes
+        other = self.app / "docs" / "domain.md"                          # another tool's document, not hand notes
         other.parent.mkdir(parents=True)
         other.write_text("# Behaviour\n\nroles and workflow\n")
         out = io.StringIO()
