@@ -1,0 +1,321 @@
+<title>Processo iovino-harness</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: una colonna di lettura (max 72ch) con figure a tutta larghezza; ogni figura è un SVG a griglia con didascalia. */
+:root{
+  --bg:#f7f6f2; --fg:#1f2320; --muted:#5d645f; --line:#9aa39c;
+  --lane:#edebe4; --box:#ffffff; --accent:#1f6f8b; --accent-soft:#d6e8ef;
+  --font-body:"IBM Plex Sans",system-ui,sans-serif; --font-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#161918; --fg:#e8e9e4; --muted:#a3aaa5; --line:#5f6863;
+  --lane:#1f2422; --box:#262c29; --accent:#6fb6cf; --accent-soft:#1d3a44; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#161918; --fg:#e8e9e4; --muted:#a3aaa5; --line:#5f6863;
+  --lane:#1f2422; --box:#262c29; --accent:#6fb6cf; --accent-soft:#1d3a44; color-scheme:dark }
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:15px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:32px 48px}
+main{max-width:980px;margin:0 auto}
+header{max-width:72ch;margin-bottom:28px}
+h1{font-size:28px;font-weight:600;letter-spacing:-.01em;margin:0 0 6px;text-wrap:balance}
+.eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+p{margin:0 0 10px}
+header p{color:var(--muted)}
+section{margin-top:40px}
+h2{font-size:19px;font-weight:600;margin:0 0 4px;text-wrap:balance}
+h2 .n{font-family:var(--font-mono);font-weight:500;color:var(--accent);margin-right:8px}
+.lead{max-width:72ch;color:var(--muted);margin-bottom:14px}
+figure{margin:0;border:1px solid var(--line);border-radius:6px;background:var(--box);overflow-x:auto}
+figure svg{display:block;width:100%;height:auto;min-width:720px;color:var(--fg);font-family:var(--font-body);font-size:12px}
+figcaption{padding:10px 14px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);max-width:none}
+code{font-family:var(--font-mono);font-size:.92em}
+svg .lane{fill:var(--lane);stroke:var(--line);stroke-width:1}
+svg .lane-t{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;fill:var(--muted)}
+svg .box{fill:var(--box);stroke:currentColor;stroke-width:1.2}
+svg .box.file{stroke-dasharray:4 3}
+svg .box.hi{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.6}
+svg .t{text-anchor:middle;fill:currentColor}
+svg .t.m{font-family:var(--font-mono);font-size:11.5px;font-weight:500}
+svg .t.s{font-size:11px;fill:var(--muted)}
+svg .ar{fill:none;stroke:currentColor;stroke-width:1.3}
+svg .ar.hi{stroke:var(--accent);stroke-width:1.8}
+svg .ar.dash{stroke-dasharray:5 4}
+svg .lb{font-size:11px;fill:var(--muted);text-anchor:middle}
+svg .lb.hi{fill:var(--accent);font-weight:500}
+svg .lb-bg{fill:var(--box)}
+table{border-collapse:collapse;width:100%;max-width:72ch;font-size:14px;margin-top:8px}
+th,td{text-align:left;vertical-align:top;padding:6px 10px 6px 0;border-bottom:1px solid var(--line)}
+th{font-family:var(--font-mono);font-weight:500;font-size:12px;color:var(--muted);white-space:nowrap}
+footer{margin-top:40px;font-size:13px;color:var(--muted);max-width:72ch}
+</style>
+
+<main>
+<header>
+  <p class="eyebrow">iovino-harness · core 0.10.0 · modeler 0.18.0 · origin/main alla PR #17</p>
+  <h1>Il processo dell'harness</h1>
+  <p>Come un'osservazione fatta in un'app diventa una regola, un hook o una skill che tutte le sessioni successive ricevono, e come i due modelli di un'app arrivano fino al database.</p>
+</header>
+
+<section>
+  <h2><span class="n">1</span>Il ciclo di miglioramento</h2>
+  <p class="lead">Due sessioni distinte, mai la stessa: nell'app si lavora e si annota, nell'harness si rivede e si rilascia. Il rilascio chiude l'anello solo se la versione del plugin cambia.</p>
+  <figure>
+  <svg viewBox="0 0 1000 440" role="img" aria-label="Ciclo: la sessione in un'app annota una lezione in NOTES.md; la sessione nell'harness la rivede, modifica convenzioni hook e skill, testa, alza la versione e fa push; gli altri computer aggiornano i plugin e le nuove sessioni ripartono con le regole nuove.">
+    <defs>
+      <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+      <marker id="a1h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+    </defs>
+    <!-- lane A -->
+    <rect class="lane" x="20" y="34" width="760" height="150" rx="4"/>
+    <text class="lane-t" x="36" y="56">Sessione in un'app · core + modeler caricati</text>
+    <rect class="box" x="40" y="84" width="160" height="60" rx="3"/>
+    <text class="t m" x="120" y="109">SessionStart</text>
+    <text class="t s" x="120" y="127">conventions.md + stato repo</text>
+    <rect class="box" x="230" y="84" width="160" height="60" rx="3"/>
+    <text class="t" x="310" y="109">Lavoro guidato dal modello</text>
+    <text class="t s" x="310" y="127">metamodello → migrazione → codice</text>
+    <rect class="box" x="420" y="84" width="160" height="60" rx="3"/>
+    <text class="t m" x="500" y="105">commit · ship · db-push</text>
+    <text class="t m" x="500" y="122">deploy · security-audit</text>
+    <text class="t s" x="500" y="137">merge e deploy solo con conferma</text>
+    <rect class="box hi" x="610" y="84" width="160" height="60" rx="3"/>
+    <text class="t m" x="690" y="109">/core:harness-note</text>
+    <text class="t s" x="690" y="127">lezione ricorrente, lacuna di regola</text>
+    <path class="ar" d="M200 114H228" marker-end="url(#a1)"/>
+    <path class="ar" d="M390 114H418" marker-end="url(#a1)"/>
+    <path class="ar" d="M580 114H608" marker-end="url(#a1)"/>
+    <!-- hook guards note -->
+    <text class="t s" x="400" y="170">hook PreToolUse (segreti, comandi distruttivi, clone dell'harness) · PostToolUse (autoformat, validate dei modelli)</text>
+
+    <!-- note -> NOTES.md -->
+    <path class="ar hi" d="M690 144V222H120V258" marker-end="url(#a1h)"/>
+    <rect class="lb-bg" x="300" y="213" width="210" height="16"/>
+    <text class="lb hi" x="405" y="225">scrive la nota nel clone (harness_repo)</text>
+
+    <!-- lane B -->
+    <rect class="lane" x="20" y="260" width="760" height="150" rx="4"/>
+    <text class="lane-t" x="36" y="282">Sessione nell'harness · clone di iovino-harness</text>
+    <rect class="box file" x="40" y="310" width="160" height="60" rx="3"/>
+    <text class="t m" x="120" y="335">NOTES.md</text>
+    <text class="t s" x="120" y="353">nota aperta: cosa, proposta, plugin</text>
+    <rect class="box hi" x="230" y="310" width="160" height="60" rx="3"/>
+    <text class="t m" x="310" y="335">/core:harness-review</text>
+    <text class="t s" x="310" y="353">applicata · scartata · rinviata</text>
+    <rect class="box" x="420" y="310" width="160" height="60" rx="3"/>
+    <text class="t m" x="500" y="331">conventions.md · hook.py</text>
+    <text class="t m" x="500" y="347">skills/ · modeler/</text>
+    <text class="t s" x="500" y="362">la modifica, con il suo test</text>
+    <rect class="box" x="610" y="310" width="160" height="60" rx="3"/>
+    <text class="t m" x="690" y="331">unittest · plugin validate</text>
+    <text class="t m" x="690" y="347">release.py --write</text>
+    <text class="t s" x="690" y="362">bump da Conventional Commits</text>
+    <path class="ar" d="M200 340H228" marker-end="url(#a1)"/>
+    <path class="ar" d="M390 340H418" marker-end="url(#a1)"/>
+    <path class="ar" d="M580 340H608" marker-end="url(#a1)"/>
+
+    <!-- push -> other computers -->
+    <path class="ar" d="M770 340H900V268" marker-end="url(#a1)"/>
+    <rect class="lb-bg" x="790" y="347" width="180" height="30"/>
+    <text class="lb" x="880" y="359">git push → origin/main</text>
+    <text class="lb" x="880" y="372">(pre-push blocca senza bump)</text>
+    <rect class="box" x="820" y="172" width="160" height="94" rx="3"/>
+    <text class="t" x="900" y="196">Altri computer</text>
+    <text class="t m" x="900" y="215">git pull · plugin update</text>
+    <text class="t m" x="900" y="232">/reload-plugins</text>
+    <text class="t s" x="900" y="251">solo se la version è cambiata</text>
+    <!-- back to session start -->
+    <path class="ar" d="M900 172V14H120V82" marker-end="url(#a1)"/>
+    <rect class="lb-bg" x="380" y="6" width="240" height="16"/>
+    <text class="lb" x="500" y="18">le nuove sessioni partono con le regole nuove</text>
+  </svg>
+  <figcaption>Il ciclo di miglioramento: la nota nasce dove il problema si vede (l'app), la modifica si fa dove ci sono test, <code>CLAUDE.md</code> e rilascio (l'harness). L'hook <code>guard_harness_edit</code> impedisce che una sessione aperta su un'app tocchi il clone, salvo <code>NOTES.md</code>.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2><span class="n">2</span>Dai due modelli al database</h2>
+  <p class="lead">Il plugin <code>modeler</code> tiene due sorgenti di verità: la struttura in <code>domain.ecore.yaml</code> e il comportamento in <code>behavior.yaml</code>, validato contro la prima. Tutto il resto si genera; <code>drift</code> dice se il database è ancora allineato.</p>
+  <figure>
+  <svg viewBox="0 0 1000 470" role="img" aria-label="Pipeline del modeler: il metamodello nasce dal prompt, dal database o da una proposta; behavior.yaml è validato contro di esso; i comandi validate, sync, migrate, engine e drift producono documentazione, json per l'app, migrazioni SQL, il motore SQL e il controllo di allineamento con il database; DOMAIN.md generato è anche l'inbox delle note a mano che tornano nel metamodello.">
+    <defs>
+      <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+      <marker id="a2h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+    </defs>
+    <text class="lane-t" x="30" y="30">Sorgenti</text>
+    <text class="lane-t" x="280" y="30">Modelli (nel repo dell'app)</text>
+    <text class="lane-t" x="540" y="30">CLI · npm run model:*</text>
+    <text class="lane-t" x="760" y="30">Prodotti</text>
+
+    <!-- sources -->
+    <rect class="box" x="30" y="60" width="180" height="52" rx="3"/>
+    <text class="t m" x="120" y="82">/modeler:metamodel</text>
+    <text class="t s" x="120" y="99">dal prompt, in linguaggio naturale</text>
+    <rect class="box" x="30" y="140" width="180" height="52" rx="3"/>
+    <text class="t m" x="120" y="162">reverse · /modeler:install</text>
+    <text class="t s" x="120" y="179">dal database esistente</text>
+    <rect class="box" x="30" y="220" width="180" height="52" rx="3"/>
+    <text class="t m" x="120" y="242">/admin/model → apply</text>
+    <text class="t s" x="120" y="259">proposta dal modellatore web (fig. 3)</text>
+    <rect class="box file" x="30" y="300" width="180" height="52" rx="3"/>
+    <text class="t m" x="120" y="322">docs/DOMAIN.md</text>
+    <text class="t s" x="120" y="339">note a mano (inbox)</text>
+
+    <!-- models -->
+    <rect class="box hi" x="280" y="120" width="200" height="66" rx="3"/>
+    <text class="t m" x="380" y="146">domain.ecore.yaml</text>
+    <text class="t s" x="380" y="163">classi, attributi, riferimenti,</text>
+    <text class="t s" x="380" y="176">enum, unique, rules</text>
+    <rect class="box hi" x="280" y="240" width="200" height="66" rx="3"/>
+    <text class="t m" x="380" y="266">behavior.yaml</text>
+    <text class="t s" x="380" y="283">ruoli, derivazioni, workflow,</text>
+    <text class="t s" x="380" y="296">eventi, reazioni, webhook</text>
+    <path class="ar" d="M380 240V188" marker-end="url(#a2)"/>
+    <rect class="lb-bg" x="388" y="206" width="90" height="16"/>
+    <text class="lb" x="433" y="218">validato contro</text>
+
+    <path class="ar" d="M210 86H250V153H278" marker-end="url(#a2)"/>
+    <path class="ar" d="M210 166H278" marker-end="url(#a2)"/>
+    <path class="ar" d="M210 246H250V153" />
+    <path class="ar" d="M210 246H250V273H278" marker-end="url(#a2)"/>
+    <path class="ar hi dash" d="M210 326H262V153" />
+    <text class="lb hi" x="236" y="318" style="text-anchor:start">tradotte da</text>
+    <text class="lb hi" x="236" y="331" style="text-anchor:start">/modeler:metamodel</text>
+
+    <!-- rail to CLI -->
+    <path class="ar" d="M480 153H512" />
+    <path class="ar" d="M480 273H512" />
+    <path class="ar" d="M512 63V393" />
+    <!-- CLI boxes -->
+    <rect class="box" x="540" y="40" width="150" height="46" rx="3"/>
+    <text class="t m" x="615" y="59">validate</text>
+    <text class="t s" x="615" y="75">anche dall'hook dopo ogni edit</text>
+    <rect class="box" x="540" y="120" width="150" height="46" rx="3"/>
+    <text class="t m" x="615" y="139">sync</text>
+    <text class="t s" x="615" y="155">rigenera; mai sopra note a mano</text>
+    <rect class="box" x="540" y="200" width="150" height="46" rx="3"/>
+    <text class="t m" x="615" y="219">migrate</text>
+    <text class="t s" x="615" y="235">diff da HEAD al modello attuale</text>
+    <rect class="box" x="540" y="280" width="150" height="46" rx="3"/>
+    <text class="t m" x="615" y="299">engine</text>
+    <text class="t s" x="615" y="315">una migrazione idempotente</text>
+    <rect class="box" x="540" y="360" width="150" height="46" rx="3"/>
+    <text class="t m" x="615" y="379">drift</text>
+    <text class="t s" x="615" y="395">struttura e versioni dei workflow</text>
+    <path class="ar" d="M512 63H538" marker-end="url(#a2)"/>
+    <path class="ar" d="M512 143H538" marker-end="url(#a2)"/>
+    <path class="ar" d="M512 223H538" marker-end="url(#a2)"/>
+    <path class="ar" d="M512 303H538" marker-end="url(#a2)"/>
+    <path class="ar" d="M512 383H538" marker-end="url(#a2)"/>
+
+    <!-- outputs -->
+    <rect class="box" x="760" y="40" width="210" height="46" rx="3"/>
+    <text class="t" x="865" y="59">Errori e avvisi a Claude</text>
+    <text class="t s" x="865" y="75">guardia rotta, destinatario inesistente…</text>
+    <rect class="box file" x="760" y="120" width="210" height="46" rx="3"/>
+    <text class="t m" x="865" y="137">docs/DOMAIN.md · docs/BEHAVIOR.md</text>
+    <text class="t m" x="865" y="155">metamodel.json · behavior.json</text>
+    <rect class="box file" x="760" y="200" width="210" height="46" rx="3"/>
+    <text class="t m" x="865" y="219">supabase/migrations/*.sql</text>
+    <text class="t s" x="865" y="235">RLS, backfill e perdite: TODO(modeler)</text>
+    <rect class="box file" x="760" y="280" width="210" height="46" rx="3"/>
+    <text class="t m" x="865" y="296">motore SQL</text>
+    <text class="t s" x="865" y="309">trigger derivati · perform_transition</text>
+    <text class="t s" x="865" y="321">timed · reminder · eventi</text>
+    <rect class="box" x="760" y="360" width="210" height="46" rx="3"/>
+    <text class="t" x="865" y="379">Database (Supabase)</text>
+    <text class="t s" x="865" y="395">risposta attesa: « aligned »</text>
+    <path class="ar" d="M690 63H758" marker-end="url(#a2)"/>
+    <path class="ar" d="M690 143H758" marker-end="url(#a2)"/>
+    <path class="ar" d="M690 223H758" marker-end="url(#a2)"/>
+    <path class="ar" d="M690 303H758" marker-end="url(#a2)"/>
+    <path class="ar" d="M690 383H758" marker-end="url(#a2)" marker-start="url(#a2)"/>
+    <rect class="lb-bg" x="697" y="366" width="58" height="14"/>
+    <text class="lb" x="726" y="377">confronta</text>
+    <!-- migrations & engine applied to DB -->
+    <path class="ar dash" d="M865 246V278" marker-end="url(#a2)"/>
+    <path class="ar dash" d="M865 326V358" marker-end="url(#a2)"/>
+    <text class="lb" x="935" y="346">/core:db-push</text>
+
+    <!-- DOMAIN.md generated -> inbox -->
+    <path class="ar hi dash" d="M760 160H740V440H120V354" marker-end="url(#a2h)"/>
+    <rect class="lb-bg" x="250" y="432" width="360" height="16"/>
+    <text class="lb hi" x="430" y="444">sync lo scrive; le note a mano vi restano finché /modeler:metamodel non le traduce</text>
+  </svg>
+  <figcaption>Tratteggio: file generati. Le migrazioni e il motore arrivano al database solo tramite <code>/core:db-push</code>; <code>drift</code> è l'invariante che chiude il giro. <code>DOMAIN.md</code> è insieme prodotto e sorgente: generato da <code>sync</code>, modificato a mano, tradotto nel metamodello, rigenerato.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2><span class="n">3</span>Le proposte dal modellatore web</h2>
+  <p class="lead">Un salvataggio in <code>/admin/model</code> non cambia mai l'app in esercizio: è una proposta, in sviluppo un file e in produzione una riga, applicata dal repository con una patch riga per riga.</p>
+  <figure>
+  <svg viewBox="0 0 1000 345" role="img" aria-label="Flusso delle proposte: l'editor /admin/model salva in sviluppo un file in .modeler/proposals e in produzione una riga in model_change_requests; model:pull scarica la riga; /modeler:apply riscrive solo le righe cambiate di domain.ecore.yaml e behavior.yaml; seguono migrazione e codice, /core:db-push, deploy e model:done che segna la riga applied.">
+    <defs>
+      <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+      <marker id="a3h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+    </defs>
+    <rect class="box hi" x="30" y="90" width="160" height="66" rx="3"/>
+    <text class="t m" x="110" y="114">/admin/model</text>
+    <text class="t s" x="110" y="131">editor di struttura e workflow</text>
+    <text class="t s" x="110" y="144">dentro l'app · salva = proposta</text>
+
+    <rect class="box file" x="250" y="40" width="210" height="52" rx="3"/>
+    <text class="t" x="355" y="59">Sviluppo</text>
+    <text class="t m" x="355" y="77">.modeler/proposals/*.yaml</text>
+    <rect class="box" x="250" y="160" width="210" height="52" rx="3"/>
+    <text class="t" x="355" y="179">Produzione</text>
+    <text class="t m" x="355" y="197">model_change_requests · open</text>
+    <path class="ar" d="M190 110H220V66H248" marker-end="url(#a3)"/>
+    <path class="ar" d="M190 123H220V186H248" marker-end="url(#a3)"/>
+
+    <rect class="box" x="500" y="160" width="130" height="52" rx="3"/>
+    <text class="t m" x="565" y="182">model:pull</text>
+    <text class="t s" x="565" y="199">DSN dal progetto linkato</text>
+    <path class="ar" d="M460 186H498" marker-end="url(#a3)"/>
+
+    <rect class="box hi" x="690" y="90" width="190" height="66" rx="3"/>
+    <text class="t m" x="785" y="112">/modeler:apply --write</text>
+    <text class="t s" x="785" y="129">patch riga per riga di</text>
+    <text class="t m" x="785" y="144">domain.ecore.yaml + behavior.yaml</text>
+    <path class="ar" d="M460 66H660V116H688" marker-end="url(#a3)"/>
+    <path class="ar" d="M630 186H660V116" />
+    <text class="lb" x="785" y="172">si ferma invece di riscrivere tutto il file</text>
+
+    <!-- down to chain, right to left -->
+    <path class="ar" d="M785 156V266H772" marker-end="url(#a3)"/>
+    <rect class="box" x="610" y="240" width="160" height="52" rx="3"/>
+    <text class="t" x="690" y="262">Migrazione + codice</text>
+    <text class="t s" x="690" y="279">nella stessa modifica</text>
+    <rect class="box" x="420" y="240" width="160" height="52" rx="3"/>
+    <text class="t m" x="500" y="262">/core:db-push</text>
+    <text class="t s" x="500" y="279">controlli, anteprima, conferma</text>
+    <rect class="box" x="230" y="240" width="160" height="52" rx="3"/>
+    <text class="t m" x="310" y="262">ship → deploy</text>
+    <text class="t s" x="310" y="279">PR, CI, merge confermato</text>
+    <rect class="box" x="40" y="240" width="160" height="52" rx="3"/>
+    <text class="t m" x="120" y="262">model:done --write</text>
+    <text class="t s" x="120" y="279">archivia la proposta</text>
+    <path class="ar" d="M610 266H582" marker-end="url(#a3)"/>
+    <path class="ar" d="M420 266H392" marker-end="url(#a3)"/>
+    <path class="ar" d="M230 266H202" marker-end="url(#a3)"/>
+    <!-- done -> row applied -->
+    <path class="ar hi dash" d="M120 240V226H300V214" marker-end="url(#a3h)"/>
+    <text class="lb hi" x="120" y="316">segna la riga applied / rejected</text>
+  </svg>
+  <figcaption>Fino all'applicazione la proposta resta visibile sopra l'editor (data, autore, nota, differenze come <code>modeler diff</code>) e l'hook di sessione la ricorda. Problema ancora aperto nell'HANDOFF: <code>pull</code> e <code>done --write</code> non sono mai riusciti su un progetto cloud reale.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2><span class="n">4</span>Cosa entra in ogni sessione</h2>
+  <p class="lead">Gli hook sono Python senza dipendenze; è l'unica parte dell'harness che agisce senza essere invocata.</p>
+  <table>
+    <tr><th>SessionStart</th><td><code>core</code>: inietta <code>conventions.md</code>, branch, file modificati, versioni dei plugin, note aperte in <code>NOTES.md</code>. <code>modeler</code>: descrive i modelli dell'app, proposte in sospeso, stato di <code>DOMAIN.md</code>, modellatore vendorizzato più vecchio del plugin.</td></tr>
+    <tr><th>PreToolUse</th><td>Edit/Write: blocca <code>.env*</code>, chiavi, <code>.git/</code>, contenuti che sembrano token; chiede conferma se un'altra sessione tocca il clone dell'harness. Bash: blocca <code>rm -rf /</code> e force push su main; conferma per push, reset, clean, sudo, <code>curl | sh</code>, DDL distruttivo, <code>--no-verify</code>.</td></tr>
+    <tr><th>PostToolUse</th><td><code>core</code>: formatta con il formatter del progetto. <code>modeler</code>: valida <code>domain.ecore.yaml</code> e <code>behavior.yaml</code> a ogni modifica, ricorda metamodello e migrazione da allineare.</td></tr>
+  </table>
+</section>
+
+<footer>Ricostruito il 19 ottobre 2026 da <code>README.md</code>, <code>HANDOFF.md</code>, <code>NOTES.md</code>, <code>hooks.json</code> e <code>plugins/modeler/README.md</code> del clone locale.</footer>
+</main>
