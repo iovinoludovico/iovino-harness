@@ -1,71 +1,60 @@
-# Handoff — modellatore: pannello del workflow ridimensionabile (dopo la revisione delle note)
-_Aggiornato: 2026-10-19 · branch `main` (PR #17 unita, `0c36012`)_
+# Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
+_Aggiornato: 2026-10-19 · branch `feat/workflow-view` (2 commit sopra `main` `6d8ce6b`, non pushati)_
 
 ## Obiettivo
-Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: (1) la sandbox
-`~/Documents/GitHub/modeler-sandbox` è diventata un sistema eseguibile (PostgreSQL in Docker con schema e motore
-generati, UI generica dai due modelli) per provare dominio e cambi di stato in piccolo; (2) nel modellatore il
-workflow è disegnato accanto alla classe (satellite «workflow») e il diagramma distingue le classi con workflow,
-quelle coinvolte dal comportamento e quelle solo strutturali.
+Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
+dettaglio di un record di un'entità con workflow mostra un div con il diagramma degli stati e lo stato corrente
+evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 
 ## Stato
-- `origin/main` è alla PR #17 (`0c36012`): **core 0.10.0, modeler 0.18.0**. Nessun branch remoto aperto.
-- La PR #17 (release modeler 0.18.0): maniglia in cima al pannello del workflow
-  (`div.wfgrip`, trascinamento con pointer capture, minimo 120 px, la tela tiene almeno 160 px), altezza scelta che resta al
-  cambio di selezione (`_wfUserH`), doppio click per l'altezza automatica, contenuto in `div.wfbody` scorrevole; provato nella
-  sandbox (modellatore 0.18.0 installato e committato).
-- La PR #15 ha applicato le tre note aperte
-  di `NOTES.md` (tutte chiuse come applicate):
-  - `feat(core)`: build in esercizio nell'header (riga nelle convenzioni, «7b. Build visibile» in `core:deploy`, controllo nel
-    blocco F di `core:security-audit`);
-  - `feat(modeler)` router a griglia: `gridRoute` (corridoi liberi lungo i lati dei box e corsie nei varchi, cammino minimo per
-    lunghezza, svolte, tratti condivisi) usato quando nessuna Z/L è pulita; varco tra le colonne dimensionato sull'etichetta più
-    larga; candidati per le etichette lungo tutto il connettore; `invitations.ecore.yaml` nel ciclo delle invarianti (39
-    dimensioni: 0 attraversamenti, prima 22);
-  - `feat(modeler)` proposte del comportamento dal web: CLI (`behavior.from_editor/dumps/diff`, `proposals`/`pull`/`apply` con la
-    chiave `behavior`, `apply` valida contro il metamodello proposto, backup e commenti elencati, riscrive `behavior.yaml`) ed
-    editor (pannello del workflow con tabelle di stati, transizioni, ritorno; barra laterale: flag `derived` e formule, workflow
-    di una classe, eventi, ruoli, reazioni; `_behaviorIssues`; `save`/`change` con `behavior`; `Layout.behaviorSource/behaviorDiff`
-    testati contro la CLI; wrapper e azioni con la colonna `behavior` di `model_change_requests`, aggiunta al kit SQL in modo
-    idempotente, con fallback senza colonna).
-- Verificato (2026-10-18): `unittest` core 23 OK, modeler 94 OK (8 skip); `node --test` 179 pass (compreso `behavior.test.mjs`);
-  `tsc` sui TSX del kit; `claude plugin validate .`; nella sandbox il ciclo completo: stato `paused` e transizione `pause` aggiunti
-  dal pannello, letterale aggiunto all'enum, proposta salvata con `behavior`, `model:proposals` con le righe `behaviour: …`,
-  `model:apply --write` che riscrive `behavior.yaml` e `domain.ecore.yaml`, `sync`, `model:engine --write` e `db:engine`. La
-  sandbox è poi tornata ai modelli committati (modellatore 0.17.0 installato e committato).
-- La PR #14 (release modeler 0.16.0, core 0.9.3) sposta il diagramma degli stati dal satellite nella tela a un **pannello sotto la tela** che segue la selezione (compare selezionando una classe con workflow, sparisce altrimenti), con le larghezze del testo misurate su un canvas 2D (`workflowLayout(..., {measure})`, `wfWrap` a misura, spazio per la parola più lunga): le etichette restano dentro le forme. Rimossi satelliti, ingombro/ostacolo e toggle; `routeEdges(mm, size, {uses})`. Test: etichette dentro il diagramma e larghe quanto il testo misurato.
-- La PR #13 aveva portato (release `95866f8` modeler 0.15.0, `112ecf8` core 0.9.2):
-  - `6b8e061` fix: `<entity>_available_transitions` restituiva righe avvolte in `{"jsonb_build_object": …}`; ora un array di oggetti (`engine.py`, test del testo SQL).
-  - `5d30f7d` `uses` in `behavior.json`: `expr.py` annota ogni passo di un path con la classe proprietaria (`hops`, `hops_used`); `behavior.uses(b, e)` → `{Class: {attributes, references, class: [{kind, of}]}}` (derivation, when, guard, at, by, owner, editable_by, revert, notify, scope); `BEHAVIOR.md` ha «Classi coinvolte nel comportamento». Test `test_uses`.
-  - `f1c7613` editor (`kit/metamodel-editor.js`): `Layout.workflowLayout` (porting di `workflow-layout.ts` + `state-path.ts` di invitations-af), `workflowModel`, `satelliteOf`/`satRect`/`footSize`/`satObstacle`, `routeEdges(mm, size, {extra, uses})`, `FRACS` (tratto centrale delle Z a più frazioni), testata «workflow» (`STEREO_H`), marcatori ` ·ƒ`/`ƒ`, legenda, toggle `⟳ Workflow`, satellite trascinabile con la classe, hover `wf:<Class>:<transition>`. `behavior-view.tsx`: tabella «Classi coinvolte». Test: `workflowLayout` su invitations (11 stati, bus `cancel`, `visit_ended` a tempo) e su 4 stati; satellite in tela; righe marcate.
-  - `fc169c2` `NOTES.md`: nota 2026-10-17 (behaviour nel web) completata salvo le proposte dal web; nuova nota sul limite del layout masonry.
-  - `fbc76d5` skill `core:diagrams`: il riferimento d'implementazione è anche `Layout.workflowLayout`.
-- Sandbox (`~/Documents/GitHub/modeler-sandbox`, 6 commit, non ha remoto): `db/bootstrap.sql`, `db/seed.sql`, `scripts/db.sh` (container `modeler-sandbox-pg`, 127.0.0.1:55432, `db:start|reset|migrate|engine|seed|psql`), `src/lib/db` (`pool`, `withUser` → `set_config('app.profile_id')`, `dbError`), `src/lib/model` (naming del plugin, `ClassDef`/`FieldDef`, query), pagine `/e/[entity]` (lista, dettaglio con transizioni/revert/storia/eventi, nuovo, modifica), `/events`, `/scheduler`, selettore «agisci come», home e README. Modeler installato 0.15.0.
-- Verificato (2026-10-17):
-  - harness: `unittest` core 23 OK, modeler 92 OK (8 skip senza `MODELER_PG`); `node --test` 138 pass; `tsc` sui TSX del kit ok; `claude plugin validate .` passed.
-  - sandbox: `tsc --noEmit` e `lint` puliti; scenario end-to-end eseguito (UI + psql): guardia `ready`, permessi per ruolo/assegnatario, destinatari delle reazioni (manager all'avvio, owner al completamento), commento obbligatorio, `expire` a tempo con `task.expired`, reminder dopo invecchiamento, revert, blocco dell'update diretto dello stato.
-  - browser su `/admin/model`: satellite sotto `Task` (todo→doing→done, `expire` tratteggiata ⏱, `cancelled`), `ƒ` su `Project`, ` ·ƒ` su `tasks 0..*`, legenda, toggle, hover.
-- Non committato: nulla.
+- `origin/main` è alla PR #17 (`0c36012` + handoff `6d8ce6b`): **core 0.10.0, modeler 0.18.0**.
+- Branch locale `feat/workflow-view` (da unire con `/core:ship`: push, PR, merge su richiesta):
+  - `9fc0aff feat(modeler): workflow state diagram on the record pages (<workflow-view>)`;
+  - `457c04f chore(release): modeler 0.19.0` (da `scripts/release.py --write`).
+- Cosa c'è nel kit (`plugins/modeler/kit/metamodel-editor.js`): secondo custom element **`<workflow-view>`** nello
+  stesso file (proprietà `workflow` = `behavior.workflows[Classe]`, attributi `lang`, `name`, `state`; `state` anche come
+  proprietà riflessa): `Layout.workflowLayout` alla larghezza del contenitore (`contain:inline-size` sull'host, così una
+  cella di griglia non si allarga sull'SVG; `ResizeObserver`; scroll orizzontale sotto il minimo), box dello stato
+  corrente riempito del suo colore (`style` inline: la regola `.wfs` vince su un attributo `fill`) con bordo 3.5,
+  transizioni in uscita a piena forza (classe `out`), le altre attenuate (`far`, opacità .3), hover come nell'editor.
+  Condivisi tra editor e viewer: `workflowSvg(cn, L, {current, focus})`, `textMeasure()`, `applyHover(roots, key)`,
+  `hostCss` + `wfCss`. Nel layout puro ogni edge porta `from` (sorgenti; il bus tutte) e `Layout.workflowFocus(edges, state)`
+  dà gli id degli edge in uscita (test in `layout.test.mjs`).
+- Wrapper React `kit/next/workflow-view.tsx` (`<WorkflowView behavior entity state lang className style>`, `null` se la
+  classe non ha workflow; `next/script` dedup per `src`), installato da `install` in `src/components/modeler/workflow-view.tsx`
+  (test in `test_modeler.py`); skill `install` §3/§4/§5 e README aggiornati.
+- Sandbox (`~/Documents/GitHub/modeler-sandbox`, commit `chore: modeler 0.19.0 (workflow view on the record detail)`):
+  `src/app/e/[entity]/[id]/page.tsx` importa `behavior.json` e mette `<WorkflowView>` nella colonna destra sopra
+  «Transizioni». Provato nel browser: record `done`/`cancelled` (nessuna uscita), record `todo` (Avvia, Annulla, Scaduta
+  a piena forza), contenitore stretto (host 207 px, diagramma 452 px con scroll), `/admin/model` invariato (pannello,
+  hover, tabelle). Screenshot in `/var/folders/.../claude-chrome-screenshots-*` (temporanei).
+- Verificato (2026-10-19): `node --test` 180 pass; `unittest` modeler 94 OK (8 skip), core 23 OK; `claude plugin validate .`;
+  sandbox `tsc --noEmit` e `eslint` puliti (è anche il typecheck dei TSX del kit, installati lì).
+- Non committato nell'harness: `NOTES.md` (nota 2026-10-19 «proporre il modello del workflow…», stato da valutare) e la
+  cartella `help/` (estranei a questo lavoro).
 
 ## Decisioni
-- Satellite derivato dalla posizione della classe, mai salvato in `mm.diagram`: `domain.ecore.yaml` resta pulito.
-- `uses` calcolato in Python (conosce la semantica delle espressioni); il JS lo legge soltanto.
-- Satellite compatto: le tabelle sotto l'editor restano per owner, reminder, chi e guardie.
-- Sandbox senza Supabase: Postgres nudo in Docker, utente corrente da cookie → `app.profile_id` (il fallback del motore); la connessione superuser bypassa RLS (detto nel README).
-- Il bug del layout masonry su modelli grandi non è stato affrontato qui: nota in `NOTES.md`, test del satellite limitato alle sue invarianti.
+- Un solo algoritmo di layout: il viewer riusa `Layout.workflowLayout` dallo stesso file del kit (niente porting in TSX);
+  per questo il wrapper carica `public/modeler/metamodel-editor.js` anche sulle pagine di dettaglio (cache del browser).
+- Evidenziazione: stato corrente riempito + transizioni in uscita; gli stati già attraversati (storia) non sono mostrati.
+- Il componente prende `behavior` intero + `entity` (semplice per le app); se un `behavior.json` diventa grande, aggiungere
+  una prop `workflow` alternativa.
+- Posizione nella sandbox: colonna destra (accanto a badge e azioni); con workflow lunghi (10+ stati) le app lo mettono a
+  tutta larghezza (detto nella skill `install`).
 
 ## Problemi aperti
-- Ereditati: motore generato non provato su un'app vera (la sandbox sì); `psql` assente sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
+- Il ridimensionamento della finestra di Chrome via estensione non ha effetto su questo Mac: la larghezza stretta è stata
+  simulata restringendo `main` via JS (il comportamento a viewport telefono reale non è stato visto).
+- Ereditati: motore generato non provato su un'app vera (la sandbox sì); `psql` assente sul Mac (shim in «Per riprendere»);
+  `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. Sugli altri computer `claude plugin update modeler@iovino-harness` (0.18.0) e `core@iovino-harness` (0.10.0).
-2. Nella sandbox: provare lo scenario dalla UI con i quattro utenti (README «Scenario da provare»); modificare `behavior.yaml` (es. nuovo stato o reazione), `npm run model:sync && npm run model:engine -- --write && npm run db:engine` e vedere satellite, tabelle e motore seguire.
-3. In invitations-af: `/modeler:install` (0.15.0), passare `behavior={behavior}` nella pagina admin e guardare il satellite a 11 stati su un'app vera.
-4. In invitations-af: migrazione `alter table public.model_change_requests add column if not exists behavior jsonb;`, badge di
-   build secondo `core:deploy` §7b se manca; provare una modifica del comportamento dal web e `model:apply`.
-5. Editing del comportamento dal web: il pannello si ridisegna a ogni modifica (scroll conservato, focus perso: un campo per volta);
-   le etichette degli stati nuovi vanno scritte a mano; un'enum come attributo di stato richiede il letterale corrispondente (il
-   controllo lo segnala). Da migliorare se dà fastidio nell'uso reale.
+1. `/core:ship` del branch `feat/workflow-view` (push, PR, merge su conferma); poi sugli altri computer
+   `claude plugin update modeler@iovino-harness` (0.19.0).
+2. Valutare la nota aperta di `NOTES.md` con `/core:harness-review`.
+3. In invitations-af e order-management: `/modeler:install` (0.19.0) e `<WorkflowView>` nelle pagine di dettaglio delle
+   entità con workflow (Invitation a 11 stati: a tutta larghezza).
+4. Eventuale: stati già attraversati (da `workflow_history`) con un riempimento più leggero, prop `workflow` alternativa.
 
 ## Per riprendere
 `cd <clone> && claude` — i plugin si caricano da questa cartella: dopo una modifica usa `/reload-plugins`.

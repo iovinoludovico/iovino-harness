@@ -194,8 +194,8 @@ test("derived attributes and the workflow state are marked in the rows of a clas
   assert.ok(!Layout.rowItems(mm.classes.Invitation, true).some((r) => r.state));
 });
 
-// ---- the state diagram of a workflow (Layout.workflowLayout, port of workflow-layout.ts of guest-invitations-af)
-// and the satellite that draws it under its class in the canvas
+// ---- the state diagram of a workflow (Layout.workflowLayout, port of workflow-layout.ts of guest-invitations-af):
+// the panel under the canvas of the editor and <workflow-view> on the record pages
 const wfSegs = (p) => p.slice(1).map((q, i) => [p[i], q]);
 const checkWorkflow = (L, what) => {
   for (let i = 0; i < L.boxes.length; i++) for (let j = i + 1; j < L.boxes.length; j++) {
@@ -263,6 +263,26 @@ test("workflowLayout: a 4-state workflow at small widths", () => {
     assert.equal(L.edges.length, 5);
   }
   assert.deepEqual(Layout.workflowLayout([], [], 300), { width: 300, height: 0, boxes: [], edges: [] });
+});
+
+// <workflow-view> draws the transitions leaving the current state at full strength: every edge carries its sources,
+// workflowFocus picks the edges leaving a state (a bus when the state is one of its sources)
+test("workflowFocus: the edges leaving a state, by the sources every edge carries", () => {
+  const model = Layout.workflowModel(tiny, "it");
+  const L = Layout.workflowLayout(model.states, model.transitions, 400);
+  for (const e of L.edges) assert.ok(e.from.length >= 1, `${e.id} without sources`);
+  assert.deepEqual(Layout.workflowFocus(L.edges, "todo").sort(), ["cancel:todo", "expire:todo", "start:todo"]);
+  assert.deepEqual(Layout.workflowFocus(L.edges, "doing").sort(), ["cancel:doing", "finish:doing"]);
+  assert.deepEqual(Layout.workflowFocus(L.edges, "done"), []);
+  assert.deepEqual(Layout.workflowFocus(L.edges, "nope"), []);
+  assert.deepEqual(Layout.workflowFocus(L.edges, null), []);
+  const bh = behaviorFixture("invitations.ecore.yaml", "invitations.behavior.yaml");
+  const inv = Layout.workflowModel(bh.workflows.Invitation, "it");
+  const LI = Layout.workflowLayout(inv.states, inv.transitions, 800);
+  const bus = LI.edges.find((e) => e.id === "cancel:bus");
+  assert.equal(bus.from.length, 7);
+  assert.ok(Layout.workflowFocus(LI.edges, bus.from[0]).includes("cancel:bus"));
+  assert.ok(!Layout.workflowFocus(LI.edges, "cancelled").includes("cancel:bus"));
 });
 
 // the editor measures the real font: wider text gives wider labels and state boxes, and the invariants still hold

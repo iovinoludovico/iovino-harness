@@ -466,7 +466,7 @@ class AppTests(unittest.TestCase):
     def test_install_makes_the_modeler_part_of_the_app(self):
         written = cli.install(self.app)
         for rel in ("public/modeler/metamodel-editor.js", "src/components/modeler/metamodel-modeler.tsx",
-                    "src/components/modeler/behavior-view.tsx",
+                    "src/components/modeler/behavior-view.tsx", "src/components/modeler/workflow-view.tsx",
                     "src/lib/modeler/metamodel-actions.ts", "src/lib/modeler/access.ts", "docs/DOMAIN.md",
                     "src/lib/modeler/metamodel.json", "tools/modeler/modeler.py",
                     "tools/modeler/metamodel/ecore.py", "tools/modeler/vendor/yaml/__init__.py"):
@@ -486,6 +486,7 @@ class AppTests(unittest.TestCase):
         editor = (self.app / "public/modeler/metamodel-editor.js").read_text()
         self.assertIn(f'const VERSION = "{__version__}";', editor)                # shown in the toolbar
         self.assertNotIn(cli.VERSION_PLACEHOLDER, editor)
+        self.assertIn('customElements.define("workflow-view"', editor)      # the record pages draw the workflow with it
 
     def test_install_tells_when_the_page_does_not_show_the_behaviour(self):
         # no behavior.yaml: nothing to say

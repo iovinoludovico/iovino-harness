@@ -38,6 +38,9 @@ rivedilo **con l'utente**:
 - `src/components/modeler/behavior-view.tsx` (il comportamento in sola lettura sotto l'editor: ruoli, workflow con
   stati e transizioni, attributi calcolati con la formula, eventi, reazioni; compare solo se la pagina passa
   `behavior.json`),
+- `src/components/modeler/workflow-view.tsx` (`<WorkflowView>`: il diagramma degli stati del workflow di un'entità con
+  lo stato corrente del record evidenziato, per le pagine di dettaglio dell'app; disegnato dall'elemento
+  `<workflow-view>` di `metamodel-editor.js`),
 - `src/lib/modeler/metamodel-actions.ts` (salva, elenca e scarta le proposte: file in sviluppo, tabella in produzione),
 - `src/lib/modeler/access.ts` (solo se manca: chi è admin e quale client Supabase usare),
 - `src/lib/modeler/metamodel.json` (il metamodello letto dalla pagina),
@@ -68,6 +71,13 @@ rivedilo **con l'utente**:
   pagina non lo passa, anche nelle reinstallazioni. Nel pannello del workflow e nella barra laterale si modificano
   stati, transizioni, ritorno, formule dei derivati, eventi, ruoli e reazioni: «Salva» produce una proposta con
   metamodello e comportamento, che `/modeler:apply` porta in `domain.ecore.yaml` e `behavior.yaml`.
+- Se l'app ha `behavior.yaml`, nella pagina di dettaglio di un record di una classe con workflow aggiungi il diagramma
+  degli stati con lo stato corrente: `import behavior from "@/lib/modeler/behavior.json"` e
+  `<WorkflowView behavior={behavior} entity="<Classe>" state={record.<attributo di stato>} lang="…" />`
+  (`@/components/modeler/workflow-view`), sopra le azioni di transizione; non compare se la classe non ha workflow.
+  Lo stato corrente è riempito del suo colore, le transizioni che ne partono sono a piena forza, le altre attenuate;
+  il diagramma si adatta alla larghezza del contenitore e sotto la larghezza minima scorre in orizzontale: con
+  workflow lunghi (10+ stati) mettilo a tutta larghezza.
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
 - `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`); non ignorare
   `.modeler/proposals/` (le proposte si rivedono nel repository).
@@ -86,5 +96,6 @@ rivedilo **con l'utente**:
 ## 5. Verifica
 `npm run model:validate`, `npm run model:drift` (con il database locale avviato e la migrazione applicata),
 typecheck, lint, test e build dell'app; poi apri `/admin/model` in sviluppo, fai una modifica e salva:
-deve comparire un file in `.modeler/proposals/`. Prima del deploy, la migrazione `model_change_requests` va
+deve comparire un file in `.modeler/proposals/`; se c'è un workflow, apri il dettaglio di un record a due larghezze
+(desktop e telefono) e controlla che il diagramma mostri lo stato corrente e scorra invece di stringersi. Prima del deploy, la migrazione `model_change_requests` va
 applicata al cloud con `/core:db-push`.
