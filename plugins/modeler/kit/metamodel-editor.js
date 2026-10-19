@@ -1059,6 +1059,7 @@
       transition: "Transizione", from: "Da", to: "A", who: "Chi", comment: "Commento", required: "obbligatorio", optional: "facoltativo",
       emits: "Eventi", events: "Eventi dichiarati", roles: "Ruoli", reactions: "Reazioni", event: "Evento", template: "Template",
       derivedFlag: "calcolato (ƒ)", derivedHint: "formula in behavior.yaml", listHint: "separati da virgola", editHint: "modifica il comportamento: le modifiche entrano nella proposta",
+      resize: "Trascina per ridimensionare, doppio click per tornare all'altezza automatica",
       wfNoInitial: "nessuno stato iniziale", wfManyInitial: "più stati iniziali", wfNoFinal: "nessuno stato finale",
       wfBadState: "stato sconosciuto", wfNoActor: "senza chi né scadenza", wfBadKey: "chiave non valida", wfStateAttr: "attributo di stato mancante",
       wfEnumStates: "gli stati devono essere i letterali dell'enum", rxBadEvent: "evento Classe.evento",
@@ -1088,6 +1089,7 @@
       transition: "Transition", from: "From", to: "To", who: "Who", comment: "Comment", required: "required", optional: "optional",
       emits: "Events", events: "Declared events", roles: "Roles", reactions: "Reactions", event: "Event", template: "Template",
       derivedFlag: "derived (ƒ)", derivedHint: "formula in behavior.yaml", listHint: "comma separated", editHint: "edit the behaviour: the changes go into the proposal",
+      resize: "Drag to resize, double click for the automatic height",
       wfNoInitial: "no initial state", wfManyInitial: "several initial states", wfNoFinal: "no final state",
       wfBadState: "unknown state", wfNoActor: "neither who nor due", wfBadKey: "invalid key", wfStateAttr: "state attribute missing",
       wfEnumStates: "the states must be the literals of the enum", rxBadEvent: "event as Class.event",
@@ -1140,8 +1142,12 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .box.workflow rect.head { fill:var(--wf); }
 .box text.inv { fill:var(--inv); }
 .box text.mark { fill:var(--inv); font-weight:700; font-size:12px; }
-.wfpanel { display:none; border-top:1px solid var(--line); background:var(--panel); overflow:auto; }
-.wfpanel.on { display:block; }
+.wfpanel { display:none; border-top:1px solid var(--line); background:var(--panel); grid-template-rows:auto 1fr; min-height:0; }
+.wfpanel.on { display:grid; }
+.wfgrip { height:7px; cursor:row-resize; background:var(--panel); position:relative; touch-action:none; }
+.wfgrip::after { content:""; position:absolute; left:50%; top:2px; width:36px; height:3px; margin-left:-18px; border-radius:2px; background:var(--line); }
+.wfgrip:hover::after { background:var(--accent); }
+.wfbody { overflow:auto; min-height:0; }
 .wfhead { display:flex; gap:8px; align-items:baseline; padding:6px 10px 0; font-size:12px; color:var(--muted); white-space:nowrap; }
 .wfhead strong { color:var(--fg); font-size:13px; }
 .wfpanel svg { display:block; font:11px system-ui,sans-serif; }
@@ -1239,6 +1245,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this._bh = null;             // behavior.json (optional): formulas of the derived attributes, workflows, uses
       this._wfCache = new Map();   // state-diagram layouts of the panel, per class, language and width
       this._bhOrig = null;         // the behaviour the editor was opened with (changesTo compares with it)
+      this._wfUserH = null;        // height of the workflow panel chosen by dragging its grip (null: automatic)
       this._lastSel = undefined;   // the selection last announced with the `select` event
       this.attachShadow({ mode: "open" });
     }
@@ -1582,12 +1589,31 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         this._bindCanvas(canvas);
         // the workflow panel: re-laid out at its width, hover like the canvas
         const panel = root.querySelector(".wfpanel");
+        const grip = el("div", { class: "wfgrip", title: t.resize });
+        panel.append(grip, el("div", { class: "wfbody" }));
         let panelPending = false;
-        new ResizeObserver(() => {
-          if (panelPending) return;
+        new ResizeObserver(() => {   // the width changed: a new layout (not while the grip is dragged: only the height moves)
+          if (panelPending || this._wfDrag) return;
           panelPending = true;
           requestAnimationFrame(() => { panelPending = false; this._renderWorkflowPanel(); });
         }).observe(panel);
+        // the grip: drag to set the panel's height (the canvas keeps at least 160px), double click for the automatic one
+        grip.addEventListener("pointerdown", (ev) => {
+          this._wfDrag = { y: ev.clientY, h: panel.getBoundingClientRect().height };
+          grip.setPointerCapture(ev.pointerId);
+          ev.preventDefault();
+        });
+        grip.addEventListener("pointermove", (ev) => {
+          if (!this._wfDrag) return;
+          const bar = root.querySelector(".bar")?.getBoundingClientRect().height || 0;
+          const max = Math.max(120, (root.querySelector(".wrap")?.clientHeight || 600) - bar - 160);
+          this._wfUserH = Math.round(Math.min(max, Math.max(120, this._wfDrag.h - (ev.clientY - this._wfDrag.y))));
+          panel.style.height = `${this._wfUserH}px`;
+        });
+        const endDrag = () => { this._wfDrag = null; };
+        grip.addEventListener("pointerup", endDrag);
+        grip.addEventListener("pointercancel", endDrag);
+        grip.addEventListener("dblclick", () => { this._wfUserH = null; this._renderWorkflowPanel(); });
         panel.addEventListener("pointerover", (ev) => {
           const key = ev.target.closest?.("[data-edge]")?.dataset.edge || null;
           if (key !== this._hover) { this._hover = key; this._applyHover(); }
@@ -1851,12 +1877,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     // the panel's width, measured text), hidden when the selection is anything else. The diagram fills the width;
     // below the width of the longest state name it scrolls (core:diagrams).
     _renderWorkflowPanel() {
-      const panel = this.shadowRoot.querySelector(".wfpanel");
-      if (!panel) return;
+      const panel = this.shadowRoot.querySelector(".wfpanel"), body = panel?.querySelector(".wfbody");
+      if (!panel || !body) return;
       const cn = this._sel?.kind === "class" ? this._sel.name : null;
       const wf = cn ? this._workflow(cn) : null;
       if (!wf) {
-        if (panel.classList.contains("on")) { panel.classList.remove("on"); panel.replaceChildren(); panel.style.height = ""; }
+        if (panel.classList.contains("on")) { panel.classList.remove("on"); body.replaceChildren(); panel.style.height = ""; }
         return;
       }
       panel.classList.add("on");
@@ -1872,12 +1898,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       const head = el("div", { class: "wfhead" }, el("strong", {}, cn),
         el("span", {}, `«workflow» ⟳ ${wf.state} · ${L.boxes.length} ${t.states}, ${Object.keys(wf.transitions || {}).length} ${t.transitions}`));
       const edit = this.readonly ? null : this._workflowEditor(cn, wf);
-      const scroll = { top: panel.scrollTop, left: panel.scrollLeft };   // an edit re-renders the panel: keep where the user was
-      panel.replaceChildren(head, this._workflowSvg(cn, L), ...(edit ? [edit] : []));
-      panel.scrollTop = scroll.top; panel.scrollLeft = scroll.left;
-      // the panel takes what the diagram (and the editing tables) need, up to half of the editor: the canvas keeps the rest
+      const scroll = { top: body.scrollTop, left: body.scrollLeft };   // an edit re-renders the panel: keep where the user was
+      body.replaceChildren(head, this._workflowSvg(cn, L), ...(edit ? [edit] : []));
+      body.scrollTop = scroll.top; body.scrollLeft = scroll.left;
+      // the height the user dragged, else what the diagram (and the editing tables) need, up to half of the editor
       const wrapH = this.shadowRoot.querySelector(".wrap")?.clientHeight || 600;
-      const h = Math.round(Math.min(Math.max(220, wrapH * 0.5), Math.max(160, L.height + WF_HEAD + (edit ? edit.scrollHeight || 220 : 0))));
+      const h = this._wfUserH ?? Math.round(Math.min(Math.max(220, wrapH * 0.5), Math.max(160, L.height + WF_HEAD + (edit ? edit.scrollHeight || 220 : 0))));
       if (panel.style.height !== `${h}px`) panel.style.height = `${h}px`;
       this._applyHover();
     }
