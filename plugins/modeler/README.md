@@ -49,8 +49,8 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   bus, hover highlight; the panel follows the selection, so the domain diagram stays clean; the same diagram is
   reusable on the app's pages: `<WorkflowView behavior entity state>` of `workflow-view.tsx` wraps the
   `<workflow-view>` element of the same kit file and shows the workflow of a record with its current state filled
-  with its colour, the transitions leaving it at full strength and the others dimmed, laid out at the width of its
-  container), derived
+  with its colour (white text, a ring), the other states dimmed, the transitions leaving it at full strength and the
+  others dimmed, laid out at the width of its container), derived
   attributes are marked `/name` with the formula in the tooltip and in the panel, the state attribute `⟳`, and the
   features the behaviour uses (formulas, guards, principals, recipients, role scopes: the `uses` map of
   `behavior.json`) carry ` ·ƒ` with "used by" in the tooltip, a class without a workflow but involved has `ƒ` in its

@@ -22,8 +22,10 @@
  *
  *   const v = document.querySelector("workflow-view");
  *   v.workflow = behavior.workflows.Task;   // one workflow of behavior.json
- *   v.setAttribute("state", "doing");       // the current state: its box filled with its colour, the transitions
- *                                            // leaving it at full strength, the others dimmed (also the `state` property)
+ *   v.setAttribute("state", "doing");       // the current state: its box filled with its colour (white text, a ring),
+ *                                            // the other states and connectors dimmed, the transitions leaving it at
+ *                                            // full strength (also the `state` property; an unknown value sets
+ *                                            // data-state-missing on the element and draws the diagram neutral)
  * Attributes: lang="it|en", name="Task" (for the accessible label), state="<key>".
  */
 (() => {
@@ -1130,6 +1132,9 @@
 .wfa { stroke:none; }
 .wfe.far, .wfa.far, .wfdot.far, .wfl.far, .wfl-bg.far { opacity:.3; }
 .wfe.out { stroke-width:2.6; }
+.wfs.far, .wfst.far, .wfkey.far { opacity:.55; }
+.wfring { fill:none; stroke-width:6; stroke-opacity:.25; pointer-events:none; }
+.wfkey.cur { fill:#fff; fill-opacity:.85; }
 .ehit { stroke:transparent; stroke-width:10; fill:none; pointer-events:stroke; cursor:pointer; }
 svg.hover .wfe:not(.hi), svg.hover .wfa:not(.hi), svg.hover .wfdot:not(.hi), svg.hover .wfl:not(.hi), svg.hover .wfl-bg:not(.hi) { opacity:.15; }
 .wfe.hi { stroke-width:2.6; }
@@ -1285,7 +1290,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
   // opts.current: the key of the state a record is in (its box filled with its colour, thick border);
   // opts.focus: a Set of the ids of the edges leaving it (class `out`; the other edges `far`, dimmed).
   const workflowSvg = (cn, L, opts = {}) => {
-    const root = svg("svg", { width: L.width + 2 * WF_PAD, height: L.height + WF_PAD, role: "img", "aria-label": `workflow ${cn}` });
+    const current = opts.current != null && L.boxes.some((b) => b.key === opts.current) ? opts.current : null;
+    const root = svg("svg", { width: L.width + 2 * WF_PAD, height: L.height + WF_PAD, role: "img", "aria-label": current ? `workflow ${cn} · ${current}` : `workflow ${cn}` });
     const inner = svg("g", { transform: `translate(${WF_PAD},${WF_PAD / 2})` });
     const pathD = (pts) => pts.map((q, i) => `${i ? "L" : "M"}${q.x},${q.y}`).join(" ");
     const mark = (e) => (opts.focus ? (opts.focus.has(e.id) ? " out" : " far") : "");
@@ -1299,12 +1305,15 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       inner.append(svg("polygon", { points: [e.arrow[0], e.arrow[2], e.arrow[3]].map((q) => `${q.x},${q.y}`).join(" "), class: `wfa${m}`, fill: e.color, "data-edge": key }));
     }
     for (const b of L.boxes) {
-      const cur = opts.current != null && b.key === opts.current;   // the class rule .wfs sets the fill: inline style wins
-      inner.append(svg("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 7, class: cur ? "wfs cur" : "wfs", stroke: b.color,
-        "stroke-width": cur ? 3.5 : b.kind === "final" ? 3 : 1.5, style: cur ? `fill:${b.color};fill-opacity:.14` : null }));
-      const text = svg("text", { x: b.x + b.w / 2, y: b.y + 9 + WF.font, "text-anchor": "middle", class: "wfst", fill: b.color });
+      // the current state (a record's): box filled with its colour, white text, a ring around it, as the state path
+      // of an app marks its current step; the other boxes dim. The class rule .wfs sets the fill: inline style wins.
+      const cur = current !== null && b.key === current, bm = cur ? " cur" : current !== null ? " far" : "";
+      if (cur) inner.append(svg("rect", { x: b.x - 4, y: b.y - 4, width: b.w + 8, height: b.h + 8, rx: 11, class: "wfring", stroke: b.color }));
+      inner.append(svg("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 7, class: `wfs${bm}`, stroke: b.color,
+        "stroke-width": cur || b.kind === "final" ? 3 : 1.5, style: cur ? `fill:${b.color}` : null }));
+      const text = svg("text", { x: b.x + b.w / 2, y: b.y + 9 + WF.font, "text-anchor": "middle", class: `wfst${bm}`, fill: cur ? "#fff" : b.color });
       b.lines.forEach((line, i) => text.append(svg("tspan", { x: b.x + b.w / 2, dy: i ? WF.font + 3 : 0 }, line)));
-      inner.append(text, svg("text", { x: b.x + b.w / 2, y: b.y + b.h - 6, "text-anchor": "middle", class: "wfkey" }, b.key));
+      inner.append(text, svg("text", { x: b.x + b.w / 2, y: b.y + b.h - 6, "text-anchor": "middle", class: `wfkey${bm}` }, b.key));
     }
     for (const e of L.edges) {   // labels on top of the lines
       const key = `wf:${cn}:${e.key}`, l = e.label, m = mark(e);
@@ -2199,7 +2208,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
   customElements.define("metamodel-editor", MetamodelEditor);
 
   /* <workflow-view> — the state diagram of one workflow of behavior.json with the state a record is in: the box
-   * of the current state filled with its colour, the transitions leaving it at full strength, the others dimmed.
+   * of the current state filled with its colour (white text, a ring), the other states dimmed, the transitions
+   * leaving it at full strength, the others dimmed.
    * Laid out at the element's width (again when it changes); below the width of the longest state name it scrolls
    * horizontally (core:diagrams). No editing: the record pages of the app use it through
    * src/components/modeler/workflow-view.tsx. */
@@ -2260,7 +2270,9 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         L = Layout.workflowLayout(model.states, model.transitions, width, { measure: textMeasure() });
         this._cache.set(key, L);
       }
-      body.replaceChildren(workflowSvg(this.getAttribute("name") || "", L, { current: state, focus: new Set(Layout.workflowFocus(L.edges, state)) }));
+      const known = state === null || L.boxes.some((b) => b.key === state);   // an unknown value: neutral diagram, flagged
+      if (known) this.removeAttribute("data-state-missing"); else this.setAttribute("data-state-missing", state);
+      body.replaceChildren(workflowSvg(this.getAttribute("name") || "", L, known ? { current: state, focus: new Set(Layout.workflowFocus(L.edges, state)) } : {}));
       this._last = drawn;
       this._applyHover();
     }

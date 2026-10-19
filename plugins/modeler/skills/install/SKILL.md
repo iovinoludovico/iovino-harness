@@ -75,7 +75,9 @@ rivedilo **con l'utente**:
   degli stati con lo stato corrente: `import behavior from "@/lib/modeler/behavior.json"` e
   `<WorkflowView behavior={behavior} entity="<Classe>" state={record.<attributo di stato>} lang="…" />`
   (`@/components/modeler/workflow-view`), sopra le azioni di transizione; non compare se la classe non ha workflow.
-  Lo stato corrente è riempito del suo colore, le transizioni che ne partono sono a piena forza, le altre attenuate;
+  Lo stato corrente è pieno del suo colore con testo bianco e un anello, gli altri stati sono attenuati, le transizioni
+  che ne partono sono a piena forza, le altre attenuate (un valore non tra gli stati lascia il diagramma neutro e mette
+  `data-state-missing` sull'elemento);
   il diagramma si adatta alla larghezza del contenitore e sotto la larghezza minima scorre in orizzontale: con
   workflow lunghi (10+ stati) mettilo a tutta larghezza.
   Se la pagina ha già una vista del workflow scritta a mano (un percorso degli stati, `StatePath` o simile), non
