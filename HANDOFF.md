@@ -1,5 +1,5 @@
 # Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
-_Aggiornato: 2026-10-19 · branch `feat/workflow-view` (2 commit sopra `main` `6d8ce6b`, non pushati)_
+_Aggiornato: 2026-10-19 · branch `feat/modeler-workflow-hint` (2 commit sopra `main` `a7ce9bd`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -7,10 +7,13 @@ dettaglio di un record di un'entità con workflow mostra un div con il diagramma
 evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 
 ## Stato
-- `origin/main` è alla PR #17 (`0c36012` + handoff `6d8ce6b`): **core 0.10.0, modeler 0.18.0**.
-- Branch locale `feat/workflow-view` (da unire con `/core:ship`: push, PR, merge su richiesta):
-  - `9fc0aff feat(modeler): workflow state diagram on the record pages (<workflow-view>)`;
-  - `457c04f chore(release): modeler 0.19.0` (da `scripts/release.py --write`).
+- `origin/main` è alla PR #18 (`a7ce9bd`, squash di `feat/workflow-view`): **core 0.10.0, modeler 0.19.0**.
+- Branch locale `feat/modeler-workflow-hint` (revisione della nota 2026-10-19 con `/core:harness-review`, da unire con
+  `/core:ship`): `4448579 feat(modeler): point at workflows kept in code when behavior.yaml is missing` +
+  `59c5ed2 chore(release): core 0.11.0, modeler 0.20.0`. Contenuto: `cli.workflow_hint` (segni di workflow nelle
+  migrazioni, in `docs/customizations.md` e nel metamodello) stampato da `install` e dall'hook di sessione finché
+  manca `behavior.yaml`; nota di `reverse` su check enumerativi di `state`/`status`; punto «Motore a mano» in
+  `metamodel` §3b; riga nelle convenzioni; test in `test_modeler.py`; `NOTES.md` con la nota chiusa come applicata.
 - Cosa c'è nel kit (`plugins/modeler/kit/metamodel-editor.js`): secondo custom element **`<workflow-view>`** nello
   stesso file (proprietà `workflow` = `behavior.workflows[Classe]`, attributi `lang`, `name`, `state`; `state` anche come
   proprietà riflessa): `Layout.workflowLayout` alla larghezza del contenitore (`contain:inline-size` sull'host, così una
@@ -30,8 +33,7 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   hover, tabelle). Screenshot in `/var/folders/.../claude-chrome-screenshots-*` (temporanei).
 - Verificato (2026-10-19): `node --test` 180 pass; `unittest` modeler 94 OK (8 skip), core 23 OK; `claude plugin validate .`;
   sandbox `tsc --noEmit` e `eslint` puliti (è anche il typecheck dei TSX del kit, installati lì).
-- Non committato nell'harness: `NOTES.md` (nota 2026-10-19 «proporre il modello del workflow…», stato da valutare) e la
-  cartella `help/` (estranei a questo lavoro).
+- Non committato nell'harness: la cartella `help/` (estranea a questo lavoro; decidere se versionarla o ignorarla).
 
 ## Decisioni
 - Un solo algoritmo di layout: il viewer riusa `Layout.workflowLayout` dallo stesso file del kit (niente porting in TSX);
@@ -49,9 +51,10 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` del branch `feat/workflow-view` (push, PR, merge su conferma); poi sugli altri computer
-   `claude plugin update modeler@iovino-harness` (0.19.0).
-2. Valutare la nota aperta di `NOTES.md` con `/core:harness-review`.
+1. `/core:ship` del branch `feat/modeler-workflow-hint` (push, PR, merge su conferma); poi sugli altri computer
+   `claude plugin update core@iovino-harness modeler@iovino-harness` (0.11.0 / 0.20.0).
+2. In order-management: con il modeler 0.20.0 l'inizio sessione deve segnalare «workflows in code but no behavior.yaml»;
+   scrivere `behavior.yaml` dell'Ordine da ciò che l'SQL fa (skill `metamodel` §3b, motore a mano).
 3. In invitations-af e order-management: `/modeler:install` (0.19.0) e `<WorkflowView>` nelle pagine di dettaglio delle
    entità con workflow (Invitation a 11 stati: a tutta larghezza).
 4. Eventuale: stati già attraversati (da `workflow_history`) con un riempimento più leggero, prop `workflow` alternativa.
