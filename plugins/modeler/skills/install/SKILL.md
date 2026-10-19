@@ -78,6 +78,28 @@ rivedilo **con l'utente**:
   Lo stato corrente è riempito del suo colore, le transizioni che ne partono sono a piena forza, le altre attenuate;
   il diagramma si adatta alla larghezza del contenitore e sotto la larghezza minima scorre in orizzontale: con
   workflow lunghi (10+ stati) mettilo a tutta larghezza.
+  Se la pagina ha già una vista del workflow scritta a mano (un percorso degli stati, `StatePath` o simile), non
+  metterle una sotto l'altra: due schede con il componente a schede dell'app (es. `Tabs` di shadcn), quella esistente
+  predefinita («Percorso») e `<WorkflowView>` nella seconda («Diagramma»); la scheda scelta si ricorda per utente in
+  `localStorage` come comodità, mai come stato condiviso; sostituire la vista esistente è una decisione dell'utente.
+  ```tsx
+  "use client";
+  // Workflow of the record: the app's own path first, the full diagram in the second tab
+  const KEY = "workflow-tab";
+  export function WorkflowTabs({ path, diagram }: { path: ReactNode; diagram: ReactNode }) {
+    const [tab, setTab] = useState("path");
+    useEffect(() => { try { const t = localStorage.getItem(KEY); if (t === "diagram") setTab(t); } catch {} }, []);
+    const pick = (t: string) => { setTab(t); try { localStorage.setItem(KEY, t); } catch {} };
+    return (
+      <Tabs value={tab} onValueChange={pick}>
+        <TabsList><TabsTrigger value="path">Percorso</TabsTrigger><TabsTrigger value="diagram">Diagramma</TabsTrigger></TabsList>
+        <TabsContent value="path">{path}</TabsContent>
+        <TabsContent value="diagram">{diagram}</TabsContent>
+      </Tabs>
+    );
+  }
+  // nella pagina: <WorkflowTabs path={<StatePath … />} diagram={<WorkflowView behavior={behavior} entity="Order" state={row.status} lang="it" />} />
+  ```
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
 - `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`); non ignorare
   `.modeler/proposals/` (le proposte si rivedono nel repository).
