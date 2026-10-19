@@ -175,6 +175,32 @@ class BehaviorTests(unittest.TestCase):
         errs = errors(behavior(), m)
         self.assertTrue(any("notify_bookings_guest" in x and "self.guest.email' is string" in x for x in errs), errs)
 
+    def test_collection_multiplicities_are_enforced_by_a_guard_or_reported(self):
+        # the fixture: Invitation.invitationFunds is 1..* and dataComplete (a guard of submit) reads it: nothing to say
+        self.assertEqual(B.validate(behavior(), meta()).warnings, [])
+        b = behavior()
+        b["derivations"]["Invitation"]["dataComplete"] = "reason.isSet()"
+        w = [x for x in B.validate(b, meta()).warnings if x.startswith("Invitation.invitationFunds")]
+        self.assertEqual(len(w), 1)
+        self.assertIn("minimum of the collection (1..*) not enforced", w[0])
+        self.assertIn("invitationFunds.notEmpty()", w[0])
+        # a guard that reads the collection directly is enough
+        b["workflows"]["Invitation"]["transitions"]["submit"]["guard"] = "dataComplete and invitationFunds.size() >= 1"
+        self.assertEqual([x for x in B.validate(b, meta()).warnings if x.startswith("Invitation.invitationFunds")], [])
+        # a finite maximum is stored as many: the metamodel's validate says the model does not enforce it
+        m = meta()
+        m["classes"]["Invitation"]["references"]["invitationFunds"]["upper"] = 3
+        w = [x for x in E.validate(m).warnings if "invitationFunds" in x]
+        self.assertEqual(len(w), 1)
+        self.assertIn("finite maximum (upper: 3) is stored as many", w[0])
+        self.assertEqual(E.expand(m)["classes"]["Invitation"]["references"]["invitationFunds"]["upper"], -1)
+        # a class without a workflow: the minimum is a rule of the application
+        m = meta()
+        m["classes"]["Department"]["references"]["guests"] = {"type": "Guest", "lower": 1, "upper": -1}
+        w = [x for x in B.validate(behavior(), m).warnings if x.startswith("Department.guests")]
+        self.assertEqual(len(w), 1)
+        self.assertIn("no workflow", w[0])
+
     def test_workflow_rules(self):
         b = behavior()
         w = b["workflows"]["Invitation"]
