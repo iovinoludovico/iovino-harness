@@ -257,6 +257,10 @@ def reverse(cat: dict[str, Any], package: str = "domain", exclude: set[str] | No
                 ce = _check_enum(x["def"] or "")
                 if ce:
                     checks[ce[0]] = ce[1]
+        for cn in checks:
+            if cn in ("state", "status"):
+                notes.append(f"{t}.{cn}: the check ({', '.join(checks[cn])}) looks like a workflow state: describe "
+                             "the workflow in behavior.yaml (/modeler:metamodel)")
         skipped = []
         feature_of: dict[str, str] = {}   # column -> feature, for the unique groups
         for col in cols.get(t, []):

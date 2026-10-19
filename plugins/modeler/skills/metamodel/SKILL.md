@@ -77,11 +77,16 @@ Dopo ogni modifica: `npm run model:sync` rigenera `docs/BEHAVIOR.md` e `src/lib/
 `<entità>_perform_transition`, `_available_transitions`, `_revert`, transizioni a tempo, solleciti, eventi con i
 destinatari; idempotente, una per rilascio, da rivedere nei `TODO(modeler)`: catalogo degli eventi, policy RLS con
 `<entità>_can_edit`, pg_cron), da applicare in locale e poi `npm run model:drift`. Il motore si appoggia a
-`current_profile_id`, `has_role`, `role_members`, `emit_entity_event` dell'app (fallback se mancano). In un'app
-nata con appforge le funzioni generate sostituiscono quelle di appforge con lo stesso nome: rivedi la migrazione
-prima di applicarla. Nelle app che tengono il motore a mano, `npm run model:behavior -- --format sql|engine` dà
-l'SQL e la versione del workflow da riportare nel codice, e `drift` confronta i workflow con la versione
-pubblicata: la modifica di `behavior.yaml` e quella del codice vanno nella stessa modifica.
+`current_profile_id`, `has_role`, `role_members`, `emit_entity_event` dell'app (fallback se mancano).
+- **Motore a mano** (app nate con appforge, o con un workflow già scritto in SQL: `<entità>_perform_transition`,
+  `<entità>_principals`, `<entità>_emit`, eventi `*.transitioned`, `CUSTOM(*-workflow)`): `behavior.yaml` descrive,
+  l'SQL dell'app implementa. Scrivilo a partire da ciò che il codice fa, senza cambiare il comportamento, e **non
+  lanciare `npm run model:engine -- --write`**: le funzioni generate hanno gli stessi nomi di quelle a mano e le
+  sostituirebbero. Per allineare: `npm run model:behavior -- --format sql|engine` dà l'SQL e la versione del
+  workflow da riportare nel codice, `drift` confronta i workflow con la versione pubblicata; la modifica di
+  `behavior.yaml` e quella del codice vanno nella stessa modifica. Resta CUSTOM (in `docs/customizations.md`) ciò
+  che il modello non esprime: grant per gruppo, valori passati alla transizione, campi obbligatori per stato.
+  `install`, `reverse` e l'inizio sessione segnalano «workflows in code but no behavior.yaml» finché il file manca.
 
 ## 4. Allineare l'applicazione (nella stessa modifica, su un branch)
 1. **Migrazione**: `npm run model:migrate` mostra la bozza generata dal confronto tra il metamodello committato
