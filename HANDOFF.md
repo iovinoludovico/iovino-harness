@@ -1,5 +1,5 @@
-# Handoff — revisione delle note: comportamento modificabile dal web, router a griglia, build visibile
-_Aggiornato: 2026-10-18 · branch `main` (PR #15 unita, `0e5bc70`)_
+# Handoff — modellatore: pannello del workflow ridimensionabile (dopo la revisione delle note)
+_Aggiornato: 2026-10-19 · branch `feat/modeler-workflow-panel-resize` (2 commit avanti a `origin/main`, non pushato)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: (1) la sandbox
@@ -9,7 +9,11 @@ workflow è disegnato accanto alla classe (satellite «workflow») e il diagramm
 quelle coinvolte dal comportamento e quelle solo strutturali.
 
 ## Stato
-- `origin/main` è alla PR #15 (`0e5bc70`): **core 0.10.0, modeler 0.17.0**. Nessun branch remoto aperto.
+- `origin/main` è alla PR #16 (`14b38be`, fix dell'elenco proposte con supabase-js): **core 0.10.0, modeler 0.17.1**. Nessun branch remoto aperto.
+- Il branch locale `feat/modeler-workflow-panel-resize` (release **modeler 0.18.0**): maniglia in cima al pannello del workflow
+  (`div.wfgrip`, trascinamento con pointer capture, minimo 120 px, la tela tiene almeno 160 px), altezza scelta che resta al
+  cambio di selezione (`_wfUserH`), doppio click per l'altezza automatica, contenuto in `div.wfbody` scorrevole; provato nella
+  sandbox (modellatore 0.18.0 installato e committato).
 - La PR #15 ha applicato le tre note aperte
   di `NOTES.md` (tutte chiuse come applicate):
   - `feat(core)`: build in esercizio nell'header (riga nelle convenzioni, «7b. Build visibile» in `core:deploy`, controllo nel
@@ -54,7 +58,8 @@ quelle coinvolte dal comportamento e quelle solo strutturali.
 - Ereditati: motore generato non provato su un'app vera (la sandbox sì); `psql` assente sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. Sugli altri computer `claude plugin update modeler@iovino-harness` (0.17.0) e `core@iovino-harness` (0.10.0).
+1. `/core:ship` del branch `feat/modeler-workflow-panel-resize`; poi sugli altri computer `claude plugin update
+   modeler@iovino-harness` (0.18.0).
 2. Nella sandbox: provare lo scenario dalla UI con i quattro utenti (README «Scenario da provare»); modificare `behavior.yaml` (es. nuovo stato o reazione), `npm run model:sync && npm run model:engine -- --write && npm run db:engine` e vedere satellite, tabelle e motore seguire.
 3. In invitations-af: `/modeler:install` (0.15.0), passare `behavior={behavior}` nella pagina admin e guardare il satellite a 11 stati su un'app vera.
 4. In invitations-af: migrazione `alter table public.model_change_requests add column if not exists behavior jsonb;`, badge di
