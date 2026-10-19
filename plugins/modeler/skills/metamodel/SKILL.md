@@ -63,6 +63,13 @@ e sottoscrizioni webhook non vanno nel metamodello né direttamente nel codice: 
   del record; `or`, calcoli e navigazioni vanno in un attributo derivato (`npm run model:behavior -- --format
   engine` dice cosa il motore non valuta).
 - L'attributo di stato (`state:` del workflow) è un `EString` o un enum con un letterale per stato.
+- Una collezione con un minimo (`lower: 1`, `[+]`) o un massimo finito: il database la memorizza come many, quindi il
+  minimo si impone con una guardia della prima transizione del workflow (`orderLines.notEmpty()`,
+  `lines.size() >= 2`: le parti arrivano dopo il record, un vincolo all'inserimento è impossibile) o, senza workflow,
+  con una regola dell'app al salvataggio definitivo; il massimo con un trigger dell'app sulla tabella delle parti.
+  Quando una modifica (anche una proposta del modellatore) porta una collezione a `lower > 0` o a un `upper` finito,
+  proponi subito la guardia (chiedi su quale transizione) o la regola, con un test della transizione bloccata;
+  `validate` lo segnala finché manca.
 - Ambiguità da chiedere in un giro solo, insieme a quelle della struttura: chi può eseguire una transizione
   (ruolo, con quale ambito, o un utente collegato al record come `self.issuer`); se una condizione nasconde la
   transizione (`when`) o la blocca spiegando cosa manca (`guard`); se il commento è obbligatorio.

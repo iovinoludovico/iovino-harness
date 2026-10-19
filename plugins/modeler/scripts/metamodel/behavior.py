@@ -375,6 +375,7 @@ def validate(raw: dict[str, Any], metamodel: dict[str, Any]) -> M.Report:
     _check_derivations(b, e, rep)
     for cname, w in b["workflows"].items():
         _check_workflow(b, e, cname, w, rep)
+    _check_multiplicities(b, e, rep)
     for cname, evs in b["events"].items():
         where = f"events.{cname}"
         if cname not in e["classes"]:
@@ -391,6 +392,43 @@ def validate(raw: dict[str, Any], metamodel: dict[str, Any]) -> M.Report:
     _check_reactions(b, e, rep)
     _check_subscriptions(b, e, rep)
     return rep
+
+
+def _check_multiplicities(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> None:
+    """A collection with a minimum (`lower > 0`): the database stores it as many, so the model enforces the minimum
+    only through a guard of the workflow (the parts of a record come after the record itself: a check at insert is
+    impossible). Reported as a warning until the guard is there (a finite maximum is reported by the metamodel's
+    own validate: it is stored as many)."""
+    u = uses(b, e)
+    for cname, c in e["classes"].items():
+        if cname in E.BUILTIN_CLASSES:
+            continue
+        for rn, r in (c.get("references") or {}).items():
+            if r["upper"] == 1:
+                continue
+            if r["lower"] <= 0:
+                continue
+            where, mult = f"{cname}.{rn}", f"{r['lower']}..*"
+            if cname not in b["workflows"]:
+                rep.warn(where, f"minimum of the collection ({mult}) is not enforced by the model (no workflow): "
+                                "a rule of the application at its definitive save")
+            elif not _guarded(u, cname, rn):
+                rep.warn(where, f"minimum of the collection ({mult}) not enforced: add a guard on the first transition "
+                                f"of the workflow (e.g. `{rn}.notEmpty()` or `{rn}.size() >= {r['lower']}`)")
+
+
+def _guarded(u: dict[str, Any], cname: str, rn: str) -> bool:
+    """The collection is read by a guard, directly or through a derived attribute of the same class that a guard reads."""
+    bucket = u.get(cname) or {}
+    entries = (bucket.get("references") or {}).get(rn, [])
+    if any(x["kind"] == "guard" for x in entries):
+        return True
+    attrs = bucket.get("attributes") or {}
+    for x in entries:
+        if x["kind"] == "derivation" and x["of"].startswith(cname + "."):
+            if any(y["kind"] == "guard" for y in attrs.get(x["of"].split(".", 1)[1], [])):
+                return True
+    return False
 
 
 def _check_roles(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> None:

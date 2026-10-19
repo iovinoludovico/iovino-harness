@@ -1,5 +1,5 @@
 # Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
-_Aggiornato: 2026-10-19 · branch `feat/core-record-url-convention` (6 commit sopra `main` `1aba74a`, non pushati)_
+_Aggiornato: 2026-10-19 · branch `feat/modeler-collection-multiplicities` (2 commit sopra `main` `d9f433c`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -14,7 +14,13 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   modeler 0.21.0). Nessuna nota aperta in `NOTES.md`.
 - PR #21 (`1aba74a`, modeler 0.21.1): lo stato corrente di `<workflow-view>` è pieno del suo colore con testo bianco
   e anello, gli altri stati attenuati, `data-state-missing` per un valore non tra gli stati; sandbox a 0.21.1.
-- Branch locale `feat/core-record-url-convention` (terza revisione delle note, da unire con `/core:ship`):
+- PR #22 (`d9f433c`, core 0.13.0, modeler 0.21.2): convenzione sui link costruiti dal database, appforge rimosso ovunque.
+- Branch locale `feat/modeler-collection-multiplicities` (quarta revisione delle note, da unire con `/core:ship`):
+  `feat(modeler): minimum and maximum of a collection, enforced by a guard or reported` + release (modeler 0.22.0):
+  notazione, `_check_multiplicities`/`_guarded` in `behavior.validate` (minimo senza guardia), warning di
+  `ecore.validate` per `upper` finito (normalizzato a many), skill `metamodel` §3b e `apply`, fixture con
+  `invitationFunds.notEmpty()`. Rinviati: trigger del massimo generato e annotazione in `DOMAIN.md`.
+- Storia (PR #22, già in `main`): branch `feat/core-record-url-convention`:
   `749732b feat(core): record links built in the database follow the replaced views too` (convenzione «pagina che
   sostituisce la vista generica» estesa al database: `<e>_json` con `app_base_url`, `grep -n "/e/"` nelle migrazioni,
   unica `record_url(entity, id)` SQL, test sull'`url`), `fa34fe7 docs: record harness note decisions` (nota «link
@@ -59,8 +65,8 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` del branch `feat/core-record-url-convention` (push, PR, merge su conferma); poi sugli altri computer
-   `claude plugin update core@iovino-harness modeler@iovino-harness` (0.13.0 / 0.21.2).
+1. `/core:ship` del branch `feat/modeler-collection-multiplicities` (push, PR, merge su conferma); poi sugli altri
+   computer `claude plugin update core@iovino-harness modeler@iovino-harness`.
 2. In order-management: `/modeler:install` per portare `public/modeler/metamodel-editor.js` a 0.21.1 e ricarica forzata
    di `/orders/[id]` scheda «Diagramma»; poi, per la convenzione nuova, migrazione `create or replace` delle `<e>_json`
    con una `record_url(entity, id)` SQL, redirect `/e/<entità>/<id>` → pagina nuova e test sull'`url` dei payload.

@@ -53,7 +53,13 @@ enums:
 
 ### Multiplicity
 `lower` (default 0) and `upper` (default 1; `-1` or `"*"` = many). Emfatic-style reading: `[0..1]` optional,
-`[1]` required, `[*]` many, `[+]` = `lower: 1, upper: -1` (stored as many; at least one is not enforced).
+`[1]` required, `[*]` many, `[+]` = `lower: 1, upper: -1` (stored as many). The minimum of a collection cannot be
+checked when its container is inserted (the parts come after the record): with a workflow it is a guard of the first
+transition (`orderLines.notEmpty()`, `lines.size() >= 2`), evaluated by the generated engine or given by
+`behavior --format sql` to a hand-written one; without a workflow it is a rule of the application at its definitive
+save. A finite maximum (`upper: 5`) is stored as many: the model does not enforce it (a trigger of the application
+on the table of the parts). `validate` warns about every collection whose minimum has no guard and every finite
+maximum.
 
 ### Data types
 `EString`, `Text` (long text), `Email`, `URL`, `EInt`, `ELong`, `EShort`, `EBigInteger`, `EDouble`, `EFloat`,

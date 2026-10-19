@@ -560,6 +560,11 @@ def validate(raw: dict[str, Any]) -> M.Report:
                               "reference a concrete class")
             if r["containment"] and t in BUILTIN_CLASSES:
                 rep.error(fw, f"{t} cannot be contained")
+            raw_r = ((raw.get("classes") or {}).get(cname) or {}).get("references", {}).get(rn)
+            raw_up = raw_r.get("upper") if isinstance(raw_r, dict) else None
+            if isinstance(raw_up, int) and raw_up > 1 or (isinstance(raw_up, str) and raw_up.isdigit() and int(raw_up) > 1):
+                rep.warn(fw, f"finite maximum (upper: {raw_up}) is stored as many: the model does not enforce it "
+                             "(a trigger of the application on the table of the parts)")
             if r.get("on_delete") and r["on_delete"] not in ("restrict", "set_null", "cascade"):
                 rep.error(fw, "on_delete must be restrict, set_null or cascade")
             opp = r.get("opposite")

@@ -22,6 +22,7 @@ derivations:
       and (accommodationMethod = none or accommodationAmount.isSet())
       and (mealsMethod = none or mealsAmount.isSet())
       and (travelMethod = none or travelAmount.isSet())
+      and invitationFunds.notEmpty()
       and fundsTotal = totalAmount
     compensationAmount: >
       if compensationType = hourly then round(coalesce(hours, 0) * coalesce(hourlyRate, 0), 2)

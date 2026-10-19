@@ -40,7 +40,10 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    file tiene le sue). Se la modifica non si può scrivere riga per riga (intestazione del package, file con un
    layout insolito) `--write` si ferma senza scrivere: applicala a mano, oppure, solo se l'utente accetta di
    perdere ordine, virgolette e commenti, `--write --rewrite`. Se `git diff domain.ecore.yaml` mostra più delle
-   righe attese, fermati e segnalalo invece di committare.
+   righe attese, fermati e segnalalo invece di committare. Se la proposta porta una collezione a `lower > 0` o a un
+   `upper` finito (es. `orderLines` da `0..*` a `1..*`), il database non impone il vincolo: proponi subito la guardia
+   sulla prima transizione del workflow (`orderLines.notEmpty()`; chiedi su quale) o la regola dell'app, con un test
+   della transizione bloccata (skill `metamodel`, 3b); `validate` lo segnala finché manca.
 5. Prosegui come la skill `metamodel`, sezione "Allineare l'applicazione": `npm run model:migrate -- --name <nome>
    --write` (bozza dal metamodello committato a quello appena scritto), TODO risolti, codice, migrazione
    applicata in locale, `npm run model:drift` → "aligned", typecheck, lint e test.
