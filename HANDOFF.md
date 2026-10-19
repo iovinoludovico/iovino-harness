@@ -1,5 +1,5 @@
 # Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
-_Aggiornato: 2026-10-19 · branch `fix/workflow-view-current-state` (2 commit sopra `main` `2e6d80c`, non pushati)_
+_Aggiornato: 2026-10-19 · branch `feat/core-record-url-convention` (3 commit sopra `main` `1aba74a`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -12,13 +12,14 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `help/harness-process.html` (core 0.11.0, modeler 0.20.0); PR #20 vista esistente e `<WorkflowView>` in due schede
   (skill `install` §4 con snippet `WorkflowTabs`, rimando in `metamodel` §4, riga nelle convenzioni; core 0.12.0,
   modeler 0.21.0). Nessuna nota aperta in `NOTES.md`.
-- Branch locale `fix/workflow-view-current-state` (da unire con `/core:ship`): `8147955 fix(modeler): make the current
-  state of <workflow-view> unmistakable` + `9eac550 chore(release): modeler 0.21.1`. In order-management lo stato
-  dell'ordine nel diagramma non si notava (riempimento al 14%, bordo quasi uguale a quello degli stati finali): ora il
-  box corrente è pieno del suo colore con testo bianco e anello (`.wfring`), gli altri box attenuati (`.far` su
-  `wfs/wfst/wfkey`, opacità .55), `aria-label` con lo stato; un valore non tra gli stati lascia il diagramma neutro e
-  mette `data-state-missing` sull'elemento. Editor invariato. Provato nella sandbox (todo, done, valore sconosciuto,
-  `/admin/model`); sandbox a 0.21.1 committata.
+- PR #21 (`1aba74a`, modeler 0.21.1): lo stato corrente di `<workflow-view>` è pieno del suo colore con testo bianco
+  e anello, gli altri stati attenuati, `data-state-missing` per un valore non tra gli stati; sandbox a 0.21.1.
+- Branch locale `feat/core-record-url-convention` (terza revisione delle note, da unire con `/core:ship`):
+  `749732b feat(core): record links built in the database follow the replaced views too` (convenzione «pagina che
+  sostituisce la vista generica» estesa al database: `<e>_json` con `app_base_url`, `grep -n "/e/"` nelle migrazioni,
+  unica `record_url(entity, id)` SQL, test sull'`url`), `fa34fe7 docs: record harness note decisions` (nota «link
+  negli eventi» in parte applicata: la `record_url` generata dal motore è rinviata finché `engine.py` non costruisce URL
+  nei payload; nota «due schede» chiusa come applicata), `25bd14e chore(release): core 0.13.0`.
 - Cosa c'è nel kit (`plugins/modeler/kit/metamodel-editor.js`): secondo custom element **`<workflow-view>`** nello
   stesso file (proprietà `workflow` = `behavior.workflows[Classe]`, attributi `lang`, `name`, `state`; `state` anche come
   proprietà riflessa): `Layout.workflowLayout` alla larghezza del contenitore (`contain:inline-size` sull'host, così una
@@ -56,11 +57,11 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` del branch `fix/workflow-view-current-state` (push, PR, merge su conferma); poi sugli altri computer
-   `claude plugin update modeler@iovino-harness` (0.21.1).
-2. In order-management (modeler 0.21.0, due schede già fatte nella PR #5): `/modeler:install` per portare
-   `public/modeler/metamodel-editor.js` a 0.21.1, ricarica forzata di `/orders/[id]` scheda «Diagramma», commit
-   `chore(modeler): upgrade the modeler to 0.21.1` e PR su richiesta.
+1. `/core:ship` del branch `feat/core-record-url-convention` (push, PR, merge su conferma); poi sugli altri computer
+   `claude plugin update core@iovino-harness modeler@iovino-harness` (0.13.0 / 0.21.1).
+2. In order-management: `/modeler:install` per portare `public/modeler/metamodel-editor.js` a 0.21.1 e ricarica forzata
+   di `/orders/[id]` scheda «Diagramma»; poi, per la convenzione nuova, migrazione `create or replace` delle `<e>_json`
+   con una `record_url(entity, id)` SQL, redirect `/e/<entità>/<id>` → pagina nuova e test sull'`url` dei payload.
 3. In invitations-af e order-management: `/modeler:install` (0.19.0) e `<WorkflowView>` nelle pagine di dettaglio delle
    entità con workflow (Invitation a 11 stati: a tutta larghezza).
 4. Eventuale: stati già attraversati (da `workflow_history`) con un riempimento più leggero, prop `workflow` alternativa.
