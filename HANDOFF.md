@@ -1,5 +1,5 @@
 # Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
-_Aggiornato: 2026-10-19 · branch `feat/core-record-url-convention` (3 commit sopra `main` `1aba74a`, non pushati)_
+_Aggiornato: 2026-10-19 · branch `feat/core-record-url-convention` (6 commit sopra `main` `1aba74a`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -19,7 +19,9 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   sostituisce la vista generica» estesa al database: `<e>_json` con `app_base_url`, `grep -n "/e/"` nelle migrazioni,
   unica `record_url(entity, id)` SQL, test sull'`url`), `fa34fe7 docs: record harness note decisions` (nota «link
   negli eventi» in parte applicata: la `record_url` generata dal motore è rinviata finché `engine.py` non costruisce URL
-  nei payload; nota «due schede» chiusa come applicata), `25bd14e chore(release): core 0.13.0`.
+  nei payload; nota «due schede» chiusa come applicata), `25bd14e chore(release): core 0.13.0`; poi `92cbfeb refactor:
+  drop appforge everywhere` (skill, README, docstring, avviso in `install.sh`, import `.ecore` senza le annotazioni
+  `source="appforge"`; `NOTES.md` intatto come storico) + `1772123 chore(release): modeler 0.21.2`.
 - Cosa c'è nel kit (`plugins/modeler/kit/metamodel-editor.js`): secondo custom element **`<workflow-view>`** nello
   stesso file (proprietà `workflow` = `behavior.workflows[Classe]`, attributi `lang`, `name`, `state`; `state` anche come
   proprietà riflessa): `Layout.workflowLayout` alla larghezza del contenitore (`contain:inline-size` sull'host, così una
@@ -58,7 +60,7 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 
 ## Prossimi passi
 1. `/core:ship` del branch `feat/core-record-url-convention` (push, PR, merge su conferma); poi sugli altri computer
-   `claude plugin update core@iovino-harness modeler@iovino-harness` (0.13.0 / 0.21.1).
+   `claude plugin update core@iovino-harness modeler@iovino-harness` (0.13.0 / 0.21.2).
 2. In order-management: `/modeler:install` per portare `public/modeler/metamodel-editor.js` a 0.21.1 e ricarica forzata
    di `/orders/[id]` scheda «Diagramma»; poi, per la convenzione nuova, migrazione `create or replace` delle `<e>_json`
    con una `record_url(entity, id)` SQL, redirect `/e/<entità>/<id>` → pagina nuova e test sull'`url` dei payload.
