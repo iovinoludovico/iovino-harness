@@ -1240,7 +1240,6 @@ XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 GENMODEL_SRC = "http://www.eclipse.org/emf/2002/GenModel"
 MODELER_SRC = "modeler"
 RULES_SRC = "rules"                    # domain rules: one detail per rule, id -> text
-LEGACY_SRC = ("modeler", "appforge")   # annotations of files exported by earlier tools
 
 
 def _annot(parent: ET.Element, source: str, details: dict[str, Any]) -> None:
@@ -1337,7 +1336,7 @@ def export_ecore(raw: dict[str, Any]) -> str:
 def _details(el: ET.Element, source: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for a in el.findall("eAnnotations"):
-        if a.get("source") == source or (source == MODELER_SRC and a.get("source") in LEGACY_SRC):
+        if a.get("source") == source:
             for d in a.findall("details"):
                 v: Any = d.get("value", "")
                 if source == MODELER_SRC and d.get("key") not in ("renamed_from",):

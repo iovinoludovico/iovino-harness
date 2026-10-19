@@ -78,7 +78,7 @@ Dopo ogni modifica: `npm run model:sync` rigenera `docs/BEHAVIOR.md` e `src/lib/
 destinatari; idempotente, una per rilascio, da rivedere nei `TODO(modeler)`: catalogo degli eventi, policy RLS con
 `<entità>_can_edit`, pg_cron), da applicare in locale e poi `npm run model:drift`. Il motore si appoggia a
 `current_profile_id`, `has_role`, `role_members`, `emit_entity_event` dell'app (fallback se mancano).
-- **Motore a mano** (app nate con appforge, o con un workflow già scritto in SQL: `<entità>_perform_transition`,
+- **Motore a mano** (app con un workflow già scritto in SQL: `<entità>_perform_transition`,
   `<entità>_principals`, `<entità>_emit`, eventi `*.transitioned`, `CUSTOM(*-workflow)`): `behavior.yaml` descrive,
   l'SQL dell'app implementa. Scrivilo a partire da ciò che il codice fa, senza cambiare il comportamento, e **non
   lanciare `npm run model:engine -- --write`**: le funzioni generate hanno gli stessi nomi di quelle a mano e le

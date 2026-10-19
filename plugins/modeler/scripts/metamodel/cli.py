@@ -856,7 +856,7 @@ def sync_behavior(root: Path, raw: dict[str, Any]) -> list[str]:
 
 
 def docs_clash(root: Path, doc: Path = DOMAIN_MD) -> str | None:
-    """A file in docs/ named like DOMAIN.md with other letter case (appforge wrote docs/domain.md): another
+    """A file in docs/ named like DOMAIN.md with other letter case (an earlier tool wrote docs/domain.md): another
     document. On macOS it would be read as DOMAIN.md, on Linux sync would write a twin next to it."""
     docs = root / doc.parent
     if not docs.is_dir():

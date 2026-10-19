@@ -178,8 +178,8 @@ workflow, derivations or reactions (`<entity>` = the snake_case of the class, `i
   only where the application has none: the profile from the setting `app.profile_id`, roles from a `user_roles`
   table when it exists (else a stub that raises), an `events` outbox table. Messages are in the language of the
   metamodel. `workflow_history` and `workflow_reminders` belong to the engine (`drift` ignores them).
-- In an app born with appforge the generated functions replace the appforge behaviour layer (same names): review
-  the migration before applying it, and `npm run model:drift` must stay aligned afterwards.
+- In an app with a hand-written engine the generated functions replace the app's functions with the same names:
+  review the migration before applying it, and `npm run model:drift` must stay aligned afterwards.
 
 ## From the user's words to the behaviour model
 | the user says | behaviour model |
