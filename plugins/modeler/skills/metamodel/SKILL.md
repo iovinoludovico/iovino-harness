@@ -100,6 +100,8 @@ destinatari; idempotente, una per rilascio, da rivedere nei `TODO(modeler)`: cat
 2. `npm run model:sync` (aggiorna il modellatore in `/admin/model` e `docs/DOMAIN.md`, la descrizione del dominio
    generata dal metamodello).
 3. Codice: tipi (`supabase gen types` o lo script dell'app), query, form e pagine che usano la struttura nuova.
+   Una vista generata dal modello (es. `<WorkflowView>`) che arriva su una pagina con una vista equivalente scritta a
+   mano va in schede, con quella esistente predefinita (skill `install`, punto 4).
 4. Applica la migrazione al database locale (`supabase db reset` o `supabase migration up`) e
    `npm run model:drift` finché risponde "metamodel and database are aligned".
 5. Typecheck, lint e test dell'app.
