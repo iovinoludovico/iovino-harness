@@ -1,5 +1,5 @@
 # Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
-_Aggiornato: 2026-10-19 · branch `feat/modeler-workflow-tabs` (2 commit sopra `main` `7d6910b`, non pushati)_
+_Aggiornato: 2026-10-19 · branch `fix/workflow-view-current-state` (2 commit sopra `main` `2e6d80c`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -7,15 +7,18 @@ dettaglio di un record di un'entità con workflow mostra un div con il diagramma
 evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 
 ## Stato
-- `origin/main` è alla PR #19 (`7d6910b`, squash di `feat/modeler-workflow-hint`): **core 0.11.0, modeler 0.20.0**
-  (PR #18 `a7ce9bd`: `<workflow-view>`; PR #19: `cli.workflow_hint` in `install`, hook di sessione e `reverse`, punto
-  «Motore a mano» in `metamodel` §3b, riga nelle convenzioni, `help/harness-process.html` tracciato).
-- Branch locale `feat/modeler-workflow-tabs` (seconda revisione delle note, da unire con `/core:ship`):
-  `edd9131 feat(modeler): existing workflow view and <WorkflowView> live in tabs` + `878f428 chore(release): core 0.12.0,
-  modeler 0.21.0`. Solo testo: skill `install` §4 (vista del workflow esistente e `<WorkflowView>` in due schede, quella
-  esistente predefinita, scheda in `localStorage`, snippet `WorkflowTabs`), rimando in `metamodel` §4, riga nelle
-  convenzioni (Lavoro sul codice); `NOTES.md` con la nota 2026-10-19 «due schede» in parte applicata (scartato il
-  componente nel kit).
+- `origin/main` è alla PR #20 (`2e6d80c`): **core 0.12.0, modeler 0.21.0**. Storia di oggi: PR #18 `<workflow-view>`
+  (modeler 0.19.0); PR #19 `cli.workflow_hint` in `install`/hook/`reverse`, «Motore a mano» in `metamodel` §3b,
+  `help/harness-process.html` (core 0.11.0, modeler 0.20.0); PR #20 vista esistente e `<WorkflowView>` in due schede
+  (skill `install` §4 con snippet `WorkflowTabs`, rimando in `metamodel` §4, riga nelle convenzioni; core 0.12.0,
+  modeler 0.21.0). Nessuna nota aperta in `NOTES.md`.
+- Branch locale `fix/workflow-view-current-state` (da unire con `/core:ship`): `8147955 fix(modeler): make the current
+  state of <workflow-view> unmistakable` + `9eac550 chore(release): modeler 0.21.1`. In order-management lo stato
+  dell'ordine nel diagramma non si notava (riempimento al 14%, bordo quasi uguale a quello degli stati finali): ora il
+  box corrente è pieno del suo colore con testo bianco e anello (`.wfring`), gli altri box attenuati (`.far` su
+  `wfs/wfst/wfkey`, opacità .55), `aria-label` con lo stato; un valore non tra gli stati lascia il diagramma neutro e
+  mette `data-state-missing` sull'elemento. Editor invariato. Provato nella sandbox (todo, done, valore sconosciuto,
+  `/admin/model`); sandbox a 0.21.1 committata.
 - Cosa c'è nel kit (`plugins/modeler/kit/metamodel-editor.js`): secondo custom element **`<workflow-view>`** nello
   stesso file (proprietà `workflow` = `behavior.workflows[Classe]`, attributi `lang`, `name`, `state`; `state` anche come
   proprietà riflessa): `Layout.workflowLayout` alla larghezza del contenitore (`contain:inline-size` sull'host, così una
@@ -53,10 +56,11 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` del branch `feat/modeler-workflow-tabs` (push, PR, merge su conferma); poi sugli altri computer
-   `claude plugin update core@iovino-harness modeler@iovino-harness` (0.12.0 / 0.21.0).
-2. In order-management (modeler 0.20.0, `<WorkflowView>` in `/orders/[id]`): portare `StatePath` e diagramma nelle due
-   schede come dice la skill `install` §4; `behavior.yaml` dell'Ordine se manca ancora (skill `metamodel` §3b).
+1. `/core:ship` del branch `fix/workflow-view-current-state` (push, PR, merge su conferma); poi sugli altri computer
+   `claude plugin update modeler@iovino-harness` (0.21.1).
+2. In order-management (modeler 0.21.0, due schede già fatte nella PR #5): `/modeler:install` per portare
+   `public/modeler/metamodel-editor.js` a 0.21.1, ricarica forzata di `/orders/[id]` scheda «Diagramma», commit
+   `chore(modeler): upgrade the modeler to 0.21.1` e PR su richiesta.
 3. In invitations-af e order-management: `/modeler:install` (0.19.0) e `<WorkflowView>` nelle pagine di dettaglio delle
    entità con workflow (Invitation a 11 stati: a tutta larghezza).
 4. Eventuale: stati già attraversati (da `workflow_history`) con un riempimento più leggero, prop `workflow` alternativa.
