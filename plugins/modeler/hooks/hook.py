@@ -140,6 +140,10 @@ def session(data: dict) -> int:
         if (root / BEHAVIOR_FILE).exists():
             lines.append(f"Behaviour model: {root / BEHAVIOR_FILE} (roles, derivations, workflows, events, reactions), "
                          "written on the concepts of the metamodel and checked against it by `npm run model:validate`.")
+        else:
+            hint = cli.workflow_hint(root)                   # workflows in code, no behaviour model yet
+            if hint:
+                lines.append(hint)
         pending = sorted(cli.proposals_dir(root / METAMODEL_FILE).glob("*.json"))
         if pending:
             lines.append(f"{len(pending)} proposal(s) saved by the admin modeler and not applied yet "

@@ -779,6 +779,8 @@ def cmd_reverse(a) -> int:
     else:
         print(text)
     for n in notes:
+        if B.BEHAVIOR_FILE in n and (root / B.BEHAVIOR_FILE).exists():   # the workflow is described already
+            continue
         print(f"note: {n}", file=sys.stderr)
     print(rep.render(), file=sys.stderr)
     return 0 if rep.ok else 1
@@ -1044,6 +1046,52 @@ def behavior_page_hint(root: Path) -> str | None:
             "so /admin/model shows derived attributes, workflows and reactions")
 
 
+# what a workflow kept in code looks like in migrations, customizations and the metamodel
+WORKFLOW_SIGNS = (
+    (re.compile(r"\b\w+_perform_transition\b"), "perform_transition functions"),
+    (re.compile(r"\b\w+[._]transitioned\b"), "transitioned events"),
+    (re.compile(r"CUSTOM\(\w[\w-]*-workflow\)"), "CUSTOM(*-workflow)"),
+    (re.compile(r"\b(?:state|status)\b[^,\n]*\bcheck\s*\(", re.I), "a state column with a check"),
+)
+
+
+def workflow_hint(root: Path) -> str | None:
+    """The app keeps workflows in code (migrations, docs/customizations.md, an enum state attribute of the
+    metamodel) but has no behavior.yaml: what to propose. None when the file exists or nothing looks like one."""
+    if (root / B.BEHAVIOR_FILE).exists():
+        return None
+    signs: dict[str, set[str]] = {}
+    files = sorted((root / "supabase" / "migrations").glob("*.sql")) + [root / "docs" / "customizations.md"]
+    for f in files:
+        if not f.is_file():
+            continue
+        try:
+            text = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for rx, what in WORKFLOW_SIGNS:
+            if rx.search(text):
+                signs.setdefault(what, set()).add(f.name)
+    meta = root / E.METAMODEL_FILE
+    if meta.exists():
+        try:
+            mm = E.load(meta)
+            enums = mm.get("enums") or {}
+            for cn, c in (mm.get("classes") or {}).items():
+                for an, a in (c.get("attributes") or {}).items():
+                    atype = a.get("type") if isinstance(a, dict) else a
+                    if an in ("state", "status") and atype in enums:
+                        signs.setdefault("an enum state attribute", set()).add(f"{cn}.{an}")
+        except Exception:                                    # a broken metamodel is reported elsewhere
+            pass
+    if not signs:
+        return None
+    where = "; ".join(f"{what} in {', '.join(sorted(v)[:3])}" for what, v in signs.items())
+    return (f"The app has workflows in code but no {B.BEHAVIOR_FILE} ({where}): propose /modeler:metamodel to "
+            "describe them in behavior.yaml from what the code does, without changing the behaviour or replacing a "
+            "hand-written engine (metamodel skill, 3b).")
+
+
 def cmd_install(a) -> int:
     target = Path(a.app).resolve()
     if not (target / "package.json").exists():
@@ -1055,9 +1103,9 @@ def cmd_install(a) -> int:
         print(f"no {E.METAMODEL_FILE} yet: derive it with `reverse --db <DSN> -o {E.METAMODEL_FILE}`, then `sync`")
     elif docs_status(target)["state"] in ("edited", "clash"):
         print(docs_report(docs_status(target), diff=False))
-    hint = behavior_page_hint(target)
-    if hint:
-        print(hint)
+    for hint in (behavior_page_hint(target), workflow_hint(target)):
+        if hint:
+            print(hint)
     print("next: adapt src/lib/modeler/access.ts to the app's admin check, add the admin page and the link "
           "in the admin navigation (see the install skill)")
     return 0

@@ -39,7 +39,10 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   and `src/lib/modeler/behavior.json` (every expression typed, with its SQL); `model:behavior -- --format sql`
   prints derivations and guards as PostgreSQL, `--format engine` the workflow versions as the runtime engine
   stores them (clauses, principals, timed triggers); `drift` compares the workflows with the versions published in
-  the database. In the web modeler, when the page passes `behavior.json` (`install` says so while it does not),
+  the database. While an app has no `behavior.yaml` but keeps workflows in code (`*_perform_transition`,
+  `*.transitioned` events, `CUSTOM(*-workflow)`, a state column with an enumerated check, an enum state attribute),
+  `install`, `reverse` and the session hook say so and propose `/modeler:metamodel` to describe them without changing
+  the behaviour. In the web modeler, when the page passes `behavior.json` (`install` says so while it does not),
   the diagram shows the behaviour next to the structure: a class with a workflow has a «workflow» head and,
   when selected, its **state diagram in a panel under the canvas** (laid out at the panel's width with the real
   text widths: states in their colour, transitions in the colour of the target, timed ones dashed, final sinks on a

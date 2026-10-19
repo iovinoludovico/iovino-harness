@@ -294,6 +294,14 @@ class UniqueTogetherTests(unittest.TestCase):
                     "on_delete": None, "def": "CHECK ((motivo = ANY (ARRAY['nascita'::text, 'matrimonio'::text])))"}]}
         meta = _tariffs()
         meta["classes"]["Tariffa"]["attributes"]["motivo"] = {"type": "Motivo", "lower": 1}
+        # an enumerated check on a state column: the reverse notes a workflow to describe in behavior.yaml
+        cat["columns"].append({"table": "voci", "name": "status", "udt": "text", "type": "text", "nullable": False,
+                               "default": None, "maxlen": None})
+        cat["constraints"].append({"table": "voci", "name": "c2", "type": "c", "columns": ["status"], "ftable": None,
+                                   "fschema": None, "on_delete": None,
+                                   "def": "CHECK ((status = ANY (ARRAY['draft'::text, 'done'::text])))"})
+        _, rnotes = D.reverse(cat)
+        self.assertTrue(any("voci.status" in n and "workflow state" in n and "behavior.yaml" in n for n in rnotes), rnotes)
         self.assertIn("MISSING UNIQUE tariffe (voce, motivo, posizione)", D.drift(meta, cat))
         cat["unique_indexes"] = [{"table": "tariffe", "name": "tariffe_combo", "columns": ["voce", "motivo", "posizione"],
                                   "expressions": False,
@@ -512,6 +520,36 @@ class AppTests(unittest.TestCase):
         # no page yet (first installation): the hint points to the skill
         page.unlink()
         self.assertIn("see the install skill", cli.behavior_page_hint(self.app))
+
+    def test_install_tells_when_workflows_live_in_code_without_a_behaviour_model(self):
+        self.assertIsNone(cli.workflow_hint(self.app))                        # nothing looks like a workflow
+        mig = self.app / "supabase" / "migrations"
+        mig.mkdir()
+        (mig / "20260101000000_orders.sql").write_text(
+            "create table orders (id uuid primary key, status text not null default 'draft' "
+            "check (status in ('draft', 'approved')));\n"
+            "create function orders_perform_transition() returns void language sql as $$ select 1 $$;\n")
+        (self.app / "docs").mkdir()
+        (self.app / "docs" / "customizations.md").write_text("## CUSTOM(order-workflow)\nstates in SQL\n")
+        hint = cli.workflow_hint(self.app)
+        self.assertIn("workflows in code but no behavior.yaml", hint)
+        for sign in ("perform_transition functions in 20260101000000_orders.sql", "a state column with a check",
+                     "CUSTOM(*-workflow) in customizations.md", "/modeler:metamodel"):
+            self.assertIn(sign, hint)
+        self.assertNotIn("enum state attribute", hint)
+        # an enum state attribute in the metamodel is a sign too
+        meta = E.load(self.app / "domain.ecore.yaml")
+        meta["enums"]["Stato"] = {"literals": ["bozza", "attivo"]}
+        meta["classes"]["Persona"]["attributes"]["state"] = {"type": "Stato"}
+        E.dump(meta, self.app / "domain.ecore.yaml")
+        self.assertIn("an enum state attribute in Persona.state", cli.workflow_hint(self.app))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_install(argparse.Namespace(app=str(self.app), no_migration=True)), 0)
+        self.assertIn("workflows in code but no behavior.yaml", out.getvalue())
+        # with a behaviour model there is nothing to propose
+        (self.app / "behavior.yaml").write_text("workflows: {}\n")
+        self.assertIsNone(cli.workflow_hint(self.app))
 
     def test_install_stops_on_a_docs_domain_md_with_other_case(self):
         other = self.app / "docs" / "domain.md"                          # appforge's document, not hand notes
@@ -937,6 +975,13 @@ class HookTests(unittest.TestCase):
             self.assertIn("not installed", out.stdout)
             self.assertIn(f"Modeler plugin loaded in this session: {__version__}.", out.stdout)
             self.assertNotIn("not applied yet", out.stdout)
+            self.assertNotIn("workflows in code", out.stdout)
+            mig.parent.mkdir(parents=True)
+            mig.write_text("create function x_perform_transition() returns void language sql as $$ select 1 $$;\n")
+            self.assertIn("workflows in code but no behavior.yaml", self.run_hook("session", {"cwd": d}).stdout)
+            (Path(d) / "behavior.yaml").write_text("workflows: {}\n")
+            self.assertNotIn("workflows in code", self.run_hook("session", {"cwd": d}).stdout)
+            (Path(d) / "behavior.yaml").unlink()
             props = Path(d) / ".modeler" / "proposals"
             (props / "applied").mkdir(parents=True)
             (props / "2026-10-15T10-00-00.json").write_text("{}")
