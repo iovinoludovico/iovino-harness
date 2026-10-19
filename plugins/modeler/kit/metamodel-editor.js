@@ -16,6 +16,15 @@
  *
  * Attributes: lang="it|en", save-label="…", readonly.
  * The diagram positions are kept in metamodel.diagram ({Class: {x, y}}).
+ *
+ * The same file defines <workflow-view>: the state diagram of one workflow with the state a record is in
+ * (src/components/modeler/workflow-view.tsx puts it on the record pages):
+ *
+ *   const v = document.querySelector("workflow-view");
+ *   v.workflow = behavior.workflows.Task;   // one workflow of behavior.json
+ *   v.setAttribute("state", "doing");       // the current state: its box filled with its colour, the transitions
+ *                                            // leaving it at full strength, the others dimmed (also the `state` property)
+ * Attributes: lang="it|en", name="Task" (for the accessible label), state="<key>".
  */
 (() => {
 
@@ -357,7 +366,8 @@
         if (best) { Object.assign(e.label, best); placed.push(best); }
       }
     };
-    // { width, height, boxes: [{key,label,color,kind,x,y,w,h,lines}], edges: [{id,key,color,timed,paths,arrow,dots,label}]
+    // { width, height, boxes: [{key,label,color,kind,x,y,w,h,lines}], edges: [{id,key,from,color,timed,paths,arrow,dots,label}]
+    // (from: the source states of the edge; a bus has all of them)
     // opts.measure(text, font, bold) -> px: the real text widths (default: the estimate wfTextWidth)
     const workflowLayout = (states, transitions, width, opts = {}) => {
       const measure = opts.measure || wfTextWidth;
@@ -546,7 +556,7 @@
         if (!e.l1) pts = [a, b];
         else if (!e.l2) pts = [a, { x: e.l1.x, y: a.y }, { x: e.l1.x, y: b.y }, b];
         else pts = [a, { x: e.l1.x, y: a.y }, { x: e.l1.x, y: e.h.y }, { x: e.l2.x, y: e.h.y }, { x: e.l2.x, y: b.y }, b];
-        edges.push({ id: `${e.tr.key}:${e.f}`, key: e.tr.key, color: color(e.tr.to), timed: e.tr.timed, paths: [wfSimplify(pts)], arrow: wfArrowAt(pts), dots: [], label: wfEmptyLabel(e.tr, labelW, measure) });
+        edges.push({ id: `${e.tr.key}:${e.f}`, key: e.tr.key, from: [e.f], color: color(e.tr.to), timed: e.tr.timed, paths: [wfSimplify(pts)], arrow: wfArrowAt(pts), dots: [], label: wfEmptyLabel(e.tr, labelW, measure) });
       }
       for (const b of buses) {
         const paths = [], dots = [];
@@ -562,7 +572,7 @@
         paths.push(drop);
         const keep = dots.filter((d) => d.y !== b.h.y || (d.x > b.h.x1 + 0.5 && d.x < b.h.x2 - 0.5));
         if (t.x > b.h.x1 + 0.5 && t.x < b.h.x2 - 0.5) keep.push({ x: t.x, y: b.h.y });
-        edges.push({ id: `${b.tr.key}:bus`, key: b.tr.key, color: color(b.tr.to), timed: b.tr.timed, paths, arrow: wfArrowAt(drop), dots: keep, label: wfEmptyLabel(b.tr, labelW, measure) });
+        edges.push({ id: `${b.tr.key}:bus`, key: b.tr.key, from: b.srcs.map((s) => s.f), color: color(b.tr.to), timed: b.tr.timed, paths, arrow: wfArrowAt(drop), dots: keep, label: wfEmptyLabel(b.tr, labelW, measure) });
       }
       for (const e of edges) {   // the arrow head replaces the last few pixels of each connector
         const last = e.paths[e.paths.length - 1];
@@ -897,7 +907,10 @@
       return { x: Math.round(start.x), y: Math.round(bottom) };
     };
 
-    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, workflowModel, workflowLayout, WF, STEREO_H };
+    // the ids of the edges leaving a state (the transitions a record in that state can take; a bus counts when the
+    // state is one of its sources): what <workflow-view> draws at full strength
+    const workflowFocus = (edges, stateKey) => (stateKey == null ? [] : edges.filter((e) => e.from.includes(stateKey)).map((e) => e.id));
+    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, workflowModel, workflowLayout, workflowFocus, WF, STEREO_H };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -1096,14 +1109,39 @@
     },
   };
 
-  const css = `
+  // colours of both elements (light, dark by the system or by the `theme` attribute)
+  const hostCss = `
 :host { --bg:#fff; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --panel:#f9fafb; --accent:#2563eb; --head:#eef2ff;
   --enum:#fef3c7; --wf:#dcfce7; --inv:#b45309; --err:#dc2626; --ok:#16a34a; display:block; font:13px/1.4 system-ui,sans-serif; color:var(--fg); }
 @media (prefers-color-scheme: dark) { :host { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151;
   --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --wf:#064e3b; --inv:#f59e0b; --accent:#60a5fa; } }
 :host([theme="light"]) { --bg:#fff; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --panel:#f9fafb; --head:#eef2ff; --enum:#fef3c7; --wf:#dcfce7; --inv:#b45309; --accent:#2563eb; }
-:host(:fullscreen) { height:100vh; background:var(--bg); }
 :host([theme="dark"]) { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151; --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --wf:#064e3b; --inv:#f59e0b; --accent:#60a5fa; }
+`;
+  // the state diagram (the panel of the editor and <workflow-view>): states, connectors, labels, hover, and the
+  // emphasis of <workflow-view> (`out`: leaving the current state, `far`: the other connectors)
+  const wfCss = `
+.wfe { fill:none; stroke-width:1.75; }
+.wfs { fill:var(--bg); }
+.wfst { font-size:11px; font-weight:600; }
+.wfkey { font-size:9px; fill:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.wfl-bg { fill:var(--bg); fill-opacity:.95; stroke-width:1; stroke-opacity:.55; }
+.wfl { font-size:10px; fill:var(--fg); }
+.wfa { stroke:none; }
+.wfe.far, .wfa.far, .wfdot.far, .wfl.far, .wfl-bg.far { opacity:.3; }
+.wfe.out { stroke-width:2.6; }
+.ehit { stroke:transparent; stroke-width:10; fill:none; pointer-events:stroke; cursor:pointer; }
+svg.hover .wfe:not(.hi), svg.hover .wfa:not(.hi), svg.hover .wfdot:not(.hi), svg.hover .wfl:not(.hi), svg.hover .wfl-bg:not(.hi) { opacity:.15; }
+.wfe.hi { stroke-width:2.6; }
+`;
+  // contain:inline-size — the host takes the width of its container (a grid cell, a column) instead of the
+  // diagram's; the diagram is laid out at that width and scrolls horizontally below its minimum
+  const viewCss = `${hostCss}
+:host { contain:inline-size; overflow-x:auto; overflow-y:hidden; }
+svg { display:block; font:11px system-ui,sans-serif; }
+${wfCss}`;
+  const css = `${hostCss}
+:host(:fullscreen) { height:100vh; background:var(--bg); }
 * { box-sizing:border-box; }
 .wrap { display:grid; grid-template-rows:auto 1fr auto; height:100%; min-height:520px; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--bg); }
 .bar { display:flex; gap:6px; align-items:center; padding:6px 8px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
@@ -1167,15 +1205,7 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .side table.beh th { text-align:left; font-weight:500; color:var(--muted); font-size:11px; padding:0 3px 2px; }
 .side table.beh td { padding:1px 2px; }
 .side table.beh input, .side table.beh select { width:100%; font-size:12px; padding:2px 4px; }
-.wfe { fill:none; stroke-width:1.75; }
-.wfs { fill:var(--bg); }
-.wfst { font-size:11px; font-weight:600; }
-.wfkey { font-size:9px; fill:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-.wfl-bg { fill:var(--bg); fill-opacity:.95; stroke-width:1; stroke-opacity:.55; }
-.wfl { font-size:10px; fill:var(--fg); }
-.wfa { stroke:none; }
-svg.hover .wfe:not(.hi), svg.hover .wfa:not(.hi), svg.hover .wfdot:not(.hi), svg.hover .wfl:not(.hi), svg.hover .wfl-bg:not(.hi) { opacity:.15; }
-.wfe.hi { stroke-width:2.6; }
+${wfCss}
 .legend { position:absolute; left:8px; bottom:8px; display:flex; gap:10px; align-items:center; font-size:11px; color:var(--muted); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:4px 8px; pointer-events:none; }
 .legend .sw { display:inline-block; width:12px; height:12px; border-radius:3px; background:var(--head); border:1px solid var(--line); margin-right:-5px; }
 .legend .sw.wf { background:var(--wf); }
@@ -1199,7 +1229,6 @@ svg.hover .wfe:not(.hi), svg.hover .wfa:not(.hi), svg.hover .wfdot:not(.hi), svg
 .status.warn { color:#d97706; }
 .issues div.w { color:#b45309; }
 .mk-fill { fill:var(--muted); }
-.ehit { stroke:transparent; stroke-width:10; fill:none; pointer-events:stroke; cursor:pointer; }
 .elabel { cursor:pointer; }
 .junction { fill:var(--muted); }
 svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.hi) { opacity:.15; }
@@ -1229,6 +1258,74 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
   const add = (parent, ...kids) => parent.append(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false));
   const multKey = (lo, up) => MULTS.find((m) => m[1] === lo && m[2] === up)?.[0] ?? "0..1";
   const snake = (s) => s.replace(/(?<=[a-z0-9])([A-Z])/g, "_$1").toLowerCase();
+
+  // real text widths for the state diagram (one canvas 2D context and cache shared by the editor and the viewers);
+  // undefined when there is no 2D context: the layout falls back to its estimate
+  let mctx, mcache;
+  const textMeasure = () => {
+    if (mctx === undefined) {
+      mctx = document.createElement("canvas").getContext?.("2d") || null;
+      mcache = new Map();
+    }
+    if (!mctx) return undefined;
+    return (text, font, bold = false) => {
+      const k = `${bold ? 1 : 0}|${font}|${text}`;
+      let w = mcache.get(k);
+      if (w === undefined) {
+        mctx.font = `${bold ? 600 : 400} ${font}px system-ui, sans-serif`;
+        w = mctx.measureText(text).width;
+        mcache.set(k, w);
+      }
+      return w;
+    };
+  };
+  // the state diagram as SVG: states in their colour (thick border when final), connectors in the colour of the
+  // target state (dashed when timed) with a filled arrow head, dots at bus junctions, labels on a background.
+  // Every part carries data-edge="wf:<class>:<transition>" for the hover highlight.
+  // opts.current: the key of the state a record is in (its box filled with its colour, thick border);
+  // opts.focus: a Set of the ids of the edges leaving it (class `out`; the other edges `far`, dimmed).
+  const workflowSvg = (cn, L, opts = {}) => {
+    const root = svg("svg", { width: L.width + 2 * WF_PAD, height: L.height + WF_PAD, role: "img", "aria-label": `workflow ${cn}` });
+    const inner = svg("g", { transform: `translate(${WF_PAD},${WF_PAD / 2})` });
+    const pathD = (pts) => pts.map((q, i) => `${i ? "L" : "M"}${q.x},${q.y}`).join(" ");
+    const mark = (e) => (opts.focus ? (opts.focus.has(e.id) ? " out" : " far") : "");
+    for (const e of L.edges) {
+      const key = `wf:${cn}:${e.key}`, m = mark(e);
+      for (const p of e.paths) {
+        inner.append(svg("path", { d: pathD(p), class: "ehit", "data-edge": key }));
+        inner.append(svg("path", { d: pathD(p), class: `wfe${m}`, stroke: e.color, "stroke-dasharray": e.timed ? "5 4" : null, "data-edge": key }));
+      }
+      for (const q of e.dots) inner.append(svg("circle", { cx: q.x, cy: q.y, r: 2.4, class: `wfdot${m}`, fill: e.color, "data-edge": key }));
+      inner.append(svg("polygon", { points: [e.arrow[0], e.arrow[2], e.arrow[3]].map((q) => `${q.x},${q.y}`).join(" "), class: `wfa${m}`, fill: e.color, "data-edge": key }));
+    }
+    for (const b of L.boxes) {
+      const cur = opts.current != null && b.key === opts.current;   // the class rule .wfs sets the fill: inline style wins
+      inner.append(svg("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 7, class: cur ? "wfs cur" : "wfs", stroke: b.color,
+        "stroke-width": cur ? 3.5 : b.kind === "final" ? 3 : 1.5, style: cur ? `fill:${b.color};fill-opacity:.14` : null }));
+      const text = svg("text", { x: b.x + b.w / 2, y: b.y + 9 + WF.font, "text-anchor": "middle", class: "wfst", fill: b.color });
+      b.lines.forEach((line, i) => text.append(svg("tspan", { x: b.x + b.w / 2, dy: i ? WF.font + 3 : 0 }, line)));
+      inner.append(text, svg("text", { x: b.x + b.w / 2, y: b.y + b.h - 6, "text-anchor": "middle", class: "wfkey" }, b.key));
+    }
+    for (const e of L.edges) {   // labels on top of the lines
+      const key = `wf:${cn}:${e.key}`, l = e.label, m = mark(e);
+      inner.append(svg("rect", { x: l.x, y: l.y, width: l.w, height: l.h, rx: 3, class: `wfl-bg${m}`, stroke: e.color, "data-edge": key }));
+      const text = svg("text", { x: l.x + l.w / 2, y: l.y + WF.labelFont + 3, "text-anchor": "middle", class: `wfl${m}`, "data-edge": key });
+      l.lines.forEach((line, i) => text.append(svg("tspan", { x: l.x + l.w / 2, dy: i ? WF.labelFont + 3 : 0 }, line)));
+      inner.append(text);
+    }
+    root.append(inner);
+    return root;
+  };
+  // the hover highlight of the connectors in the given SVG roots: the parts whose data-edge is `key` get `hi` and the
+  // roots `hover` (the other parts dim). Returns the key still drawn somewhere, else null (no roots: unchanged).
+  const applyHover = (roots, key) => {
+    if (!roots.length) return key;
+    const all = roots.flatMap((r) => [...r.querySelectorAll("[data-edge]")]);
+    const cur = key && all.some((n) => n.dataset.edge === key) ? key : null;
+    for (const r of roots) r.classList.toggle("hover", !!cur);
+    for (const n of all) n.classList.toggle("hi", n.dataset.edge === cur);
+    return cur;
+  };
 
   class MetamodelEditor extends HTMLElement {
     constructor() {
@@ -1854,25 +1951,6 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       if (old) old.replaceWith(root); else canvas.prepend(root);
       this._applyHover();
     }
-    // real text widths for the state diagram (a canvas 2D context; the estimate when there is none)
-    _measure() {
-      if (this._mctx === undefined) {
-        const c = document.createElement("canvas");
-        this._mctx = c.getContext?.("2d") || null;
-        this._mcache = new Map();
-      }
-      if (!this._mctx) return undefined;
-      return (text, font, bold = false) => {
-        const k = `${bold ? 1 : 0}|${font}|${text}`;
-        let w = this._mcache.get(k);
-        if (w === undefined) {
-          this._mctx.font = `${bold ? 600 : 400} ${font}px system-ui, sans-serif`;
-          w = this._mctx.measureText(text).width;
-          this._mcache.set(k, w);
-        }
-        return w;
-      };
-    }
     // the panel under the canvas: the state diagram of the selected class with a workflow (Layout.workflowLayout at
     // the panel's width, measured text), hidden when the selection is anything else. The diagram fills the width;
     // below the width of the longest state name it scrolls (core:diagrams).
@@ -1891,7 +1969,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       let L = this._wfCache.get(key);
       if (!L) {
         const model = Layout.workflowModel(wf, this._lang());
-        L = Layout.workflowLayout(model.states, model.transitions, width, { measure: this._measure() });
+        L = Layout.workflowLayout(model.states, model.transitions, width, { measure: textMeasure() });
         this._wfCache.set(key, L);
       }
       const t = this.t;
@@ -1899,7 +1977,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         el("span", {}, `«workflow» ⟳ ${wf.state} · ${L.boxes.length} ${t.states}, ${Object.keys(wf.transitions || {}).length} ${t.transitions}`));
       const edit = this.readonly ? null : this._workflowEditor(cn, wf);
       const scroll = { top: body.scrollTop, left: body.scrollLeft };   // an edit re-renders the panel: keep where the user was
-      body.replaceChildren(head, this._workflowSvg(cn, L), ...(edit ? [edit] : []));
+      body.replaceChildren(head, workflowSvg(cn, L), ...(edit ? [edit] : []));
       body.scrollTop = scroll.top; body.scrollLeft = scroll.left;
       // the height the user dragged, else what the diagram (and the editing tables) need, up to half of the editor
       const wrapH = this.shadowRoot.querySelector(".wrap")?.clientHeight || 600;
@@ -1955,46 +2033,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
             el("option", { value: "", selected: !rv?.comment }, "—"), el("option", { value: "optional", selected: rv?.comment === "optional" }, t.optional), el("option", { value: "required", selected: rv?.comment === "required" }, t.required)))),
         el("p", { class: "hint" }, `${cn} · ${t.editHint}`));
     }
-    // the state diagram as SVG: states in their colour (thick border when final), connectors in the colour of the
-    // target state (dashed when timed) with a filled arrow head, dots at bus junctions, labels on a background.
-    // Every part carries data-edge="wf:<class>:<transition>" for the hover highlight.
-    _workflowSvg(cn, L) {
-      const root = svg("svg", { width: L.width + 2 * WF_PAD, height: L.height + WF_PAD, role: "img", "aria-label": `workflow ${cn}` });
-      const inner = svg("g", { transform: `translate(${WF_PAD},${WF_PAD / 2})` });
-      const pathD = (pts) => pts.map((q, i) => `${i ? "L" : "M"}${q.x},${q.y}`).join(" ");
-      for (const e of L.edges) {
-        const key = `wf:${cn}:${e.key}`;
-        for (const p of e.paths) {
-          inner.append(svg("path", { d: pathD(p), class: "ehit", "data-edge": key }));
-          inner.append(svg("path", { d: pathD(p), class: "wfe", stroke: e.color, "stroke-dasharray": e.timed ? "5 4" : null, "data-edge": key }));
-        }
-        for (const q of e.dots) inner.append(svg("circle", { cx: q.x, cy: q.y, r: 2.4, class: "wfdot", fill: e.color, "data-edge": key }));
-        inner.append(svg("polygon", { points: [e.arrow[0], e.arrow[2], e.arrow[3]].map((q) => `${q.x},${q.y}`).join(" "), class: "wfa", fill: e.color, "data-edge": key }));
-      }
-      for (const b of L.boxes) {
-        inner.append(svg("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 7, class: "wfs", stroke: b.color, "stroke-width": b.kind === "final" ? 3 : 1.5 }));
-        const text = svg("text", { x: b.x + b.w / 2, y: b.y + 9 + WF.font, "text-anchor": "middle", class: "wfst", fill: b.color });
-        b.lines.forEach((line, i) => text.append(svg("tspan", { x: b.x + b.w / 2, dy: i ? WF.font + 3 : 0 }, line)));
-        inner.append(text, svg("text", { x: b.x + b.w / 2, y: b.y + b.h - 6, "text-anchor": "middle", class: "wfkey" }, b.key));
-      }
-      for (const e of L.edges) {   // labels on top of the lines
-        const key = `wf:${cn}:${e.key}`, l = e.label;
-        inner.append(svg("rect", { x: l.x, y: l.y, width: l.w, height: l.h, rx: 3, class: "wfl-bg", stroke: e.color, "data-edge": key }));
-        const text = svg("text", { x: l.x + l.w / 2, y: l.y + WF.labelFont + 3, "text-anchor": "middle", class: "wfl", "data-edge": key });
-        l.lines.forEach((line, i) => text.append(svg("tspan", { x: l.x + l.w / 2, dy: i ? WF.labelFont + 3 : 0 }, line)));
-        inner.append(text);
-      }
-      root.append(inner);
-      return root;
-    }
-    _applyHover() {
-      const roots = [...this.shadowRoot.querySelectorAll(".canvas svg, .wfpanel svg")];
-      if (!roots.length) return;
-      const all = roots.flatMap((r) => [...r.querySelectorAll("[data-edge]")]);
-      if (this._hover && !all.some((n) => n.dataset.edge === this._hover)) this._hover = null;
-      for (const r of roots) r.classList.toggle("hover", !!this._hover);
-      for (const n of all) n.classList.toggle("hi", n.dataset.edge === this._hover);
-    }
+    _applyHover() { this._hover = applyHover([...this.shadowRoot.querySelectorAll(".canvas svg, .wfpanel svg")], this._hover); }
 
     _multSelect(f, onchange, disabled) {
       return el("select", {
@@ -2158,4 +2197,73 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
   }
 
   customElements.define("metamodel-editor", MetamodelEditor);
+
+  /* <workflow-view> — the state diagram of one workflow of behavior.json with the state a record is in: the box
+   * of the current state filled with its colour, the transitions leaving it at full strength, the others dimmed.
+   * Laid out at the element's width (again when it changes); below the width of the longest state name it scrolls
+   * horizontally (core:diagrams). No editing: the record pages of the app use it through
+   * src/components/modeler/workflow-view.tsx. */
+  class WorkflowView extends HTMLElement {
+    constructor() {
+      super();
+      this._wf = null;             // one workflow of behavior.json ({state, states, transitions, …})
+      this._cache = new Map();     // layouts per language and width
+      this._last = null;           // "<lang>|<width>|<state>" of the diagram drawn (no redraw when unchanged)
+      this._hover = null;
+      this._ro = null;
+      this.attachShadow({ mode: "open" });
+    }
+    static get observedAttributes() { return ["lang", "name", "state"]; }
+    attributeChangedCallback() { if (this.isConnected) this._render(); }
+    connectedCallback() {
+      const root = this.shadowRoot;
+      if (!root.querySelector(".wfview")) {
+        root.append(el("style", {}, viewCss), el("div", { class: "wfview" }));
+        root.addEventListener("pointerover", (ev) => {
+          const key = ev.target.closest?.("[data-edge]")?.dataset.edge || null;
+          if (key !== this._hover) { this._hover = key; this._applyHover(); }
+        });
+        this.addEventListener("pointerleave", () => { if (this._hover) { this._hover = null; this._applyHover(); } });
+      }
+      let pending = false;   // the width changed: a new layout (the height follows the diagram, so no loop)
+      this._ro = new ResizeObserver(() => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => { pending = false; this._render(); });
+      });
+      this._ro.observe(this);
+      this._render();
+    }
+    disconnectedCallback() { this._ro?.disconnect(); this._ro = null; }
+    get workflow() { return this._wf ? clone(this._wf) : null; }
+    set workflow(w) {
+      this._wf = w && typeof w === "object" ? clone(w) : null;
+      this._cache.clear();
+      this._last = null;
+      if (this.isConnected) this._render();
+    }
+    // the current state as a property too: React sets the property once the element is upgraded, the attribute before
+    get state() { return this.getAttribute("state"); }
+    set state(v) { if (v == null || v === "") this.removeAttribute("state"); else this.setAttribute("state", String(v)); }
+    _applyHover() { this._hover = applyHover([...this.shadowRoot.querySelectorAll("svg")], this._hover); }
+    _render() {
+      const body = this.shadowRoot.querySelector(".wfview");
+      if (!body) return;
+      if (!this._wf || !Object.keys(this._wf.states || {}).length) { body.replaceChildren(); this._last = null; return; }
+      const lang = (this.getAttribute("lang") || "it").slice(0, 2);
+      const width = Math.max(240, Math.floor(this.clientWidth) - 2 * WF_PAD);
+      const key = `${lang}|${width}`, state = this.getAttribute("state") || null, drawn = `${key}|${state}`;
+      if (drawn === this._last) return;
+      let L = this._cache.get(key);
+      if (!L) {
+        const model = Layout.workflowModel(this._wf, lang);
+        L = Layout.workflowLayout(model.states, model.transitions, width, { measure: textMeasure() });
+        this._cache.set(key, L);
+      }
+      body.replaceChildren(workflowSvg(this.getAttribute("name") || "", L, { current: state, focus: new Set(Layout.workflowFocus(L.edges, state)) }));
+      this._last = drawn;
+      this._applyHover();
+    }
+  }
+  if (!customElements.get("workflow-view")) customElements.define("workflow-view", WorkflowView);
 })();

@@ -966,6 +966,7 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
     editor.write_text(editor.read_text(encoding="utf-8").replace(VERSION_PLACEHOLDER, __version__), encoding="utf-8")
     copy(KIT_DIR / "next" / "metamodel-modeler.tsx", "src/components/modeler/metamodel-modeler.tsx")
     copy(KIT_DIR / "next" / "behavior-view.tsx", "src/components/modeler/behavior-view.tsx")
+    copy(KIT_DIR / "next" / "workflow-view.tsx", "src/components/modeler/workflow-view.tsx")
     copy(KIT_DIR / "next" / "metamodel-actions.ts", "src/lib/modeler/metamodel-actions.ts")
     copy(KIT_DIR / "next" / "access.ts", "src/lib/modeler/access.ts", overwrite=False)
     # the CLI travels with the app: model:* scripts work without the plugin
