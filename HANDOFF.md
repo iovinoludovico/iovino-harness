@@ -1,5 +1,5 @@
-# Handoff — modellatore: skill `behavior`, proposte dal prompt, applicazione dal web (PR via GitHub Actions)
-_Aggiornato: 2026-10-20 · branch `feat/modeler-apply-from-web` sopra `feat/modeler-propose-from-prompt` e `feat/modeler-behavior-skill` (6 commit sopra `main` `60932ed`, non pushati)_
+# Handoff — modellatore: dal modellatore web in produzione fino al rilascio (PR, db push, merge, deploy)
+_Aggiornato: 2026-10-20 · branch `feat/modeler-release-from-web` (2 commit sopra `main` `98c3c53`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -7,6 +7,19 @@ dettaglio di un record di un'entità con workflow mostra un div con il diagramma
 evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 
 ## Stato
+- `origin/main` è alla PR #27 (`98c3c53`): **core 0.17.0, modeler 0.28.1** (skill `behavior`, proposte dal prompt,
+  applicazione dal web). Branch locale `feat/modeler-release-from-web` (da unire con `/core:ship`): «Rivedi» e
+  «Conferma e rilascia» sulla riga con la PR in `/admin/model` (`proposalPullRequest`, `requestProposalRelease` in
+  `metamodel-actions.ts`; pannello con titolo, unibilità, file, corpo della PR), workflow
+  `kit/github/modeler-release.yml` (environment `modeler-release`: PR aperta/aggiornata/unibile, `supabase db reset`
+  + test + drift, stop su DDL distruttivo non commentato salvo `allow_destructive`, `migration list`/`db push
+  --db-url` con stop su migrazioni remote sconosciute o fuori ordine, `gh pr merge --squash` con `MODELER_GH_TOKEN`
+  perché un merge con `GITHUB_TOKEN` non avvia il deploy, attesa del run di deploy dello SHA del merge, `model:done
+  --write`, `model:track --merged/--deployed/--release-error`). Colonne `release_requested_at`, `release_error`,
+  `merged_at`, `deployed_at` nella stessa migrazione `_apply` (idempotente; non ancora installata in nessuna app).
+  Skill `install` §7, `apply`, `ship`, `db-push`, `deploy`, convenzioni, README, help. Provato nella sandbox in
+  modalità `db`: i quattro stati del rilascio e «Rivedi» fino a GitHub (401 con token finto). **Non provato**: un
+  rilascio vero (serve order-management con i secrets e una proposta di prova con migrazione innocua).
 - Branch `feat/modeler-apply-from-web` (il terzo in pila; da unire con `/core:ship`): in `/admin/model` di produzione
   il bottone «Applica (apre una PR)» (`requestProposalApply` in `metamodel-actions.ts`) manda un `repository_dispatch`
   (`MODELER_APPLY_REPO`/`MODELER_APPLY_TOKEN` nel pannello dell'app) al workflow `.github/workflows/modeler-apply.yml`
@@ -137,8 +150,7 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
    `cd ~/Documents/GitHub/modeler-sandbox && ANTHROPIC_API_KEY=… claude -p "/modeler:apply <file> --write" --output-format json
    --permission-mode dontAsk --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run *),Bash(git *)" --max-turns 40 --max-budget-usd 5`
    su una proposta di prova (`model:propose`); `total_cost_usd` tara `MODELER_APPLY_BUDGET` e la tabella in `install` §7.
-1. `/core:ship` dei tre branch in pila (`feat/modeler-behavior-skill`, `feat/modeler-propose-from-prompt`,
-   `feat/modeler-apply-from-web`: una PR per branch o una sola dall'ultimo; push, PR, merge su conferma); poi `/reload-plugins` e sugli
+1. `/core:ship` di `feat/modeler-release-from-web` (push, PR, merge su conferma); poi `/reload-plugins` e sugli
    altri computer `claude plugin update core@iovino-harness modeler@iovino-harness`. Prova nella sandbox:
    `/modeler:behavior show Task` e una reazione di prova («avvisa l'assegnatario quando il task torna in todo»):
    reazione, template, `sync`, `engine --write` senza passare da `model:migrate`.

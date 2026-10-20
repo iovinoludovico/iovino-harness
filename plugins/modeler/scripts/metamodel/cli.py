@@ -603,10 +603,30 @@ def _uuid(value: str) -> str:
 TRACK_SQL = """
 with t as (
   update public.model_change_requests
-     set pr_url = {pr}, apply_error = {error}, apply_finished_at = now()
-   where id = '{id}' returning id, status, pr_url, apply_error)
+     set {sets}
+   where id = '{id}' returning id, status, pr_url, apply_error, merged_at, deployed_at, release_error)
 select coalesce(json_agg(t), '[]') from t
 """
+
+
+def track_sql(proposal_id: str, *, pr: str | None = None, error: str | None = None, merged: bool = False,
+              deployed: bool = False, release_error: str | None = None) -> str:
+    """The update of one proposal with the outcome of an apply run (PR link or error) or of a release run
+    (merged, deployed, or why it failed). Only the fields given are written; text is escaped for inlining."""
+    lit = lambda v: "'" + str(v).replace("'", "''") + "'"  # noqa: E731
+    sets: list[str] = []
+    if pr is not None or error is not None:
+        sets += [f"pr_url = {lit(pr) if pr is not None else 'null'}",
+                 f"apply_error = {lit(error) if error is not None else 'null'}", "apply_finished_at = now()"]
+    if merged:
+        sets += ["merged_at = now()", "release_error = null"]
+    if deployed:
+        sets += ["deployed_at = now()", "release_error = null"]
+    if release_error is not None:
+        sets += [f"release_error = {lit(release_error)}"]
+    if not sets:
+        raise M.ModelError("track: nothing to write (pass --pr, --error, --merged, --deployed or --release-error)")
+    return TRACK_SQL.format(id=_uuid(proposal_id), sets=", ".join(sets))
 
 
 class NoProductionDb(Exception):
@@ -717,8 +737,8 @@ def cmd_track(a) -> int:
     shows it next to the proposal. Used by the `modeler-apply` workflow; the row keeps its status until `done`."""
     meta_path = find_metamodel(a.path)
     pid = _uuid(a.id)
-    lit = lambda v: "null" if v is None else "'" + str(v).replace("'", "''") + "'"  # noqa: E731
-    sql = TRACK_SQL.format(id=pid, pr=lit(a.pr), error=lit(a.error))
+    sql = track_sql(pid, pr=a.pr, error=a.error, merged=getattr(a, "merged", False),
+                    deployed=getattr(a, "deployed", False), release_error=getattr(a, "release_error", None))
     if not a.write:
         print(sql.strip())
         print("\n(dry run: pass --write to update model_change_requests)")
@@ -733,7 +753,9 @@ def cmd_track(a) -> int:
         print(f"proposal {pid} not found in model_change_requests", file=sys.stderr)
         return 1
     r = rows[0]
-    print(f"{r['id']}: status {r['status']}, pr_url {r.get('pr_url') or '-'}, apply_error {r.get('apply_error') or '-'}")
+    print(f"{r['id']}: status {r['status']}, pr_url {r.get('pr_url') or '-'}, apply_error {r.get('apply_error') or '-'}, "
+          f"merged_at {r.get('merged_at') or '-'}, deployed_at {r.get('deployed_at') or '-'}, "
+          f"release_error {r.get('release_error') or '-'}")
     return 0
 
 
@@ -1128,6 +1150,7 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
     # apply from the web: the workflow and its rules belong to the app (adapted, written once)
     copy(KIT_DIR / "github" / "modeler-apply.yml", ".github/workflows/modeler-apply.yml", overwrite=False)
     copy(KIT_DIR / "github" / "modeler-apply-rules.md", ".github/modeler-apply-rules.md", overwrite=False)
+    copy(KIT_DIR / "github" / "modeler-release.yml", ".github/workflows/modeler-release.yml", overwrite=False)
     pkg = target / "package.json"
     data = json.loads(pkg.read_text(encoding="utf-8"))
     scripts = data.setdefault("scripts", {})
@@ -1390,7 +1413,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("id", help="the proposal (uuid)")
     s.add_argument("--path", help="metamodel file or app directory")
     s.add_argument("--pr", help="URL of the pull request opened for it")
-    s.add_argument("--error", help="why the run failed (e.g. the URL of the workflow run)")
+    s.add_argument("--error", help="why the apply run failed (e.g. the URL of the workflow run)")
+    s.add_argument("--merged", action="store_true", help="the release workflow merged the pull request")
+    s.add_argument("--deployed", action="store_true", help="the release workflow saw the deploy of the merge succeed")
+    s.add_argument("--release-error", dest="release_error", help="why the release run stopped")
     s.add_argument("--db", help="DSN (default: MODELER_PROD_DB or the Supabase project linked with `supabase link`)")
     s.add_argument("--write", action="store_true", help="update model_change_requests (otherwise print the SQL)")
     s.set_defaults(fn=cmd_track)

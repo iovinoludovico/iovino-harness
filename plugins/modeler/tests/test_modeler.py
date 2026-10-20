@@ -489,6 +489,12 @@ class AppTests(unittest.TestCase):
         # apply from the web: the workflow and its rules (adapted: the app owns them) and the columns of the outcome
         self.assertIn(".github/workflows/modeler-apply.yml", written)
         self.assertIn(".github/modeler-apply-rules.md", written)
+        self.assertIn(".github/workflows/modeler-release.yml", written)
+        rel = M.import_yaml().safe_load((self.app / ".github/workflows/modeler-release.yml").read_text())
+        self.assertEqual(set((rel.get("on", rel.get(True))).keys()), {"repository_dispatch", "workflow_dispatch"})
+        self.assertEqual(rel["jobs"]["release"]["environment"], "modeler-release")
+        for needle in ("db push --db-url", "gh pr merge", "model:done -- --write", "--merged --write", "--deployed --write"):
+            self.assertIn(needle, (self.app / ".github/workflows/modeler-release.yml").read_text())
         self.assertTrue(any(w.endswith("_model_change_requests_apply.sql") for w in written))
         wf = (self.app / ".github/workflows/modeler-apply.yml").read_text()
         for needle in ("repository_dispatch", "workflow_dispatch", "model:pull -- --id", "model:track", "--max-budget-usd",
@@ -732,7 +738,9 @@ class AppTests(unittest.TestCase):
         (self.app / "public/modeler/metamodel-editor.js").write_text("// old\n")
         (self.app / "tools/modeler/VERSION").write_text("0.0.1\n")
         (self.app / ".github/workflows/modeler-apply.yml").write_text("# adapted workflow\n")
+        (self.app / ".github/workflows/modeler-release.yml").write_text("# adapted release\n")
         written = cli.install(self.app)
+        self.assertEqual((self.app / ".github/workflows/modeler-release.yml").read_text(), "# adapted release\n")
         self.assertEqual((self.app / "src/lib/modeler/access.ts").read_text(), "// adapted to the app\n")
         self.assertEqual((self.app / ".github/workflows/modeler-apply.yml").read_text(), "# adapted workflow\n")
         self.assertFalse(any(w.endswith("_model_change_requests_apply.sql") for w in written))   # migration once
@@ -819,6 +827,13 @@ class AppTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             cli.cmd_track(argparse.Namespace(path=str(self.app), id=pid, pr=None, error="run failed: it's gone", db=None, write=False))
         self.assertIn("apply_error = 'run failed: it''s gone'", out.getvalue())
+        # the release workflow writes merged / deployed / its error, each alone
+        self.assertIn("set merged_at = now(), release_error = null\n", cli.track_sql(pid, merged=True))
+        self.assertIn("set deployed_at = now(), release_error = null\n", cli.track_sql(pid, deployed=True))
+        self.assertIn("set release_error = 'PR not mergeable: BEHIND'\n", cli.track_sql(pid, release_error="PR not mergeable: BEHIND"))
+        self.assertNotIn("set pr_url", cli.track_sql(pid, merged=True))
+        with self.assertRaises(M.ModelError):
+            cli.track_sql(pid)
 
     def test_pull_without_a_password_stops_before_psql(self):
         dsn = "postgresql://postgres.abcref@aws-0-eu-central-1.pooler.supabase.com:5432/postgres"

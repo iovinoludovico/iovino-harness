@@ -1,0 +1,186 @@
+# Releases the pull request opened by `modeler-apply` for a production proposal: the same steps the developer
+# does by hand with /core:db-push and /core:ship, in the same order, with the same stops.
+# Started by "Confirm and release" in /admin/model (repository_dispatch from the app) or by hand from the Actions
+# tab (workflow_dispatch: proposal id, PR number, allow_destructive).
+#
+# What it does: checks the PR is open, up to date with main and mergeable; rebuilds the database locally from the
+# migrations (`supabase db reset`, `supabase test db` if the app has tests, `model:drift` aligned); refuses
+# destructive DDL that is not commented out unless `allow_destructive` is true; compares the migrations with the
+# production database (unknown remote migrations or out-of-order local ones stop the run); applies the new ones
+# (`supabase db push --db-url`); merges the PR (squash) with MODELER_GH_TOKEN, so the push on main starts the deploy;
+# waits for the deploy run of the merge commit; closes the proposal (`model:done --write`). Progress and errors go
+# on the proposal row (`model:track`): the admin page shows them.
+#
+# Secrets (environment `modeler-release`; "Required reviewers" on it makes every release wait for a person):
+#   MODELER_PROD_DB    DSN of the production database with the password (migrations are applied through it)
+#   MODELER_GH_TOKEN   fine-grained token of a maintainer: Contents + Pull requests: write on this repository only
+#                      (a merge made with the default GITHUB_TOKEN does not trigger the deploy workflow)
+# Installed by the modeler (`/modeler:install`) once; the app owns it from then on.
+name: modeler-release
+
+on:
+  repository_dispatch:
+    types: [modeler-release]
+  workflow_dispatch:
+    inputs:
+      proposal_id:
+        description: "id of the proposal (model_change_requests.id)"
+        required: true
+      pr_number:
+        description: "number of the pull request opened by modeler-apply"
+        required: true
+      allow_destructive:
+        description: "release even if the migrations contain uncommented drop / type change / truncate"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: modeler-release
+  cancel-in-progress: false
+
+env:
+  PROPOSAL_ID: ${{ github.event.client_payload.proposal_id || inputs.proposal_id }}
+  PR: ${{ github.event.client_payload.pr_number || inputs.pr_number }}
+  ALLOW_DESTRUCTIVE: ${{ github.event.client_payload.allow_destructive || inputs.allow_destructive || 'false' }}
+  MODELER_PROD_DB: ${{ secrets.MODELER_PROD_DB }}
+  GH_TOKEN: ${{ secrets.MODELER_GH_TOKEN }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: modeler-release
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.MODELER_GH_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: PostgreSQL client (model:track / model:done)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: The pull request must be open, on main and mergeable
+        id: pr
+        run: |
+          json=$(gh pr view "$PR" --json state,mergeable,mergeStateStatus,headRefName,baseRefName,url)
+          state=$(jq -r .state <<<"$json"); mergeable=$(jq -r .mergeable <<<"$json")
+          mstate=$(jq -r .mergeStateStatus <<<"$json"); base=$(jq -r .baseRefName <<<"$json")
+          echo "head=$(jq -r .headRefName <<<"$json")" >> "$GITHUB_OUTPUT"
+          echo "url=$(jq -r .url <<<"$json")" >> "$GITHUB_OUTPUT"
+          if [ "$state" != "OPEN" ] || [ "$base" != "main" ] || [ "$mergeable" != "MERGEABLE" ] \
+             || [ "$mstate" = "BEHIND" ] || [ "$mstate" = "DIRTY" ] || [ "$mstate" = "BLOCKED" ]; then
+            msg="PR #$PR not releasable: state $state, base $base, mergeable $mergeable, merge state $mstate (update or fix it on GitHub)"
+            echo "$msg" >&2; echo "reason=$msg" >> "$GITHUB_OUTPUT"; exit 1
+          fi
+
+      - name: Checkout the pull request branch
+        run: gh pr checkout "$PR"
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Rebuild the database locally from the migrations
+        run: |
+          supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector
+          supabase db reset
+          if [ -d supabase/tests ]; then supabase test db; fi
+          npm run model:drift
+
+      - name: Migrations in the pull request
+        id: migrations
+        run: |
+          files=$(git diff --name-only "origin/main...HEAD" -- supabase/migrations/ | sort)
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"; echo "$files" >> "$GITHUB_OUTPUT"; echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "Migrations: ${files:-none}"
+          if [ -n "$files" ] && [ "$ALLOW_DESTRUCTIVE" != "true" ]; then
+            # destructive DDL that is not commented out: a person decides, from the Actions tab (allow_destructive)
+            if grep -nEi '^\s*(drop |truncate |alter table [^-]* (drop |alter column [^-]* type ))' $files; then
+              msg="PR #$PR has uncommented destructive DDL: release it from the Actions tab with allow_destructive"
+              echo "$msg" >&2; echo "reason=$msg" >> "$GITHUB_OUTPUT"; exit 1
+            fi
+          fi
+
+      - name: Apply the migrations to the production database
+        id: dbpush
+        if: steps.migrations.outputs.files != ''
+        run: |
+          list=$(supabase migration list --db-url "$MODELER_PROD_DB")
+          echo "$list"
+          # a remote-only migration (the cloud has what the repository does not) or a local one older than the last
+          # remote (would need --include-all) stops the release: the developer looks first
+          if echo "$list" | awk -F'|' 'NR>2 && $1 ~ /^ *$/ && $2 !~ /^ *$/ {found=1} END {exit !found}'; then
+            msg="the production database has migrations the repository does not: check with supabase migration list"
+            echo "$msg" >&2; echo "reason=$msg" >> "$GITHUB_OUTPUT"; exit 1
+          fi
+          last_remote=$(echo "$list" | awk -F'|' 'NR>2 && $2 !~ /^ *$/ {gsub(/ /,"",$2); r=$2} END {print r}')
+          pending=$(echo "$list" | awk -F'|' 'NR>2 && $1 !~ /^ *$/ && $2 ~ /^ *$/ {gsub(/ /,"",$1); print $1}')
+          for v in $pending; do
+            if [ -n "$last_remote" ] && [ "$v" \< "$last_remote" ]; then
+              msg="local migration $v is older than the last remote one ($last_remote): out of order, not released automatically"
+              echo "$msg" >&2; echo "reason=$msg" >> "$GITHUB_OUTPUT"; exit 1
+            fi
+          done
+          supabase db push --db-url "$MODELER_PROD_DB" --dry-run
+          supabase db push --db-url "$MODELER_PROD_DB"
+          supabase migration list --db-url "$MODELER_PROD_DB"
+
+      - name: Merge the pull request
+        id: merge
+        run: |
+          gh pr merge "$PR" --squash --delete-branch
+          npm run model:track -- "$PROPOSAL_ID" --merged --write
+          git fetch origin main
+          echo "sha=$(git rev-parse origin/main)" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the deploy of the merge commit
+        id: deploy
+        run: |
+          sha="${{ steps.merge.outputs.sha }}"
+          deadline=$((SECONDS + 900)); seen=0
+          while [ $SECONDS -lt $deadline ]; do
+            runs=$(gh run list --commit "$sha" --json databaseId,name,status,conclusion,url)
+            n=$(jq length <<<"$runs")
+            if [ "$n" -gt 0 ]; then
+              seen=1
+              if [ "$(jq -r '[.[] | select(.status != "completed")] | length' <<<"$runs")" = "0" ]; then
+                echo "$runs" | jq -r '.[] | "\(.name): \(.conclusion) \(.url)"'
+                failed=$(jq -r '[.[] | select(.conclusion != "success")] | length' <<<"$runs")
+                if [ "$failed" != "0" ]; then
+                  msg="deploy of $sha failed (migrations applied and PR merged: see the run, rollback per core:deploy)"
+                  echo "$msg" >&2; echo "reason=$msg" >> "$GITHUB_OUTPUT"; exit 1
+                fi
+                break
+              fi
+            elif [ $SECONDS -gt 120 ] && [ $seen = 0 ]; then
+              echo "no workflow run for $sha after 2 minutes: the app has no deploy on main, going on"; break
+            fi
+            sleep 30
+          done
+
+      - name: Close the proposal
+        run: |
+          git switch main && git pull --ff-only
+          npm run model:done -- --write
+          npm run model:track -- "$PROPOSAL_ID" --deployed --write
+          echo "### Released PR ${{ steps.pr.outputs.url }} · merge ${{ steps.merge.outputs.sha }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record the failure on the proposal
+        if: failure()
+        run: |
+          reason="${{ steps.pr.outputs.reason || steps.migrations.outputs.reason || steps.dbpush.outputs.reason || steps.deploy.outputs.reason }}"
+          npm run model:track -- "$PROPOSAL_ID" --release-error "${reason:-release failed}: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --write

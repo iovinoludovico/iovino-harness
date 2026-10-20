@@ -48,7 +48,9 @@ e `gh pr merge`: è voluto).
 ## 5. Merge (solo dopo conferma)
 - Riassumi: PR, controlli verdi, commit che entrano in `main`, e se l'app ha un deploy automatico su `main`
   (GitHub Actions, Watchtower): il merge lo avvia.
-- Chiedi la conferma con AskUserQuestion (merge / non ora). Senza un sì esplicito non fare il merge.
+- Chiedi la conferma con AskUserQuestion (merge / non ora). Senza un sì esplicito non fare il merge. (In un'app
+  con il modellatore la PR di una proposta può essere rilasciata dall'admin con «Conferma e rilascia» in
+  `/admin/model`: il workflow `modeler-release` fa questi stessi passi; se la PR è già in rilascio, non unirla a mano.)
 - `gh pr merge <n> --squash --delete-branch` (o `--merge` se richiesto), poi `git switch main && git pull --ff-only`.
 - Se l'app ha migrazioni nuove non ancora in produzione, ricorda `/core:db-push` prima del merge, non dopo.
 - Nel resoconto, per ciò che resta da fare sul server (variabili del pannello, proxy host, rollback, Watchtower che

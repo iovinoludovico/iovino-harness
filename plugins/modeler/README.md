@@ -30,7 +30,10 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   start reminds the developer of the proposals in `.modeler/proposals/`. In production the page also has
   **Apply (opens a PR)**: a `repository_dispatch` starts the app's `modeler-apply` workflow (installed with the kit),
   which pulls that proposal (`model:pull --id`), runs Claude Code headless on it (budget-capped, API key) and opens
-  the pull request, whose link comes back on the row (`model:track`); merge, `db-push` and `done` stay manual.
+  the pull request, whose link comes back on the row (`model:track`). **Review** shows the PR (its body is the
+  summary Claude wrote) and **Confirm and release** starts `modeler-release`: the same steps as `/core:db-push`
+  and `/core:ship` (local rebuild and drift, no uncommented destructive DDL, `db push --db-url`, squash merge with
+  a maintainer token, wait for the deploy of the merge, `model:done`), progress on the row.
   A change proposed from the prompt takes
   the same road: `/modeler:metamodel` edits a draft in `.modeler/drafts/` and `npm run model:propose` saves it as a
   pending proposal (`author: claude`, «from the prompt»), so the modeler shows it before it is applied.
@@ -107,7 +110,7 @@ python3 scripts/modeler.py install ~/code/my-app
 npm run model:validate && npm run model:sync
 npm run model:propose -- --note "phone of a person"  # .modeler/drafts/domain.ecore.yaml -> pending proposal
 npm run model:pull -- --id <uuid>                     # one production proposal (what the modeler-apply workflow does)
-npm run model:track -- <uuid> --pr <url> --write      # the PR link on that proposal (or --error "…")
+npm run model:track -- <uuid> --pr <url> --write      # the PR link on that proposal (or --error "…", --merged, --deployed, --release-error "…")
 npm run model:migrate                                # preview the migration draft (from HEAD)
 npm run model:migrate -- --name add_phone --write    # save it in supabase/migrations/, then resolve TODO(modeler)
 npm run model:drift

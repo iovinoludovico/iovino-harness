@@ -251,7 +251,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted);max-width:72ch}
   <h2><span class="n">3</span>Le proposte dal modellatore web</h2>
   <p class="lead">Un salvataggio in <code>/admin/model</code> non cambia mai l'app in esercizio: è una proposta, in sviluppo un file e in produzione una riga, applicata dal repository con una patch riga per riga.</p>
   <figure>
-  <svg viewBox="0 0 1000 345" role="img" aria-label="Flusso delle proposte: l'editor /admin/model salva in sviluppo un file in .modeler/proposals e in produzione una riga in model_change_requests; il bottone Applica avvia il workflow modeler-apply che apre la PR con Claude Code; model:pull scarica la riga; /modeler:apply riscrive solo le righe cambiate di domain.ecore.yaml e behavior.yaml; seguono migrazione e codice, /core:db-push, deploy e model:done che segna la riga applied.">
+  <svg viewBox="0 0 1000 345" role="img" aria-label="Flusso delle proposte: l'editor /admin/model salva in sviluppo un file in .modeler/proposals e in produzione una riga in model_change_requests; il bottone Applica avvia il workflow modeler-apply che apre la PR con Claude Code e Conferma e rilascia avvia modeler-release (db push, merge, deploy, done); model:pull scarica la riga; /modeler:apply riscrive solo le righe cambiate di domain.ecore.yaml e behavior.yaml; seguono migrazione e codice, /core:db-push, deploy e model:done che segna la riga applied.">
     <defs>
       <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
       <marker id="a3h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
@@ -293,7 +293,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted);max-width:72ch}
     <text class="t s" x="500" y="279">controlli, anteprima, conferma</text>
     <rect class="box" x="230" y="240" width="160" height="52" rx="3"/>
     <text class="t m" x="310" y="262">ship → deploy</text>
-    <text class="t s" x="310" y="279">PR, CI, merge confermato</text>
+    <text class="t s" x="310" y="279">PR, merge confermato · o «Conferma e rilascia»</text>
     <rect class="box" x="40" y="240" width="160" height="52" rx="3"/>
     <text class="t m" x="120" y="262">model:done --write</text>
     <text class="t s" x="120" y="279">archivia la proposta</text>

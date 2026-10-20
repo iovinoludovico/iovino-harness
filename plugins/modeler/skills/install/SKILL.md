@@ -60,8 +60,9 @@ rivedilo **con l'utente**:
   «Applica» su una proposta di produzione avvia il workflow `modeler-apply`),
 - `supabase/migrations/<ts>_model_change_requests_apply.sql` (solo la prima volta: le colonne `pr_url`, `apply_error`,
   `apply_requested_at`, `apply_finished_at` dell'esito di un'applicazione dal web),
-- `.github/workflows/modeler-apply.yml` e `.github/modeler-apply-rules.md` (solo se mancano: il workflow che applica
-  una proposta di produzione con Claude Code e apre la PR, e le regole del run; sezione 7),
+- `.github/workflows/modeler-apply.yml`, `.github/modeler-apply-rules.md` e `.github/workflows/modeler-release.yml`
+  (solo se mancano: il workflow che applica una proposta di produzione con Claude Code e apre la PR, le regole del
+  run, e il workflow che rilascia la PR confermata dal modellatore; sezione 7),
 - `src/lib/modeler/access.ts` (solo se manca: chi è admin e quale client Supabase usare),
 - `src/lib/modeler/metamodel.json` (il metamodello letto dalla pagina),
 - `docs/DOMAIN.md` (la descrizione del dominio generata dal metamodello; si rigenera con `npm run model:sync`).
@@ -176,9 +177,18 @@ action `requestProposalApply` manda un `repository_dispatch` al repository GitHu
 (`claude -p "/modeler:apply <file>" --output-format json --permission-mode dontAsk --max-budget-usd …`, regole in
 `.github/modeler-apply-rules.md`), fa push del branch `model/<id8>`, apre la PR e scrive il link sulla riga
 (`npm run model:track -- <uuid> --pr <url> --write`); se il run fallisce scrive l'errore e la pagina offre «Riprova».
-Restano manuali, per scelta: la revisione della PR, `/core:db-push` prima del merge, il merge (il deploy parte da
-`main`) e `npm run model:done -- --write` dopo il deploy. I drop e i cambi di tipo restano commentati nella
-migrazione: li elenca la PR.
+Sulla riga con la PR, «Rivedi» mostra la PR come la descrive GitHub (titolo, file cambiati, unibilità e il corpo
+scritto da Claude: cosa cambia, `TODO(modeler)` lasciati, costo) e «Conferma e rilascia» avvia il workflow
+`.github/workflows/modeler-release.yml`, che fa gli stessi passi di `/core:db-push` e `/core:ship` §5, con le stesse
+fermate: PR aperta, su `main`, aggiornata e unibile; database locale ricostruito dalle migrazioni
+(`supabase db reset`, `supabase test db` se ci sono test, `model:drift` aligned); **DDL distruttivo non commentato →
+si ferma** (si rilascia solo dalla scheda Actions con l'input `allow_destructive`); migrazioni solo remote o fuori
+ordine → si ferma; `supabase db push --db-url` (prima il database, poi il codice); `gh pr merge --squash` con
+`MODELER_GH_TOKEN` (il push su `main` avvia il deploy); attesa del run di deploy dello SHA del merge (15 min; un
+deploy fallito → errore sulla riga, migrazione già applicata e PR unita: rollback secondo `core:deploy`);
+`npm run model:done -- --write` chiude la proposta. La riga mostra «rilascio in corso», «unita, deploy in corso»,
+«rilascio fallito» con «Riprova». I drop e i cambi di tipo restano commentati nella migrazione: li elenca la PR, e il
+rilascio dal modellatore non li applica mai.
 - Da impostare una volta, nel repository GitHub dell'app, nell'environment `modeler-apply` (Settings →
   Environments; il job gira lì e GitHub lo crea al primo run se manca; con «Required reviewers» ogni run aspetta
   l'approvazione di una persona prima di spendere) o nei secrets del repository (Settings → Secrets and variables →
@@ -187,11 +197,18 @@ migrazione: li elenca la PR.
   variabili facoltative `MODELER_APPLY_MODEL` (default `claude-opus-5-5`), `MODELER_APPLY_BUDGET` (dollari per run,
   default 10), `MODELER_HARNESS` (marketplace, default `iovinoludovico/iovino-harness`; se il repository dell'harness
   è privato il passo «Claude Code and the modeler plugin» va adattato con un token).
+- Per il rilascio: environment `modeler-release` con **«Required reviewers»** (la conferma umana fuori dall'app: il
+  run aspetta l'approvazione su GitHub prima di toccare il database di produzione) e il secret `MODELER_GH_TOKEN`,
+  token fine-grained di chi può unire su `main` con Contents + Pull requests: write su quel solo repository (serve
+  perché un merge fatto con `GITHUB_TOKEN` non avvia il workflow di deploy); con la branch protection su `main`,
+  il proprietario del token deve essere tra chi può unire. `MODELER_PROD_DB` serve anche qui (`db push --db-url`).
 - Nel pannello dell'app (Docker Manager, come `DATABASE_URL`; skill `core:deploy`): `MODELER_APPLY_REPO`
-  (`owner/repo`) e `MODELER_APPLY_TOKEN`, un token fine-grained con il solo permesso Contents: write su quel
-  repository (serve al `repository_dispatch`). Senza, il bottone spiega cosa manca.
+  (`owner/repo`) e `MODELER_APPLY_TOKEN`, un token fine-grained con Contents: write (i `repository_dispatch`) e
+  Pull requests: read («Rivedi») su quel repository. Senza, il bottone spiega cosa manca.
 - Costo per run (stima; il valore reale è `total_cost_usd` nel riepilogo del job): modifica piccola (attributo,
   relazione, letterale) 2–5 $ con Opus 5.5, 1–2,5 $ con Sonnet 5.5; media (classe nuova con tabella, policy, form,
   pagina) 8–20 $ / 4–10 $. `MODELER_APPLY_BUDGET` ferma il run oltre la soglia (la riga mostra l'errore, nessuna PR).
-- Prova: Actions → `modeler-apply` → «Run workflow» con l'id di una proposta di prova; la PR va chiusa senza merge.
-  Il workflow è dell'app: `install` non lo sovrascrive (adattalo liberamente, es. i servizi di `supabase start`).
+- Prova: Actions → `modeler-apply` → «Run workflow» con l'id di una proposta di prova; poi, per il rilascio, una
+  proposta con una migrazione innocua e `modeler-release` → «Run workflow» (id, numero della PR); la prima volta con
+  il reviewer attivo. I workflow sono dell'app: `install` non li sovrascrive (adattali liberamente, es. i servizi
+  di `supabase start`).
