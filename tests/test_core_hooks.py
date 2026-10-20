@@ -89,13 +89,17 @@ class GuardBashTests(unittest.TestCase):
                   "cat .env", "cat app/.env.local", "supabase db reset", "supabase db push", "supabase db push --linked",
                   "supabase link --project-ref abc", "docker compose down -v",
                   "psql -c 'select 1' && psql -c \"DROP TABLE x\"", "git commit --no-verify -m x",
-                  "git push --force-with-lease origin feat/x", "psql -c \"DELETE FROM users\""]:
+                  "git push --force-with-lease origin feat/x", "psql -c \"DELETE FROM users\"",
+                  "supabase db query --linked \"update public.model_change_requests set status = 'pulled' where id = 'x'\"",
+                  "supabase db query --linked -o json \"insert into t values (1)\""]:
             self.check(c, "ask")
 
     def test_allowed(self):
         for c in ["git status", "npm test", "ls -la", "git commit -m 'fix: do not git push here'",
                   "cat .env.example", "rm build.log", "git log --oneline | head", "pytest -q",
-                  "supabase db push --dry-run", "supabase migration list --linked"]:
+                  "supabase db push --dry-run", "supabase migration list --linked",
+                  "supabase db query --linked -o json \"select id, status from public.model_change_requests\"",
+                  "supabase db query --local \"select count(*) from orders\""]:
             self.check(c, "none")
 
 

@@ -6,6 +6,7 @@ database where the migrations were applied, or any DSN) through `psql`.
 
 from __future__ import annotations
 
+import html
 import json
 import re
 import subprocess
@@ -107,11 +108,60 @@ def _query_json(dsn: str, sql: str) -> Any:
     try:
         out = subprocess.run(["psql", dsn, "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", sql],
                              capture_output=True, text=True, timeout=60)
-    except FileNotFoundError as exc:
-        raise DbError("psql not found: install the PostgreSQL client") from exc
+    except FileNotFoundError:
+        return cli_query(sql, db_url=dsn)                    # no psql: the Supabase CLI
     if out.returncode != 0:
         raise DbError(out.stderr.strip() or "psql failed")
     return json.loads(out.stdout.strip())
+
+
+def cli_query(sql: str, *, linked: bool = False, db_url: str | None = None, cwd: Any = None) -> Any:
+    """`supabase db query -o json` when psql is not installed. `--linked` goes through the Management API with
+    the login token (`supabase login` or SUPABASE_ACCESS_TOKEN: no database password), `--db-url` with an explicit
+    DSN. Every query of the modeler returns one row with one JSON column: that value is returned. Inside an agent
+    (Claude Code sets CLAUDECODE) the CLI wraps the rows in {rows, boundary, warning} and HTML-escapes the strings:
+    unwrapped and unescaped here."""
+    if not linked and not db_url:
+        raise DbError("no database: pass --db <DSN> or link the project (`supabase link`)")
+    cmd = ["supabase", "db", "query", "-o", "json", *(["--linked"] if linked else ["--db-url", str(db_url)]), sql]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=str(cwd) if cwd else None)
+    except FileNotFoundError as exc:
+        raise DbError("neither psql nor the Supabase CLI is installed: install the PostgreSQL client or `supabase`") from exc
+    if out.returncode != 0:
+        raise DbError(out.stderr.strip() or out.stdout.strip() or "supabase db query failed")
+    text = out.stdout.strip()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:                               # a diagnostic line before the payload
+        starts = [i for i in (text.find("["), text.find("{")) if i >= 0]
+        if not starts:
+            raise DbError(f"supabase db query: no JSON in the output: {text[:200]}")
+        data = json.loads(text[min(starts):])
+    escaped = False
+    if isinstance(data, dict) and "rows" in data:              # the agent-mode envelope
+        data, escaped = data["rows"], True
+    if isinstance(data, list):
+        if not data:
+            return None
+        if isinstance(data[0], dict) and len(data[0]) == 1:    # one row, one JSON column
+            data = next(iter(data[0].values()))
+    if isinstance(data, str) and data[:1] in "[{":             # a JSON column returned as text
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            pass
+    return _unescape_html(data) if escaped else data
+
+
+def _unescape_html(value: Any) -> Any:
+    if isinstance(value, str):
+        return html.unescape(value)
+    if isinstance(value, list):
+        return [_unescape_html(v) for v in value]
+    if isinstance(value, dict):
+        return {html.unescape(str(k)): _unescape_html(v) for k, v in value.items()}
+    return value
 
 
 def _check_schema(schema: str) -> None:

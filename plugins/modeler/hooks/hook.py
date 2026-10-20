@@ -135,8 +135,10 @@ def session(data: dict) -> int:
         if installed is None:
             lines.append("The web modeler is not installed in this app yet: /modeler:install.")
         elif installed != __version__:
-            lines.append(f"The app ships modeler {installed}, the plugin is {__version__}: "
-                         "upgrade it with /modeler:install.")
+            lines.append(f"The app ships modeler {installed}, the plugin is {__version__}: upgrade it with "
+                         "/modeler:install (the skill first checks that the plugin itself is current; if not: "
+                         "`claude plugin marketplace update iovino-harness && claude plugin update modeler@iovino-harness`, "
+                         "then /reload-plugins).")
         if (root / BEHAVIOR_FILE).exists():
             lines.append(f"Behaviour model: {root / BEHAVIOR_FILE} (roles, derivations, workflows, events, reactions), "
                          "written on the concepts of the metamodel and checked against it by `npm run model:validate`.")

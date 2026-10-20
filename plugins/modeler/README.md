@@ -124,7 +124,8 @@ Eclipse EMF and Epsilon.
 
 ## Requirements
 Python 3.10+ (PyYAML if installed, else the vendored pure-Python copy in `scripts/vendor`); `psql` for
-`reverse`, `drift`, `pull` and `done`. `pull` and `done` connect to the Supabase project linked with
+`reverse`, `drift`, `pull` and `done` (without psql they run `supabase db query -o json`: `--linked` through the
+Management API with the login token for `pull`/`done`, `--db-url` otherwise). `pull` and `done` connect to the Supabase project linked with
 `supabase link` (or `MODELER_PROD_DB`, or `--db`); psql takes the password from `SUPABASE_DB_PASSWORD` or `~/.pgpass`, or asks for it in a real terminal (not from
 Claude Code: its tools and `! …` commands have none, and the CLI then stops with the `~/.pgpass` line to add).
 

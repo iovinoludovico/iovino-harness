@@ -24,6 +24,11 @@ e `gh pr merge`: è voluto).
 - Test, lint e typecheck che il `CLAUDE.md` del progetto prevede. Se falliscono, non pubblicare: riporta l'errore.
 - Se il repository ha `scripts/release.py` (repository harness): `python3 scripts/release.py`, poi `--write`, che crea
   il commit `chore(release): …`. Senza, il pre-push blocca.
+- App con Supabase cloud collegato (`supabase/.temp/project-ref`): `supabase migration list --linked`. Se il branch
+  porta migrazioni non ancora remote, esegui qui i punti 2-4 della skill `core:db-push` (pre-controlli, elenco,
+  rischi) e chiedi **una sola conferma** «migrazioni in produzione + push e PR»; con il sì applica le migrazioni
+  (`supabase db push`) e prosegui. Prima il database, poi il codice: non pubblicare codice che usa migrazioni non
+  ancora applicate.
 
 ## 3. Push e pull request
 - Mostra in un blocco ```text l'elenco `git log --oneline origin/main..HEAD`: è ciò che verrà pubblicato.
@@ -51,6 +56,15 @@ e `gh pr merge`: è voluto).
   istruzioni SSH o un `.env` da copiare.
 - Se il merge avvia il primo deploy, o la PR tocca Auth, dominio o infrastruttura (proxy, compose, workflow),
   proponi `/core:security-audit` appena la produzione è aggiornata.
+- App con un workflow di deploy su `main`: attendi il run **dello SHA del merge**, non l'ultimo run (quello del merge
+  precedente, o un run ancora in coda, inganna `gh run watch`): `sha=$(git rev-parse origin/main)`, poi in polling
+  ogni 30 s per al massimo 15 min `gh run list --commit "$sha" --json databaseId,name,status,conclusion,url` finché
+  ogni run è `completed`; riporta esito e link; un run `failure` → `gh run view <id> --log-failed`, niente altro.
+- App con il modellatore: se `.modeler/proposals/applied/` contiene proposte arrivate da produzione (file con `id`)
+  non ancora chiuse (senza `closed`), proponi `npm run model:done` (prova a vuoto, poi `--write`), come dice la
+  skill `modeler:apply` punto 6.
+- Se `HANDOFF.md` esiste ed è più vecchio dell'ultimo merge (`git log -1 --format=%ct -- HANDOFF.md` contro il
+  commit di merge), proponi `/core:handoff`.
 
 ## Non fare
 - Merge senza conferma, `gh pr merge --admin`, `--no-verify`, `git push --force`, merge di PR altrui.

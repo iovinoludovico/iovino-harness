@@ -553,11 +553,25 @@ def _no_password_message(dsn: str) -> str:
             "Never write the password in the command: it would stay in the shell history.")
 
 
-def _prod_query(dsn: str | None, sql: str, verb: str) -> Any:
-    """Runs one statement returning JSON on the production database (see remote_dsn for the DSN and password)."""
+def _prod_target(a, root: Path) -> tuple[str | None, bool]:
+    """The production database of pull/done: an explicit DSN (--db, MODELER_PROD_DB), else the linked project
+    (`linked`: without psql the Supabase CLI reaches it through the Management API, no database password)."""
+    explicit = a.db or os.environ.get("MODELER_PROD_DB")
+    if explicit:
+        return explicit, False
+    return remote_dsn(root), (root / "supabase" / ".temp" / "project-ref").exists()
+
+
+def _prod_query(dsn: str | None, sql: str, verb: str, *, linked: bool = False, root: Path | None = None) -> Any:
+    """Runs one statement returning JSON on the production database (see remote_dsn for the DSN and password).
+    Without psql: `supabase db query` (--linked through the Management API, else --db-url)."""
     import subprocess
-    if not dsn:
+    if not dsn and not linked:
         raise NoProductionDb()
+    if shutil.which("psql") is None:
+        print(f"{verb} {'the linked project (Management API)' if linked else _dsn_target(dsn or '')} with the Supabase CLI",
+              file=sys.stderr)
+        return D.cli_query(sql, linked=linked, db_url=None if linked else dsn, cwd=root)
     env = dict(os.environ)
     if not _has_password(dsn) and os.environ.get("SUPABASE_DB_PASSWORD") and not os.environ.get("PGPASSWORD"):
         env["PGPASSWORD"] = os.environ["SUPABASE_DB_PASSWORD"]
@@ -588,7 +602,8 @@ def cmd_pull(a) -> int:
     """Copies the open proposals stored by the production modeler into .modeler/proposals/."""
     meta_path = find_metamodel(a.path)
     try:
-        rows = _prod_query(a.db or remote_dsn(meta_path.parent), PULL_SQL, "pulling from") or []
+        dsn, linked = _prod_target(a, meta_path.parent)
+        rows = _prod_query(dsn, PULL_SQL, "pulling from", linked=linked, root=meta_path.parent) or []
     except NoProductionDb:
         print(NO_PROD_DB, file=sys.stderr)
         return 2
@@ -668,8 +683,9 @@ def cmd_done(a) -> int:
         print("\n(dry run: pass --write to mark them in production, after the deploy of the change)")
         return 0
     try:
-        res = _prod_query(a.db or remote_dsn(meta_path.parent),
-                          _done_sql([p for _, p in todo["applied"]], [p for _, p in todo["rejected"]]), "closing on")
+        dsn, linked = _prod_target(a, meta_path.parent)
+        res = _prod_query(dsn, _done_sql([p for _, p in todo["applied"]], [p for _, p in todo["rejected"]]),
+                          "closing on", linked=linked, root=meta_path.parent)
     except NoProductionDb:
         print(NO_PROD_DB, file=sys.stderr)
         return 2
@@ -991,20 +1007,32 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
         pkg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         written.append("package.json (model:* scripts)")
     if ensure_gitignore(target):
-        written.append(".gitignore (__pycache__/)")
+        written.append(".gitignore (__pycache__/, .modeler/backups/)")
     written += sync(target)
     return written
 
 
+GITIGNORE_ENTRIES = (
+    ({"__pycache__/", "__pycache__", "**/__pycache__/", "**/__pycache__"},
+     "# Python bytecode of the vendored modeler CLI (tools/modeler)\n__pycache__/\n"),
+    ({".modeler/backups/", ".modeler/backups", "**/.modeler/backups/", ".modeler/"},
+     "# backups written by `model:apply` and `model:sync --force` (not to commit: they would dirty the tree)\n.modeler/backups/\n"),
+)
+
+
 def ensure_gitignore(target: Path) -> bool:
-    """The vendored CLI leaves Python bytecode in the app when it runs: keep it out of git."""
+    """The vendored CLI leaves Python bytecode in the app when it runs, and apply/sync write backups under
+    .modeler/backups/: keep both out of git (a dirty tree blocks /core:ship)."""
     gi = target / ".gitignore"
     text = gi.read_text(encoding="utf-8") if gi.exists() else ""
     entries = {line.strip() for line in text.splitlines()}
-    if entries & {"__pycache__/", "__pycache__", "**/__pycache__/", "**/__pycache__"}:
+    added = ""
+    for present, block in GITIGNORE_ENTRIES:
+        if not entries & present:
+            added += "\n" + block
+    if not added:
         return False
-    gi.write_text(text + ("" if not text or text.endswith("\n") else "\n")
-                  + "\n# Python bytecode of the vendored modeler CLI (tools/modeler)\n__pycache__/\n", encoding="utf-8")
+    gi.write_text(text + ("" if not text or text.endswith("\n") else "\n") + added, encoding="utf-8")
     return True
 
 
