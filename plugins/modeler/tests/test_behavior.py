@@ -181,6 +181,7 @@ class BehaviorTests(unittest.TestCase):
         b["events"]["Invitation"]["assigned"] = {}
         b["workflows"]["Invitation"]["transitions"]["approve"]["emits"] = ["assigned"]
         b["reactions"].append({"name": "notify_assigned", "event": "Invitation.assigned", "notify": ["office"], "template": "assigned"})
+        b["templates"]["assigned"] = {"it": {"subject": "Assegnato", "body": "{{transition.label}}"}}
         w = [x for x in B.validate(b, meta()).warnings if "notify_assigned" in x]
         self.assertEqual(len(w), 2, w)
         self.assertIn("recipients on Invitation.assigned, a secondary event of transition `approve`", w[0])
@@ -188,6 +189,7 @@ class BehaviorTests(unittest.TestCase):
         self.assertIn("notifies on both Invitation.transitioned (notify_to_manage, notify_approved) and Invitation.assigned", w[1])
         # the secondary event without recipients carries data only: fine
         b["reactions"].pop()
+        b["templates"].pop("assigned")
         self.assertEqual(B.validate(b, meta()).warnings, [])
         # a reaction with recipients on an event no subscription receives
         b = behavior()
@@ -196,6 +198,55 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(len(w), 1, w)
         self.assertIn("notifies on Invitation.reverted but no subscription receives it", w[0])
         self.assertEqual(B.transition_reactions(B.expand(behavior()), E.expand(meta()), "Invitation")["submit"], ["notify_submitted"])
+
+    def test_notification_templates_are_checked_against_the_model(self):
+        # the fixture: texts for every template, placeholders on the record and the event
+        rep = B.validate(behavior(), meta())
+        self.assertEqual((rep.errors, rep.warnings), ([], []))
+        b = behavior()
+        self.assertEqual(sorted(B.template_uses(B.expand(b))["invitation_submitted"]),
+                         [("Invitation", "transitioned", "reaction notify_submitted")])
+        self.assertIn("reminder.days", B.template_variables(B.expand(b), "Invitation", "reminder"))
+        self.assertNotIn("transition.label", B.template_variables(B.expand(b), "Invitation", "reverted"))
+        # a template a reaction names but no texts for it
+        b["templates"].pop("invitation_closed")
+        w = [x for x in B.validate(b, meta()).warnings if "invitation_closed" in x]
+        self.assertEqual(len(w), 1)
+        self.assertIn("no texts for template `invitation_closed` (used by reaction notify_closed)", w[0])
+        # placeholders: unknown path, collection, event variable on the wrong event, unknown name; a missing language
+        b = behavior()
+        b["templates"]["invitation_rejected"]["it"]["body"] = "{{self.nope}} {{self.invitationFunds}} {{reminder.days}} {{boh}}"
+        b["templates"]["invitation_reverted"]["it"]["subject"] = "{{transition.label}}"
+        b["templates"]["invitation_closed"].pop("en")                         # the metamodel's language is en
+        rep = B.validate(b, meta())
+        errs = "\n".join(rep.errors)
+        for frag in ["templates.invitation_rejected.it.body: {{self.nope}}: 'nope' is not a feature of Invitation",
+                     "{{self.invitationFunds}}: a collection", "{{reminder.days}}: reminder.* only on <Class>.reminder",
+                     "{{boh}}: unknown placeholder", "templates.invitation_reverted.it.subject: {{transition.label}}: transition.* only on"]:
+            self.assertIn(frag, errs, frag)
+        self.assertTrue(any("templates.invitation_closed: no texts in the language of the metamodel (en)" in x for x in rep.warnings), rep.warnings)
+        # an unused template, a bad language, a missing subject
+        b = behavior()
+        b["templates"]["orphan"] = {"english": {"body": "x"}}
+        rep = B.validate(b, meta())
+        self.assertTrue(any("templates.orphan: not used" in x for x in rep.warnings))
+        self.assertTrue(any("templates.orphan.english: a language code" in x for x in rep.errors))
+        self.assertTrue(any("templates.orphan.english: subject" in x for x in rep.errors))
+        # the texts travel into behavior.json, BEHAVIOR.md, the YAML writer, the editor round trip and the diff
+        rt = B.runtime_json(behavior(), meta())
+        self.assertEqual(rt["templates"]["invitation_submitted"]["it"]["subject"], "Invito {{self.id}} da approvare")
+        md = B.to_markdown(behavior(), meta())
+        self.assertIn("## Notification texts", md)
+        self.assertIn("| `invitation_submitted` | it | Invito {{self.id}} da approvare | {{actor.email}} ha emesso un invito ({{transition.label}}). Dettagli: {{url}} |", md)
+        again = B.loads(B.dumps(behavior()))
+        self.assertEqual(B.expand(again)["templates"], B.expand(behavior())["templates"])
+        self.assertEqual(B.expand(B.from_editor(rt))["templates"], B.expand(behavior())["templates"])
+        b = behavior()
+        b["templates"]["invitation_closed"]["en"]["subject"] = "Closed!"
+        b["templates"].pop("invitation_reverted")
+        b["templates"]["extra"] = {"it": {"subject": "x", "body": "y"}}
+        self.assertEqual(sorted(x for x in B.diff(behavior(), b) if "template" in x),
+                         ["+ template extra (it)", "- template invitation_reverted", "~ template invitation_closed: en"])
 
     def test_collection_multiplicities_are_enforced_by_a_guard_or_reported(self):
         # the fixture: Invitation.invitationFunds is 1..* and dataComplete (a guard of submit) reads it: nothing to say
@@ -1021,12 +1072,20 @@ class EngineTests(unittest.TestCase):
         for frag in ["create or replace function public.invitation_principals(r public.invitations)",
                      "case when r.issuer = public.current_profile_id() then 'field:issuer' end",
                      "case when public.has_role('director', r.department) then 'director' end",
-                     "create or replace function public.invitation_recipients(r public.invitations, p_to text[], p_template text)",
+                     "create or replace function public.invitation_recipients(r public.invitations, p_to text[], p_template text, p_extra jsonb default '{}'::jsonb)",
+                     "create or replace function public.render_template(p_text text, p_vars jsonb)",
+                     "create or replace function public.invitation_template_vars(r public.invitations, p_extra jsonb default '{}'::jsonb)",
+                     "'self.startDate', (r.start_date)::text", "'invitation.startDate', (r.start_date)::text",
+                     "when 'submit' then 'Submit'", "'state.label', case r.state", "when 'draft' then 'Draft'",
+                     "execute 'select public.record_url($1, $2)' into v_url using 'invitation', r.id;",
+                     "when 'invitation_submitted' then 'Invitation {{self.id}} to approve'",
+                     "execute 'select t.subject, t.body from public.notification_templates t where t.key = $1 and t.locale = $2'",
+                     "'subject', public.render_template(v_subject, v_vars), 'body', public.render_template(v_body, v_vars)",
                      "select p.email as email, 'director' as kind from public.role_members('director', r.department) m join public.profiles p on p.id = m where 'director' = any (p_to)",
                      "select x1.email as email, 'field:guest.email' as kind from public.guests x1 where x1.id = r.guest and 'field:guest.email' = any (p_to)",
                      "select p.email as email, 'field:issuer' as kind from public.profiles p where 'field:issuer' = any (p_to) and p.id = r.issuer",
                      "if p_type = 'invitation.transitioned' and coalesce((p_extra -> 'transition' ->> 'key') in ('submit', 'resubmit'), false) then",
-                     "v := v || public.invitation_recipients(r, array['director']::text[], 'invitation_submitted');",
+                     "v := v || public.invitation_recipients(r, array['director']::text[], 'invitation_submitted', p_extra);",
                      "if p_type = 'invitation.reverted' and true then",
                      "new.funds_total := (select coalesce(sum(x1.amount), 0) from public.invitation_funds x1 where x1.invitation = new.id);",
                      "new.data_complete := coalesce((new.reason is not null and",

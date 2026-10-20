@@ -327,6 +327,79 @@ def _principals(cls: _Class, notes: list[str]) -> str:
             + _fn(f"{cls.key}_principals", f"r {cls.table}", "text[]", body, "sql", stable=True))
 
 
+def _template_vars(cls: _Class) -> str:
+    """<entity>_template_vars(r, p_extra): the values the placeholders of the notification texts resolve to, as a
+    jsonb {placeholder: text}: the record's paths the templates of this class use (`self.<path>` and
+    `<entity>.<path>`), the actor, the comment, the url (public.record_url(entity, id) when the application has it),
+    the transition and the state (labels in the language of the metamodel), the reminder."""
+    lang = cls.e.get("language") or "en"
+    uses = B.template_uses(cls.b)
+    paths: dict[str, str] = {}
+    for key, langs in cls.b["templates"].items():
+        if not any(u[0] == cls.cname for u in uses.get(key, [])):
+            continue
+        for tx in langs.values():
+            for field in ("subject", "body"):
+                for name in B.PLACEHOLDER.findall(tx.get(field) or ""):
+                    head, _, path = name.partition(".")
+                    if head in ("self", cls.key) and path and path != "id" and path not in paths:
+                        try:
+                            node, _ = X.check(path, X.Context(cls.e, cls.cname))
+                            paths[path] = f"({X.to_sql(node, cls.ctx())})::text"
+                        except X.ExprError:
+                            continue                                   # validate reports it
+    pairs = [("'self.id'", "r.id::text"), (_lit(f"{cls.key}.id"), "r.id::text"),
+             ("'actor.email'", "(select p.email from public.profiles p where p.id = (p_extra ->> 'actor')::uuid)"),
+             ("'actor.name'", "(select coalesce(to_jsonb(p) ->> 'full_name', to_jsonb(p) ->> 'name', to_jsonb(p) ->> 'display_name', p.email) "
+                              "from public.profiles p where p.id = (p_extra ->> 'actor')::uuid)"),
+             ("'comment'", "p_extra ->> 'comment'"), ("'url'", "v_url")]
+    for path, sql in paths.items():
+        pairs += [(_lit(f"self.{path}"), sql), (_lit(f"{cls.key}.{path}"), sql)]
+    if cls.w:
+        tl = "\n".join(f"      when {_lit(tn)} then {_lit(B._lbl(tr, tn, lang))}" for tn, tr in cls.w["transitions"].items())
+        sl = "\n".join(f"      when {_lit(sn)} then {_lit(B._lbl(st, sn, lang))}" for sn, st in cls.w["states"].items())
+        pairs += [("'transition.key'", "p_extra -> 'transition' ->> 'key'"), ("'transition.from'", "p_extra -> 'transition' ->> 'from'"),
+                  ("'transition.to'", "p_extra -> 'transition' ->> 'to'"),
+                  ("'transition.label'", f"case p_extra -> 'transition' ->> 'key'\n{tl}\n    end"),
+                  ("'state.key'", f"r.{cls.state_col}"), ("'state.label'", f"case r.{cls.state_col}\n{sl}\n    end"),
+                  ("'reminder.days'", "extract(day from (p_extra -> 'reminder' ->> 'after')::interval)::int::text"),
+                  ("'reminder.count'", "p_extra -> 'reminder' ->> 'count'"), ("'reminder.state'", "p_extra -> 'reminder' ->> 'state'")]
+    obj = ",\n    ".join(f"{k}, {v}" for k, v in pairs)
+    body = f"""declare
+  v_url text;
+begin
+  if to_regprocedure('public.record_url(text,uuid)') is not null then
+    execute 'select public.record_url($1, $2)' into v_url using {_lit(cls.key)}, r.id;
+  end if;
+  return jsonb_strip_nulls(jsonb_build_object(
+    {obj}));
+end;"""
+    return _fn(f"{cls.key}_template_vars", f"r {cls.table}, p_extra jsonb default '{{}}'::jsonb", "jsonb", body, stable=True)
+
+
+RENDER_TEMPLATE = """-- ---- render_template: the placeholders {{name}} of a notification text replaced by the values ----
+create or replace function public.render_template(p_text text, p_vars jsonb)
+returns text
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  v text := p_text;
+  m text[];
+begin
+  if p_text is null then return null; end if;
+  for m in select regexp_matches(p_text, '\\{\\{\\s*([A-Za-z_][A-Za-z0-9_.]*)\\s*\\}\\}', 'g') loop
+    v := regexp_replace(v, '\\{\\{\\s*' || replace(m[1], '.', '\\.') || '\\s*\\}\\}',
+                        replace(coalesce(p_vars ->> m[1], ''), '\\', '\\\\'), 'g');
+  end loop;
+  return v;
+end;
+$$;
+
+"""
+
+
 def _recipients(cls: _Class) -> str:
     branches: list[str] = []
     seen: set[str] = set()
@@ -341,11 +414,42 @@ def _recipients(cls: _Class) -> str:
             branches.append(sel)
     if not branches:
         branches.append("select null::text as email, null::text as kind where false")
-    body = ("  select coalesce(jsonb_agg(jsonb_build_object('email', email, 'principal', kind, 'template', p_template) order by email), '[]'::jsonb)\n"
-            "    from (select distinct on (email) email, kind from (\n    " + "\n    union all\n    ".join(branches)
-            + "\n    ) s where email is not null order by email, kind) d;")
-    out = (f"-- ---- {cls.cname}: recipients of a notification (emails of the principals) ----\n"
-           + _fn(f"{cls.key}_recipients", f"r {cls.table}, p_to text[], p_template text", "jsonb", body, "sql", stable=True))
+    lang = cls.e.get("language") or "en"
+    tpls = {k: langs for k, langs in cls.b["templates"].items() if any(u[0] == cls.cname for u in B.template_uses(cls.b).get(k, []))}
+    subj = "\n".join(f"    when {_lit(k)} then {_lit(langs[lang]['subject'])}" for k, langs in tpls.items() if langs.get(lang))
+    bdy = "\n".join(f"    when {_lit(k)} then {_lit(langs[lang]['body'])}" for k, langs in tpls.items() if langs.get(lang))
+    body = f"""declare
+  v_vars jsonb;
+  v_subject text;
+  v_body text;
+  v_subject_o text;
+  v_body_o text;
+  v_rows jsonb;
+begin
+  -- the texts of the model (language of the metamodel: {lang}); a row of notification_templates (key x locale) overrides them
+  v_subject := case p_template
+{subj or "    when null then null"}
+  end;
+  v_body := case p_template
+{bdy or "    when null then null"}
+  end;
+  if to_regclass('public.notification_templates') is not null then
+    execute 'select t.subject, t.body from public.notification_templates t where t.key = $1 and t.locale = $2'
+      into v_subject_o, v_body_o using p_template, {_lit(lang)};
+    if v_subject_o is not null then v_subject := v_subject_o; v_body := coalesce(v_body_o, v_body); end if;
+  end if;
+  v_vars := public.{cls.key}_template_vars(r, coalesce(p_extra, '{{}}'::jsonb));
+  select coalesce(jsonb_agg(jsonb_build_object('email', email, 'principal', kind, 'template', p_template,
+           'subject', public.render_template(v_subject, v_vars), 'body', public.render_template(v_body, v_vars)) order by email), '[]'::jsonb)
+    into v_rows
+    from (select distinct on (email) email, kind from (
+    {chr(10).join('    union all' + chr(10) + '    ' + br if i else '    ' + br for i, br in enumerate(branches))}
+    ) s where email is not null order by email, kind) d;
+  return v_rows;
+end;"""
+    out = (f"-- ---- {cls.cname}: the values the notification texts may use ----\n" + _template_vars(cls)
+           + f"-- ---- {cls.cname}: recipients of a notification (emails of the principals, subject and body rendered) ----\n"
+           + _fn(f"{cls.key}_recipients", f"r {cls.table}, p_to text[], p_template text, p_extra jsonb default '{{}}'::jsonb", "jsonb", body, stable=True))
     # the reactions: which recipients an event carries
     lines = ["declare", "  v jsonb := '[]'::jsonb;", "begin"]
     for r in cls.reactions:
@@ -356,13 +460,13 @@ def _recipients(cls: _Class) -> str:
             cond = f"coalesce({X.to_sql(node, cls.ctx(transition=chr(40) + chr(112) + '_extra -> ' + chr(39) + 'transition' + chr(39) + ' ->> ' + chr(39) + 'key' + chr(39) + chr(41)))}, false)"
         lines += [f"  -- {r['name']}",
                   f"  if p_type = {_lit(cls.key + '.' + event)} and {cond} then",
-                  f"    v := v || public.{cls.key}_recipients(r, {_arr([B.principal_key(p) for p in r['notify']])}, {_lit(str(r['template']))});",
+                  f"    v := v || public.{cls.key}_recipients(r, {_arr([B.principal_key(p) for p in r['notify']])}, {_lit(str(r['template']))}, p_extra);",
                   "  end if;"]
     if reminded:
         cases = "\n".join(f"      when {_lit(st)} then {_arr([B.principal_key(p) for p in spec['owner']])}" for st, spec in reminded.items())
         lines += ["  -- a reminder goes to the owners of the state",
                   f"  if p_type = {_lit(cls.key + '.reminder')} then",
-                  f"    v := v || public.{cls.key}_recipients(r, case r.{cls.state_col}\n{cases}\n      else '{{}}'::text[] end, p_extra -> 'reminder' ->> 'template');",
+                  f"    v := v || public.{cls.key}_recipients(r, case r.{cls.state_col}\n{cases}\n      else '{{}}'::text[] end, p_extra -> 'reminder' ->> 'template', p_extra);",
                   "  end if;"]
     lines += ["  -- one entry per address (the first reaction wins)",
               "  return coalesce((select jsonb_agg(x) from (select distinct on (x ->> 'email') x from jsonb_array_elements(v) x order by x ->> 'email') d), '[]'::jsonb);",
@@ -591,8 +695,9 @@ def engine_sql(raw: dict[str, Any], metamodel: dict[str, Any], schema: str = "pu
     head = (f"-- Behaviour engine generated from {B.BEHAVIOR_FILE} by the modeler ({dt.date.today():%Y-%m-%d}).\n"
             "-- Idempotent: regenerate it with `modeler engine --write` after every change of the behaviour; do not edit by hand.\n"
             "-- Functions: <entity>_perform_transition, _available_transitions, _revert, _run_timed_transitions, _run_reminders,\n"
-            "-- _principals, _can_edit, _recipients, _emit; triggers: state and derived attributes before insert/update, lifecycle events after.\n\n")
-    parts = [head, _contract(schema)]
+            "-- _principals, _can_edit, _template_vars, _recipients (subject and body of the notification texts rendered), _emit;\n"
+            "-- triggers: state and derived attributes before insert/update, lifecycle events after.\n\n")
+    parts = [head, _contract(schema), RENDER_TEMPLATE]
     events: list[str] = []
     for cls in classes:
         parts.append(f"\n-- ===================== {cls.cname} ({cls.table}) =====================\n")

@@ -129,6 +129,23 @@ A principal path always starts with `self.`: this tells the reference `issuer` a
   ```
 - A subscription names the webhook URL by environment variable (`url_env`) or `url`, and the event patterns it
   receives: `<Class>.*`, `<Class>.<event>`, and the system patterns `user.*`, `webhook.test`.
+- The texts of the notifications live in the model, not in the subscriber: `templates:` maps every `template` key
+  of the reactions and reminders to its subject and body per language. Placeholders `{{…}}` are the record's own
+  paths (`{{self.code}}`, `{{self.guest.email}}`, `{{self.id}}`; `{{order.code}}` with the entity key reads the
+  same) and the event's variables: `actor.name`, `actor.email`, `comment`, `url` (`public.record_url(entity, id)`
+  when the app has it), on a state change `transition.key|label|from|to` and `state.key|label` (labels in the
+  language of the metamodel), on a reminder `reminder.days|count|state`. `validate` checks that every template a
+  reaction or reminder names has texts in the metamodel's language and that every placeholder exists; without the
+  section the subscriber renders the texts (an explicit choice: say so in the app). The engine renders
+  `subject` and `body` for every recipient (`<entity>_recipients`, `render_template`); a row of
+  `public.notification_templates` (key × locale, edited in the admin page `<NotificationTemplates>`) overrides the
+  model's text. The texts of the model are also in `behavior.json` and `docs/BEHAVIOR.md`.
+  ```yaml
+  templates:
+    order_assigned:
+      it: {subject: "Ordine {{self.code}} assegnato a te", body: "{{actor.name}} ti ha assegnato l'ordine {{self.code}} ({{transition.label}}). {{url}}"}
+      en: {subject: "Order {{self.code}} assigned to you", body: "{{actor.name}} assigned you order {{self.code}} ({{transition.label}}). {{url}}"}
+  ```
 
 ## What the check reports
 Unknown class, feature or state; a path through a many-valued reference used as a single value; a type
@@ -200,6 +217,6 @@ workflow, derivations or reactions (`<entity>` = the snake_case of the class, `i
 | "passa da … a … quando …", "si può … solo se …" | a transition with `when` (hidden) or `guard` (blocked with an explanation) |
 | "dopo N giorni dalla data di fine", "scade il …" | a timed transition `at: <date attribute> + Nd` |
 | "si calcola come", "è completo quando" | `derived: true` on the attribute (metamodel) and its formula in `derivations` |
-| "avvisa X quando Y" | a reaction `event: <Class>.<event>`, `when`, `notify`, `template` |
+| "avvisa X quando Y" | a reaction `event: <Class>.<event>`, `when`, `notify`, `template`, and its texts in `templates:` |
 | "n8n riceve gli eventi di …" | a subscription |
 | what no key expresses (arithmetic, external calls) | code, a customization (`docs/customizations.md`, `CUSTOM(<id>)`) |

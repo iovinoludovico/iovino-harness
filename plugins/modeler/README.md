@@ -31,6 +31,9 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
 - `drift` compares the metamodel with a live database (local Supabase by default): "aligned" is the invariant.
 - Behaviour is the second model, **`behavior.yaml`** next to the metamodel: roles, derivations of the attributes
   marked `derived: true`, workflows (states, transitions, guards, timed transitions), events, reactions (who is
+  notified when, with the texts of the notifications in `templates:` per language and placeholders on the record and
+  the event: rendered by the engine for every recipient, overridable per key and language from the admin matrix
+  page `<NotificationTemplates>`), reactions (who is
   notified when) and webhook subscriptions, written on the metamodel's concepts with typed expressions
   (`guard: dataComplete`, `when: reason.compensationType = hourly and hours > 0`, `notify: [director, self.issuer]`).
   `validate` checks it against the metamodel, the hook does it after every edit of either file (a domain change
@@ -113,6 +116,8 @@ Eclipse EMF and Epsilon.
 | `src/components/modeler/metamodel-modeler.tsx` | modeler | replaced |
 | `src/components/modeler/behavior-view.tsx` | modeler | replaced |
 | `src/components/modeler/workflow-view.tsx` | modeler | replaced |
+| `src/components/modeler/notification-templates.tsx`, `src/lib/modeler/notification-actions.ts` | modeler | replaced |
+| `supabase/migrations/<ts>_notification_templates.sql` (when `behavior.yaml` has `templates:`) | app | written once |
 | `src/lib/modeler/metamodel-actions.ts` | modeler | replaced |
 | `tools/modeler/` (+ `VERSION`), `model:*` scripts | modeler | replaced |
 | `src/lib/modeler/metamodel.json` | generated from `domain.ecore.yaml` | refreshed (`model:sync`) |

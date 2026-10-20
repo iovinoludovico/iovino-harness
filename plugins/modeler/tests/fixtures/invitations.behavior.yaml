@@ -103,3 +103,53 @@ reactions:
 
 subscriptions:
   - {name: n8n, url_env: N8N_WEBHOOK_URL, events: [Invitation.*, Guest.*, user.*]}
+
+templates:
+  bookings_changed:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  bookings_confirmed:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  bookings_confirmed_guest:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  director_confirmation_requested:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  invitation_approved:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  invitation_closed:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  invitation_rejected:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  invitation_reverted:
+    it: {subject: "Invito {{self.id}} riportato indietro", body: "L'invito è tornato a uno stato precedente. Motivo: {{comment}}"}
+    en: {subject: "Invitation {{self.id}} sent back", body: "The invitation went back to a previous state. Reason: {{comment}}"}
+  invitation_submitted:
+    it: {subject: "Invito {{self.id}} da approvare", body: "{{actor.email}} ha emesso un invito ({{transition.label}}). Dettagli: {{url}}"}
+    en: {subject: "Invitation {{self.id}} to approve", body: "{{actor.email}} submitted an invitation ({{transition.label}}). Details: {{url}}"}
+  invitation_to_book:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  invitation_to_manage:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  visit_confirmation_reminder:
+    it: {subject: "Conferma della visita in attesa", body: "La conferma è attesa da {{reminder.days}} giorni (sollecito n. {{reminder.count}})."}
+    en: {subject: "Visit confirmation pending", body: "The confirmation has been pending for {{reminder.days}} days (reminder no. {{reminder.count}})."}
+  visit_confirmation_requested:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  visit_confirmation_returned:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  visit_confirmed:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}
+  visit_confirmed_by_director:
+    it: {subject: "Invito {{self.id}}: {{transition.label}}", body: "Stato {{state.label}}, dal {{self.startDate}} al {{self.endDate}}. {{url}}"}
+    en: {subject: "Invitation {{self.id}}: {{transition.label}}", body: "State {{state.label}}, from {{self.startDate}} to {{self.endDate}}. {{url}}"}

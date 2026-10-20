@@ -985,6 +985,8 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
     copy(KIT_DIR / "next" / "metamodel-modeler.tsx", "src/components/modeler/metamodel-modeler.tsx")
     copy(KIT_DIR / "next" / "behavior-view.tsx", "src/components/modeler/behavior-view.tsx")
     copy(KIT_DIR / "next" / "workflow-view.tsx", "src/components/modeler/workflow-view.tsx")
+    copy(KIT_DIR / "next" / "notification-templates.tsx", "src/components/modeler/notification-templates.tsx")
+    copy(KIT_DIR / "next" / "notification-actions.ts", "src/lib/modeler/notification-actions.ts")
     copy(KIT_DIR / "next" / "metamodel-actions.ts", "src/lib/modeler/metamodel-actions.ts")
     copy(KIT_DIR / "next" / "access.ts", "src/lib/modeler/access.ts", overwrite=False)
     # the CLI travels with the app: model:* scripts work without the plugin
@@ -999,6 +1001,9 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
         if not list(mig.glob("*_model_change_requests.sql")):
             stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
             copy(KIT_DIR / "model_change_requests.sql", f"supabase/migrations/{stamp}_model_change_requests.sql")
+        if has_templates(target) and not list(mig.glob("*_notification_templates.sql")):
+            stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1)).strftime("%Y%m%d%H%M%S")
+            copy(KIT_DIR / "notification_templates.sql", f"supabase/migrations/{stamp}_notification_templates.sql")
     pkg = target / "package.json"
     data = json.loads(pkg.read_text(encoding="utf-8"))
     scripts = data.setdefault("scripts", {})
@@ -1018,6 +1023,17 @@ GITIGNORE_ENTRIES = (
     ({".modeler/backups/", ".modeler/backups", "**/.modeler/backups/", ".modeler/"},
      "# backups written by `model:apply` and `model:sync --force` (not to commit: they would dirty the tree)\n.modeler/backups/\n"),
 )
+
+
+def has_templates(root: Path) -> bool:
+    """behavior.yaml declares notification texts (`templates:`): the app gets the overrides table and the admin page."""
+    bpath = root / B.BEHAVIOR_FILE
+    if not bpath.exists():
+        return False
+    try:
+        return bool(B.expand(B.load(bpath))["templates"])
+    except Exception:
+        return False
 
 
 def ensure_gitignore(target: Path) -> bool:
@@ -1083,6 +1099,23 @@ WORKFLOW_SIGNS = (
 )
 
 
+def templates_page_hint(root: Path) -> str | None:
+    """behavior.yaml has notification texts but no page renders <NotificationTemplates>: what to add by hand."""
+    if not has_templates(root):
+        return None
+    src = root / "src"
+    for f in (sorted(src.rglob("*.tsx")) if src.exists() else []):
+        if "components/modeler" in f.as_posix() or "node_modules" in f.parts:
+            continue
+        try:
+            if "<NotificationTemplates" in f.read_text(encoding="utf-8"):
+                return None
+        except (OSError, UnicodeDecodeError):
+            continue
+    return ("templates found in behavior.yaml: add the admin page of the notification texts (kit/next/templates-page.tsx "
+            "as a model, <NotificationTemplates behavior overrides />) and apply the notification_templates migration")
+
+
 def workflow_hint(root: Path) -> str | None:
     """The app keeps workflows in code (migrations, docs/customizations.md, an enum state attribute of the
     metamodel) but has no behavior.yaml: what to propose. None when the file exists or nothing looks like one."""
@@ -1131,7 +1164,7 @@ def cmd_install(a) -> int:
         print(f"no {E.METAMODEL_FILE} yet: derive it with `reverse --db <DSN> -o {E.METAMODEL_FILE}`, then `sync`")
     elif docs_status(target)["state"] in ("edited", "clash"):
         print(docs_report(docs_status(target), diff=False))
-    for hint in (behavior_page_hint(target), workflow_hint(target)):
+    for hint in (behavior_page_hint(target), workflow_hint(target), templates_page_hint(target)):
         if hint:
             print(hint)
     print("next: adapt src/lib/modeler/access.ts to the app's admin check, add the admin page and the link "
