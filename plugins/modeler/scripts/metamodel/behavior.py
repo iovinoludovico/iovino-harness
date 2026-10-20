@@ -30,7 +30,15 @@ from . import ecore as E
 from . import expr as X
 
 BEHAVIOR_FILE = E.BEHAVIOR_FILE
-TOP_KEYS = {"metamodel", "doc", "roles", "derivations", "workflows", "events", "reactions", "subscriptions"}
+TOP_KEYS = {"metamodel", "doc", "roles", "derivations", "workflows", "events", "reactions", "subscriptions", "templates"}
+TEMPLATE_KEYS = {"subject", "body"}
+LANG_RE = re.compile(r"^[a-z]{2}$")
+PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][\w.]*)\s*\}\}")
+# the variables a notification text may use besides the record's own paths (`{{self.path}}` or `{{<entity>.path}}`)
+TEMPLATE_VARS = {"actor.name", "actor.email", "comment", "url"}
+TRANSITION_VARS = {"transition.key", "transition.label", "transition.from", "transition.to"}
+REMINDER_VARS = {"reminder.days", "reminder.count", "reminder.state"}
+STATE_VARS = {"state.key", "state.label"}
 ROLE_KEYS = {"label", "scope", "doc"}
 WORKFLOW_KEYS = {"state", "states", "transitions", "revert", "doc"}
 STATE_KEYS = {"initial", "final", "label", "doc", "owner", "editable_by", "reminder", "color"}
@@ -146,6 +154,7 @@ def from_editor(doc: dict[str, Any]) -> dict[str, Any]:
     raw["events"] = {cn: {en: (ev or {}) for en, ev in _mapping(evs).items()} for cn, evs in _mapping(doc.get("events")).items()}
     raw["reactions"] = [{k: (text(v) if k == "when" else v) for k, v in _mapping(r).items()} for r in _list(doc.get("reactions"))]
     raw["subscriptions"] = [dict(_mapping(sub)) for sub in _list(doc.get("subscriptions"))]
+    raw["templates"] = {k: {lang: dict(_mapping(tx)) for lang, tx in _mapping(langs).items()} for k, langs in _mapping(doc.get("templates")).items()}
     return _clean(raw)
 
 
@@ -187,6 +196,10 @@ def dumps(raw: dict[str, Any]) -> str:
     for key in ("reactions", "subscriptions"):
         if r.get(key):
             out += ["", f"{key}:"] + ["  - " + dump(_Flow(item)) for item in r[key]]
+    if r.get("templates"):
+        out += ["", "templates:"]
+        for key, langs in r["templates"].items():
+            out += ["  " + line for line in dump(block({key: block({lang: block(tx) for lang, tx in langs.items()})})).split("\n")]
     return "\n".join(out).rstrip("\n") + "\n"
 
 
@@ -265,6 +278,14 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     out += [f"+ subscription {n}" for n in bsub if n not in asub]
     out += [f"~ subscription {n}" for n in bsub if n in asub and not same(asub[n], bsub[n])]
     out += [f"- subscription {n}" for n in asub if n not in bsub]
+    for k, langs in b["templates"].items():
+        if k not in a["templates"]:
+            out.append(f"+ template {k} ({', '.join(langs)})")
+        else:
+            ks = [lang for lang in sorted(set(langs) | set(a["templates"][k])) if not same(a["templates"][k].get(lang), langs.get(lang))]
+            if ks:
+                out.append(f"~ template {k}: {', '.join(ks)}")
+    out += [f"- template {k}" for k in a["templates"] if k not in b["templates"]]
     return out
 
 
@@ -334,6 +355,14 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
         s = _mapping(s)
         out["subscriptions"].append({**copy.deepcopy(s), "name": s.get("name"), "url_env": s.get("url_env"),
                                      "url": s.get("url"), "events": [str(x) for x in _list(s.get("events"))]})
+    out["templates"] = {}
+    for key, spec in _mapping(raw.get("templates")).items():
+        langs: dict[str, Any] = {}
+        for lang, texts in _mapping(spec).items():
+            tx = _mapping(texts) if isinstance(texts, dict) else {"subject": texts}
+            langs[str(lang)] = {**copy.deepcopy(tx), "subject": "" if tx.get("subject") is None else str(tx["subject"]),
+                                "body": "" if tx.get("body") is None else str(tx["body"])}
+        out["templates"][str(key)] = langs
     return out
 
 
@@ -391,6 +420,7 @@ def validate(raw: dict[str, Any], metamodel: dict[str, Any]) -> M.Report:
                 rep.error(f"{where}.{en}", f"unknown keys: {', '.join(sorted(map(str, extra)))}")
     _check_reactions(b, e, rep)
     _check_subscriptions(b, e, rep)
+    _check_templates(b, e, rep)
     return rep
 
 
@@ -812,6 +842,97 @@ def transition_reactions(b: dict[str, Any], e: dict[str, Any], cname: str) -> di
     return out
 
 
+def template_uses(b: dict[str, Any]) -> dict[str, list[tuple[str, str, str]]]:
+    """{template key: [(class, event, "reaction <name>" | "reminder of <state>")]}: where each notification text is used."""
+    out: dict[str, list[tuple[str, str, str]]] = {}
+    for r in b["reactions"]:
+        on = str(r.get("event") or "")
+        if r.get("template") and on.count(".") == 1:
+            cname, event = on.split(".")
+            out.setdefault(str(r["template"]), []).append((cname, event, f"reaction {r.get('name')}"))
+    for cname, w in b["workflows"].items():
+        for sn, s in w["states"].items():
+            rem = s.get("reminder")
+            if rem:
+                out.setdefault(str(rem.get("template") or f"{sn}_reminder"), []).append((cname, "reminder", f"reminder of {cname}.{sn}"))
+    return out
+
+
+def template_variables(b: dict[str, Any], cname: str, event: str) -> set[str]:
+    """The event variables a text sent on `<cname>.<event>` may use (besides the record's own paths)."""
+    allowed = set(TEMPLATE_VARS)
+    w = b["workflows"].get(cname)
+    if w:
+        allowed |= STATE_VARS
+        emitted = {ev for t in w["transitions"].values() for ev in t["emits"]}
+        if event in ("transitioned", "completed") or event in emitted:
+            allowed |= TRANSITION_VARS
+        if event == "reminder":
+            allowed |= REMINDER_VARS
+    return allowed
+
+
+def _check_templates(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> None:
+    """`templates`: the texts of the notifications, per language, with placeholders on the record and the event.
+    Without the section the subscriber renders the texts (said in the notation); with it, every template a reaction
+    or a reminder names must have texts in the metamodel's language, and every placeholder must exist."""
+    uses = template_uses(b)
+    tpls = b["templates"]
+    lang0 = e.get("language") or "it"
+    if tpls:
+        for key, where in uses.items():
+            if key not in tpls:
+                rep.warn(f"templates.{key}", f"no texts for template `{key}` (used by {', '.join(u[2] for u in where)}): add it to templates:")
+    for key, langs in tpls.items():
+        where = f"templates.{key}"
+        if not IDENT.match(str(key)):
+            rep.error(where, "template keys are lowercase identifiers (letters, digits, _)")
+        if key not in uses:
+            rep.warn(where, "not used by any reaction or reminder")
+        if not langs:
+            rep.error(where, "the texts per language: {it: {subject, body}}")
+        elif lang0 not in langs:
+            rep.warn(where, f"no texts in the language of the metamodel ({lang0})")
+        for lang, tx in langs.items():
+            lw = f"{where}.{lang}"
+            if not LANG_RE.match(str(lang)):
+                rep.error(lw, "a language code (it, en, …)")
+            extra = set(tx) - TEMPLATE_KEYS
+            if extra:
+                rep.error(lw, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: subject, body)")
+            if not tx.get("subject"):
+                rep.error(lw, "subject: the subject of the message")
+            for field in ("subject", "body"):
+                for name in PLACEHOLDER.findall(tx.get(field) or ""):
+                    _check_placeholder(b, e, name, uses.get(key, []), f"{lw}.{field}", rep)
+
+
+def _check_placeholder(b: dict[str, Any], e: dict[str, Any], name: str, where: list[tuple[str, str, str]], fw: str, rep: M.Report) -> None:
+    for cname, event, use in where:
+        entity = M.snake(cname)
+        if name in template_variables(b, cname, event):
+            continue
+        if "." in name and name.split(".", 1)[0] in ("self", entity):
+            path = name.split(".", 1)[1]
+            if path == "id":                                   # every record has an id (not a feature of the metamodel)
+                continue
+            try:
+                _, t = X.check(path, X.Context(e, cname))
+            except X.ExprError as exc:
+                rep.error(fw, f"{{{{{name}}}}}: {exc}")
+                continue
+            if t.startswith(X.COLLECTION):
+                rep.error(fw, f"{{{{{name}}}}}: a collection; a placeholder is a single value (size(), sum() or a path to one)")
+            continue
+        if name in TRANSITION_VARS:
+            rep.error(fw, f"{{{{{name}}}}}: transition.* only on <Class>.transitioned, .completed or an event a transition emits ({use} is on {cname}.{event})")
+        elif name in REMINDER_VARS:
+            rep.error(fw, f"{{{{{name}}}}}: reminder.* only on <Class>.reminder ({use} is on {cname}.{event})")
+        else:
+            rep.error(fw, f"{{{{{name}}}}}: unknown placeholder; use {{{{self.<path>}}}} or {{{{{entity}.<path>}}}}, "
+                          f"{', '.join(sorted(template_variables(b, cname, event)))}")
+
+
 def _check_subscriptions(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> None:
     names: set[str] = set()
     for i, s in enumerate(b["subscriptions"]):
@@ -865,6 +986,8 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "events": "Eventi", "event": "Evento", "description": "Descrizione", "builtin_events": "predefinito",
         "lifecycle": "Ogni classe emette `created`, `updated`, `deleted`; una classe con workflow anche `transitioned`, `completed`, `reverted`, `reminder`.",
         "reactions": "Reazioni", "name": "Nome", "recipients": "Destinatari", "template": "Template", "notify": "notifica",
+        "templates": "Testi delle notifiche", "templates_note": "Oggetto e corpo per lingua; i segnaposto `{{…}}` sono dati del record (`self.…`) e dell'evento (`transition.label`, `actor.name`, `comment`, `url`, `reminder.days`). Il motore li rende per destinatario; una riga di `notification_templates` (chiave × lingua) li sovrascrive.",
+        "language": "Lingua", "subject": "Oggetto", "body": "Corpo",
         "subscriptions": "Sottoscrizioni", "url": "URL", "patterns": "Eventi",
         "involved": "Classi coinvolte nel comportamento", "feature": "Attributo o riferimento", "used_by": "Usato da",
         "involved_note": "Classi senza workflow di cui il comportamento legge o usa attributi e riferimenti (formule, condizioni, destinatari, ambiti dei ruoli).",
@@ -885,6 +1008,8 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "events": "Events", "event": "Event", "description": "Description", "builtin_events": "built in",
         "lifecycle": "Every class emits `created`, `updated`, `deleted`; a class with a workflow also `transitioned`, `completed`, `reverted`, `reminder`.",
         "reactions": "Reactions", "name": "Name", "recipients": "Recipients", "template": "Template", "notify": "notify",
+        "templates": "Notification texts", "templates_note": "Subject and body per language; the placeholders `{{…}}` are data of the record (`self.…`) and of the event (`transition.label`, `actor.name`, `comment`, `url`, `reminder.days`). The engine renders them per recipient; a row of `notification_templates` (key × language) overrides them.",
+        "language": "Language", "subject": "Subject", "body": "Body",
         "subscriptions": "Subscriptions", "url": "URL", "patterns": "Events",
         "involved": "Classes involved in the behaviour", "feature": "Attribute or reference", "used_by": "Used by",
         "involved_note": "Classes without a workflow whose attributes and references the behaviour reads or points to (formulas, conditions, recipients, role scopes).",
@@ -1000,6 +1125,10 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
         rows = [[_code(s["name"]), _code(f"${s['url_env']}" if s.get("url_env") else s.get("url")), ", ".join(_code(p) for p in s["events"])]
                 for s in b["subscriptions"]]
         out += [f"## {t['subscriptions']}", ""] + E._table([t["name"], t["url"], t["patterns"]], rows) + [""]
+    if b["templates"]:
+        cell = lambda x: str(x or "").replace("|", "\\|").replace("\n", "<br>")  # noqa: E731
+        rows = [[_code(k), lang, cell(tx.get("subject")), cell(tx.get("body"))] for k, langs in b["templates"].items() for lang, tx in langs.items()]
+        out += [f"## {t['templates']}", "", t["templates_note"], ""] + E._table([t["template"], t["language"], t["subject"], t["body"]], rows) + [""]
     return "\n".join(out).rstrip("\n") + "\n"
 
 

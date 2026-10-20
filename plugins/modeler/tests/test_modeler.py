@@ -471,6 +471,7 @@ class AppTests(unittest.TestCase):
         written = cli.install(self.app)
         for rel in ("public/modeler/metamodel-editor.js", "src/components/modeler/metamodel-modeler.tsx",
                     "src/components/modeler/behavior-view.tsx", "src/components/modeler/workflow-view.tsx",
+                    "src/components/modeler/notification-templates.tsx", "src/lib/modeler/notification-actions.ts",
                     "src/lib/modeler/metamodel-actions.ts", "src/lib/modeler/access.ts", "docs/DOMAIN.md",
                     "src/lib/modeler/metamodel.json", "tools/modeler/modeler.py",
                     "tools/modeler/metamodel/ecore.py", "tools/modeler/vendor/yaml/__init__.py"):
@@ -515,6 +516,30 @@ class AppTests(unittest.TestCase):
         # no page yet (first installation): the hint points to the skill
         page.unlink()
         self.assertIn("see the install skill", cli.behavior_page_hint(self.app))
+
+    def test_install_adds_the_notification_templates_table_when_the_model_has_texts(self):
+        self.assertFalse(cli.has_templates(self.app))
+        cli.install(self.app)
+        self.assertEqual(list((self.app / "supabase" / "migrations").glob("*_notification_templates.sql")), [])
+        fixtures = Path(__file__).resolve().parent / "fixtures"
+        (self.app / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        (self.app / "behavior.yaml").write_text((fixtures / "invitations.behavior.yaml").read_text())
+        self.assertTrue(cli.has_templates(self.app))
+        self.assertIn("templates found in behavior.yaml", cli.templates_page_hint(self.app))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_install(argparse.Namespace(app=str(self.app), no_migration=False)), 0)
+        files = list((self.app / "supabase" / "migrations").glob("*_notification_templates.sql"))
+        self.assertEqual(len(files), 1)
+        self.assertIn("create table if not exists public.notification_templates", files[0].read_text())
+        self.assertIn("templates found in behavior.yaml", out.getvalue())
+        cli.install(self.app)                                                  # written once
+        self.assertEqual(len(list((self.app / "supabase" / "migrations").glob("*_notification_templates.sql"))), 1)
+        page = self.app / "src" / "app" / "admin" / "notifications" / "page.tsx"
+        page.parent.mkdir(parents=True)
+        page.write_text((cli.KIT_DIR / "next" / "templates-page.tsx").read_text())
+        self.assertIsNone(cli.templates_page_hint(self.app))
+        self.assertIn("templates", json.loads((self.app / "src/lib/modeler/behavior.json").read_text()))
 
     def test_install_tells_when_workflows_live_in_code_without_a_behaviour_model(self):
         self.assertIsNone(cli.workflow_hint(self.app))                        # nothing looks like a workflow

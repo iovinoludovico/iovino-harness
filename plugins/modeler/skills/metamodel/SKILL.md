@@ -70,6 +70,12 @@ e sottoscrizioni webhook non vanno nel metamodello né direttamente nel codice: 
   Quando una modifica (anche una proposta del modellatore) porta una collezione a `lower > 0` o a un `upper` finito,
   proponi subito la guardia (chiedi su quale transizione) o la regola, con un test della transizione bloccata;
   `validate` lo segnala finché manca.
+- Una reazione o un sollecito con `notify` ha i suoi testi nel modello: `templates: {<chiave>: {it: {subject, body},
+  en: {…}}}` con i segnaposto `{{self.<path>}}`, `{{transition.label}}`, `{{actor.name}}`, `{{comment}}`, `{{url}}`,
+  `{{reminder.days}}` (riferimento `behavior-notation.md`, «Events, reactions, subscriptions»). Chiedi i testi insieme
+  alle altre ambiguità, o proponine di provvisori da far correggere all'utente; mai lasciarli al sottoscrittore (n8n
+  spedisce, non scrive). Il motore li rende per destinatario; l'app li corregge dalla pagina admin a matrice
+  (`<NotificationTemplates>`, tabella `notification_templates` che `install` aggiunge quando il modello ha testi).
 - Ambiguità da chiedere in un giro solo, insieme a quelle della struttura: chi può eseguire una transizione
   (ruolo, con quale ambito, o un utente collegato al record come `self.issuer`); se una condizione nasconde la
   transizione (`when`) o la blocca spiegando cosa manca (`guard`); se il commento è obbligatorio.

@@ -1040,6 +1040,12 @@
       else { const ks = keysChanged(arx[n], r, ["event", "when", "notify", "template"]); if (ks.length) out.push(`~ reaction ${n}: ${ks.join(", ")}`); }
     }
     for (const n of Object.keys(arx)) if (!brx[n]) out.push(`- reaction ${n}`);
+    const at = a.templates || {}, bt = b.templates || {};
+    for (const [k, langs] of Object.entries(bt)) {
+      if (!at[k]) out.push(`+ template ${k} (${Object.keys(langs).join(", ")})`);
+      else { const ks = [...new Set([...Object.keys(langs), ...Object.keys(at[k])])].sort().filter((l) => !same(at[k][l], langs[l])); if (ks.length) out.push(`~ template ${k}: ${ks.join(", ")}`); }
+    }
+    for (const k of Object.keys(at)) if (!bt[k]) out.push(`- template ${k}`);
     return out;
   };
   Layout.behaviorSource = behaviorSource;

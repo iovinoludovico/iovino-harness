@@ -51,6 +51,11 @@ rivedilo **con l'utente**:
 - `src/components/modeler/workflow-view.tsx` (`<WorkflowView>`: il diagramma degli stati del workflow di un'entità con
   lo stato corrente del record evidenziato, per le pagine di dettaglio dell'app; disegnato dall'elemento
   `<workflow-view>` di `metamodel-editor.js`),
+- `src/components/modeler/notification-templates.tsx` e `src/lib/modeler/notification-actions.ts` (la pagina admin
+  a matrice dei testi delle notifiche, template × lingua: valori propri, dal modello, mancanti; gli override vanno in
+  `public.notification_templates`),
+- `supabase/migrations/<ts>_notification_templates.sql` (solo la prima volta e solo se `behavior.yaml` ha `templates:`:
+  la tabella degli override che il motore e la pagina usano),
 - `src/lib/modeler/metamodel-actions.ts` (salva, elenca e scarta le proposte: file in sviluppo, tabella in produzione),
 - `src/lib/modeler/access.ts` (solo se manca: chi è admin e quale client Supabase usare),
 - `src/lib/modeler/metamodel.json` (il metamodello letto dalla pagina),
@@ -112,6 +117,12 @@ rivedilo **con l'utente**:
   }
   // nella pagina: <WorkflowTabs path={<StatePath … />} diagram={<WorkflowView behavior={behavior} entity="Order" state={row.status} lang="it" />} />
   ```
+- Se `behavior.yaml` ha `templates:` (`install` lo segnala con «templates found in behavior.yaml»): parti da
+  `${CLAUDE_PLUGIN_ROOT}/kit/next/templates-page.tsx` per la pagina admin dei testi delle notifiche (es.
+  `src/app/(admin)/admin/notifications/page.tsx`, link nella navigazione admin) e applica la migrazione
+  `notification_templates` (in locale, poi `/core:db-push`). Il motore generato (`npm run model:engine -- --write`)
+  rende `subject` e `body` in `recipients`; con un motore a mano il dispatcher legge i testi da `behavior.json`
+  (`templates`) e gli override dalla tabella, con lo stesso `render_template` del motore.
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
 - `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`); non ignorare
   `.modeler/proposals/` (le proposte si rivedono nel repository).
