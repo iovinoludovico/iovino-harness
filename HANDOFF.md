@@ -1,5 +1,5 @@
-# Handoff — modellatore: skill `/modeler:behavior` e proposte dal prompt visibili nel modellatore
-_Aggiornato: 2026-10-20 · branch `feat/modeler-propose-from-prompt` sopra `feat/modeler-behavior-skill` (4 commit sopra `main` `60932ed`, non pushati)_
+# Handoff — modellatore: skill `behavior`, proposte dal prompt, applicazione dal web (PR via GitHub Actions)
+_Aggiornato: 2026-10-20 · branch `feat/modeler-apply-from-web` sopra `feat/modeler-propose-from-prompt` e `feat/modeler-behavior-skill` (6 commit sopra `main` `60932ed`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -7,6 +7,20 @@ dettaglio di un record di un'entità con workflow mostra un div con il diagramma
 evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 
 ## Stato
+- Branch `feat/modeler-apply-from-web` (il terzo in pila; da unire con `/core:ship`): in `/admin/model` di produzione
+  il bottone «Applica (apre una PR)» (`requestProposalApply` in `metamodel-actions.ts`) manda un `repository_dispatch`
+  (`MODELER_APPLY_REPO`/`MODELER_APPLY_TOKEN` nel pannello dell'app) al workflow `.github/workflows/modeler-apply.yml`
+  (template `kit/github/`, installato una volta): Supabase locale, `model:pull --id`, Claude Code headless con il
+  plugin (`--permission-mode dontAsk`, `--max-budget-usd`, regole in `.github/modeler-apply-rules.md`), push del
+  branch `model/<id8>`, `gh pr create`, `model:track --pr` (o `--error` su fallimento). Colonne nuove
+  (`kit/model_change_requests_apply.sql`): `apply_requested_at`, `apply_finished_at`, `pr_url`, `apply_error`; il
+  banner mostra «PR aperta» (link), «in corso dalle…», «applicazione fallita» + «Riprova». CLI: `pull --id <uuid>`
+  (`pull_sql`, `_uuid`), `track`, script `model:track`. Skill `install` §7 (segreti, costi, cosa resta manuale),
+  `apply`, `deploy` (variabili del pannello), convenzioni, README, help. Test: `test_pull_one_proposal_and_track_the_outcome`,
+  install/reinstall (workflow parsato, migrazione una volta). Provato nella sandbox in modalità `db` (stub `access.ts`
+  ora su `pg`): quattro stati del banner e dispatch vero verso GitHub (401 con token finto, messaggio mostrato).
+  **Non provato**: un run reale del workflow (serve un repository con i segreti; la skill dice come provarlo con
+  `workflow_dispatch`) e il costo reale per run (`total_cost_usd`): la stima in `install` §7 va confermata al primo run.
 - Branch `feat/modeler-propose-from-prompt` (sopra `feat/modeler-behavior-skill`; da unire con `/core:ship`, in un'unica
   PR o due): comando CLI `propose` (`cli.cmd_propose`): una bozza in `.modeler/drafts/domain.ecore.yaml` (e
   `behavior.yaml`) diventa `.modeler/proposals/<data>-prompt.json`, lo stesso JSON del modellatore web (`author:
@@ -119,7 +133,12 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` dei branch `feat/modeler-behavior-skill` e `feat/modeler-propose-from-prompt` (push, PR, merge su conferma); poi `/reload-plugins` e sugli
+0. Misura del costo nella sandbox, dall'utente in un suo terminale (chiave API mai in chat né nel repository):
+   `cd ~/Documents/GitHub/modeler-sandbox && ANTHROPIC_API_KEY=… claude -p "/modeler:apply <file> --write" --output-format json
+   --permission-mode dontAsk --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run *),Bash(git *)" --max-turns 40 --max-budget-usd 5`
+   su una proposta di prova (`model:propose`); `total_cost_usd` tara `MODELER_APPLY_BUDGET` e la tabella in `install` §7.
+1. `/core:ship` dei tre branch in pila (`feat/modeler-behavior-skill`, `feat/modeler-propose-from-prompt`,
+   `feat/modeler-apply-from-web`: una PR per branch o una sola dall'ultimo; push, PR, merge su conferma); poi `/reload-plugins` e sugli
    altri computer `claude plugin update core@iovino-harness modeler@iovino-harness`. Prova nella sandbox:
    `/modeler:behavior show Task` e una reazione di prova («avvisa l'assegnatario quando il task torna in todo»):
    reazione, template, `sync`, `engine --write` senza passare da `model:migrate`.

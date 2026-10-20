@@ -9,7 +9,7 @@ argument-hint: "[file della proposta] | pull [DSN di produzione]"
 Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:apply -- …`
 (oppure `python3 tools/modeler/modeler.py …`).
 
-1. **Proposte da produzione**: con `pull` esegui `npm run model:pull` (con un DSN esplicito:
+1. **Proposte da produzione**: con `pull` esegui `npm run model:pull` (una sola: `-- --id <uuid>`; con un DSN esplicito:
    `npm run model:pull -- --db <DSN>`) solo dopo conferma esplicita dell'utente (scrive sul database di
    produzione: segna le proposte come `pulled`). Le copia in `.modeler/proposals/`.
    - Il DSN si ricava dal progetto collegato con `supabase link` (`supabase/.temp/`), o da `MODELER_PROD_DB`.
@@ -50,6 +50,9 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    --write` (bozza dal metamodello committato a quello appena scritto), TODO risolti, codice, migrazione
    applicata in locale, `npm run model:drift` → "aligned", typecheck, lint e test.
    In produzione la migrazione va applicata con `/core:db-push` prima del push del codice.
+   Una proposta di produzione può arrivare anche come **PR già aperta** dal bottone «Applica» di `/admin/model`
+   (workflow `modeler-apply`, skill `install` sezione 7): revisione della PR, `/core:db-push` prima del merge, merge
+   confermato, poi il punto 6 come per ogni proposta di produzione.
 6. Per le proposte arrivate da produzione, dopo il deploy e solo su richiesta dell'utente: `npm run model:done`
    (prova a vuoto) e `npm run model:done -- --write`. Segna `applied` in `model_change_requests` le proposte in
    `.modeler/proposals/applied/` e `rejected` quelle scartate dal modellatore locale (`rejected/`), così spariscono

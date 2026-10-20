@@ -1,0 +1,129 @@
+# Applies a proposal of the production modeler (model_change_requests) and opens a pull request.
+# Started by the "Apply" button of /admin/model (repository_dispatch from the app, see
+# src/lib/modeler/metamodel-actions.ts) or by hand from the Actions tab (workflow_dispatch with the proposal id).
+#
+# What it does: pulls that one proposal, runs Claude Code headless with the modeler plugin on it
+# (/modeler:apply --write, migration draft, code, tests, drift; the rules are in .github/modeler-apply-rules.md),
+# pushes the branch, opens the PR and writes its link on the proposal row (`npm run model:track`). It never touches
+# the production database beyond that row: the migration reaches production with /core:db-push before the merge,
+# and `npm run model:done -- --write` closes the proposal after the deploy.
+#
+# Secrets (repository → Settings → Secrets and variables → Actions):
+#   ANTHROPIC_API_KEY   bills the runs on the API credit (the key, not a subscription login)
+#   MODELER_PROD_DB     DSN of the production database with the password (the pooler URL of the Supabase project):
+#                       used only by `model:pull --id` and `model:track`
+# Variables (optional): MODELER_APPLY_MODEL (default claude-opus-5-5), MODELER_APPLY_BUDGET (USD per run, default 10),
+#   MODELER_HARNESS (marketplace repo, default iovinoludovico/iovino-harness).
+# Installed by the modeler (`/modeler:install`) once; the app owns it from then on.
+name: modeler-apply
+
+on:
+  repository_dispatch:
+    types: [modeler-apply]
+  workflow_dispatch:
+    inputs:
+      proposal_id:
+        description: "id of the proposal (model_change_requests.id)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: modeler-apply
+  cancel-in-progress: false
+
+env:
+  PROPOSAL_ID: ${{ github.event.client_payload.proposal_id || inputs.proposal_id }}
+  MODELER_PROD_DB: ${{ secrets.MODELER_PROD_DB }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: PostgreSQL client (model:pull / model:track)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Local database (migration, drift, tests)
+        run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector
+
+      - name: Pull the proposal
+        run: |
+          npm run model:pull -- --id "$PROPOSAL_ID"
+
+      - name: Claude Code and the modeler plugin
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin marketplace add "${{ vars.MODELER_HARNESS || 'iovinoludovico/iovino-harness' }}"
+          claude plugin install modeler@iovino-harness
+          claude plugin install core@iovino-harness
+
+      - name: Branch
+        id: branch
+        run: |
+          short="${PROPOSAL_ID:0:8}"
+          git config user.name "modeler-apply"
+          git config user.email "modeler-apply@users.noreply.github.com"
+          git switch -c "model/$short"
+          echo "name=model/$short" >> "$GITHUB_OUTPUT"
+          echo "file=$(ls .modeler/proposals/*-$short.json | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Apply with Claude Code
+        run: |
+          claude -p "/modeler:apply ${{ steps.branch.outputs.file }}" \
+            --output-format json \
+            --model "${{ vars.MODELER_APPLY_MODEL || 'claude-opus-5-5' }}" \
+            --permission-mode dontAsk \
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run *),Bash(npm test*),Bash(npx supabase *),Bash(supabase *),Bash(git add *),Bash(git commit *),Bash(git status*),Bash(git diff*),Bash(git log*),Bash(python3 tools/modeler/*)" \
+            --max-turns 60 \
+            --max-budget-usd "${{ vars.MODELER_APPLY_BUDGET || 10 }}" \
+            --append-system-prompt-file .github/modeler-apply-rules.md \
+            | tee result.json
+          echo "cost_usd=$(jq -r '.total_cost_usd // "?"' result.json)" >> "$GITHUB_ENV"
+
+      - name: Push and open the pull request
+        id: pr
+        run: |
+          if [ -z "$(git log origin/main..HEAD --oneline)" ]; then
+            echo "Claude Code made no commit" >&2; exit 1
+          fi
+          git push -u origin "${{ steps.branch.outputs.name }}"
+          note="$(jq -r '.note // empty' "${{ steps.branch.outputs.file }}")"
+          { cat .modeler/apply-summary.md 2>/dev/null || echo "Proposal applied by the modeler-apply workflow."
+            echo; echo "---"; echo "Proposal \`$PROPOSAL_ID\` · run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID · cost \$${cost_usd}"
+            echo; echo "Before the merge: \`/core:db-push\` for the new migration. After the deploy: \`npm run model:done -- --write\`."
+          } > pr-body.md
+          url=$(gh pr create --base main --head "${{ steps.branch.outputs.name }}" \
+                  --title "model: ${note:-proposal ${PROPOSAL_ID:0:8}}" --body-file pr-body.md)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "### Pull request: $url · cost \$${cost_usd}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record the pull request on the proposal
+        run: |
+          npm run model:track -- "$PROPOSAL_ID" --pr "${{ steps.pr.outputs.url }}" --write
+
+      - name: Record the failure on the proposal
+        if: failure()
+        run: |
+          npm run model:track -- "$PROPOSAL_ID" --error "run failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --write

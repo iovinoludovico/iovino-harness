@@ -48,6 +48,7 @@ NPM_SCRIPTS = {
     "model:proposals": "python3 tools/modeler/modeler.py proposals",
     "model:propose": "python3 tools/modeler/modeler.py propose",
     "model:pull": "python3 tools/modeler/modeler.py pull",
+    "model:track": "python3 tools/modeler/modeler.py track",
     "model:done": "python3 tools/modeler/modeler.py done",
     "model:apply": "python3 tools/modeler/modeler.py apply",
     "model:migrate": "python3 tools/modeler/modeler.py migrate",
@@ -579,8 +580,32 @@ def _other_proposals(meta_path: Path, src: Path, old: dict[str, Any],
 PULL_SQL = """
 with picked as (
   update public.model_change_requests set status = 'pulled'
-   where status = 'open' returning *)
+   where {where} returning *)
 select coalesce(json_agg(picked order by created_at), '[]') from picked
+"""
+
+
+def pull_sql(proposal_id: str | None = None) -> str:
+    """All the open proposals; with an id, that one row even if already pulled (a CI run may start again)."""
+    if proposal_id is None:
+        return PULL_SQL.format(where="status = 'open'")
+    return PULL_SQL.format(where=f"id = '{_uuid(proposal_id)}' and status in ('open', 'pulled')")
+
+
+def _uuid(value: str) -> str:
+    """A full uuid, lower case, or a ModelError: ids are inlined in SQL, so nothing else may pass."""
+    v = str(value).strip().lower()
+    if not UUID_RE.fullmatch(v):
+        raise M.ModelError(f"not a proposal id (uuid): {value!r}")
+    return v
+
+
+TRACK_SQL = """
+with t as (
+  update public.model_change_requests
+     set pr_url = {pr}, apply_error = {error}, apply_finished_at = now()
+   where id = '{id}' returning id, status, pr_url, apply_error)
+select coalesce(json_agg(t), '[]') from t
 """
 
 
@@ -664,9 +689,10 @@ NO_PROD_DB = ("no production database: link the app with `supabase link --projec
 def cmd_pull(a) -> int:
     """Copies the open proposals stored by the production modeler into .modeler/proposals/."""
     meta_path = find_metamodel(a.path)
+    sql = pull_sql(getattr(a, "id", None))
     try:
         dsn, linked = _prod_target(a, meta_path.parent)
-        rows = _prod_query(dsn, PULL_SQL, "pulling from", linked=linked, root=meta_path.parent) or []
+        rows = _prod_query(dsn, sql, "pulling from", linked=linked, root=meta_path.parent) or []
     except NoProductionDb:
         print(NO_PROD_DB, file=sys.stderr)
         return 2
@@ -680,6 +706,34 @@ def cmd_pull(a) -> int:
         _write_json(d / name, doc)
         print(f"  + {d / name}")
     print(f"{len(rows)} proposal(s) pulled" + ("; review them with `proposals`" if rows else ""))
+    if getattr(a, "id", None) and not rows:
+        print(f"proposal {a.id} not found, or already applied/rejected", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_track(a) -> int:
+    """Writes on a production proposal the outcome of an apply run (the PR link, or the error): the admin page
+    shows it next to the proposal. Used by the `modeler-apply` workflow; the row keeps its status until `done`."""
+    meta_path = find_metamodel(a.path)
+    pid = _uuid(a.id)
+    lit = lambda v: "null" if v is None else "'" + str(v).replace("'", "''") + "'"  # noqa: E731
+    sql = TRACK_SQL.format(id=pid, pr=lit(a.pr), error=lit(a.error))
+    if not a.write:
+        print(sql.strip())
+        print("\n(dry run: pass --write to update model_change_requests)")
+        return 0
+    try:
+        dsn, linked = _prod_target(a, meta_path.parent)
+        rows = _prod_query(dsn, sql, "tracking on", linked=linked, root=meta_path.parent) or []
+    except NoProductionDb:
+        print(NO_PROD_DB, file=sys.stderr)
+        return 2
+    if not rows:
+        print(f"proposal {pid} not found in model_change_requests", file=sys.stderr)
+        return 1
+    r = rows[0]
+    print(f"{r['id']}: status {r['status']}, pr_url {r.get('pr_url') or '-'}, apply_error {r.get('apply_error') or '-'}")
     return 0
 
 
@@ -1067,6 +1121,13 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
         if has_templates(target) and not list(mig.glob("*_notification_templates.sql")):
             stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1)).strftime("%Y%m%d%H%M%S")
             copy(KIT_DIR / "notification_templates.sql", f"supabase/migrations/{stamp}_notification_templates.sql")
+        if not list(mig.glob("*_model_change_requests_apply.sql")):
+            stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=2)).strftime("%Y%m%d%H%M%S")
+            copy(KIT_DIR / "model_change_requests_apply.sql",
+                 f"supabase/migrations/{stamp}_model_change_requests_apply.sql")
+    # apply from the web: the workflow and its rules belong to the app (adapted, written once)
+    copy(KIT_DIR / "github" / "modeler-apply.yml", ".github/workflows/modeler-apply.yml", overwrite=False)
+    copy(KIT_DIR / "github" / "modeler-apply-rules.md", ".github/modeler-apply-rules.md", overwrite=False)
     pkg = target / "package.json"
     data = json.loads(pkg.read_text(encoding="utf-8"))
     scripts = data.setdefault("scripts", {})
@@ -1322,7 +1383,17 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("pull", help="copy the proposals saved in production (model_change_requests)")
     s.add_argument("path", nargs="?")
     s.add_argument("--db", help="DSN (default: MODELER_PROD_DB or the Supabase project linked with `supabase link`)")
+    s.add_argument("--id", help="one proposal (uuid), even if already pulled: what the modeler-apply workflow does")
     s.set_defaults(fn=cmd_pull)
+
+    s = sub.add_parser("track", help="write on a production proposal the outcome of an apply run (PR link or error)")
+    s.add_argument("id", help="the proposal (uuid)")
+    s.add_argument("--path", help="metamodel file or app directory")
+    s.add_argument("--pr", help="URL of the pull request opened for it")
+    s.add_argument("--error", help="why the run failed (e.g. the URL of the workflow run)")
+    s.add_argument("--db", help="DSN (default: MODELER_PROD_DB or the Supabase project linked with `supabase link`)")
+    s.add_argument("--write", action="store_true", help="update model_change_requests (otherwise print the SQL)")
+    s.set_defaults(fn=cmd_track)
 
     s = sub.add_parser("done", help="mark in production the pulled proposals applied or rejected in the repository")
     s.add_argument("path", nargs="?")

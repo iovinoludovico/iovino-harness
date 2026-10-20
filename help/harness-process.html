@@ -251,7 +251,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted);max-width:72ch}
   <h2><span class="n">3</span>Le proposte dal modellatore web</h2>
   <p class="lead">Un salvataggio in <code>/admin/model</code> non cambia mai l'app in esercizio: è una proposta, in sviluppo un file e in produzione una riga, applicata dal repository con una patch riga per riga.</p>
   <figure>
-  <svg viewBox="0 0 1000 345" role="img" aria-label="Flusso delle proposte: l'editor /admin/model salva in sviluppo un file in .modeler/proposals e in produzione una riga in model_change_requests; model:pull scarica la riga; /modeler:apply riscrive solo le righe cambiate di domain.ecore.yaml e behavior.yaml; seguono migrazione e codice, /core:db-push, deploy e model:done che segna la riga applied.">
+  <svg viewBox="0 0 1000 345" role="img" aria-label="Flusso delle proposte: l'editor /admin/model salva in sviluppo un file in .modeler/proposals e in produzione una riga in model_change_requests; il bottone Applica avvia il workflow modeler-apply che apre la PR con Claude Code; model:pull scarica la riga; /modeler:apply riscrive solo le righe cambiate di domain.ecore.yaml e behavior.yaml; seguono migrazione e codice, /core:db-push, deploy e model:done che segna la riga applied.">
     <defs>
       <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
       <marker id="a3h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
@@ -271,8 +271,8 @@ footer{margin-top:40px;font-size:13px;color:var(--muted);max-width:72ch}
     <path class="ar" d="M190 123H220V186H248" marker-end="url(#a3)"/>
 
     <rect class="box" x="500" y="160" width="130" height="52" rx="3"/>
-    <text class="t m" x="565" y="182">model:pull</text>
-    <text class="t s" x="565" y="199">DSN dal progetto linkato</text>
+    <text class="t m" x="565" y="182">model:pull · «Applica»</text>
+    <text class="t s" x="565" y="199">dal repo, o workflow → PR</text>
     <path class="ar" d="M460 186H498" marker-end="url(#a3)"/>
 
     <rect class="box hi" x="690" y="90" width="190" height="66" rx="3"/>
