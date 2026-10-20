@@ -11,7 +11,7 @@
 
 import Script from "next/script";
 import { useCallback, useEffect, useRef, useState, type DetailedHTMLProps, type HTMLAttributes, type Ref } from "react";
-import { listMetamodelProposals, rejectMetamodelProposal, requestProposalApply, type PendingProposal } from "@/lib/modeler/metamodel-actions";
+import { listMetamodelProposals, rejectMetamodelProposal, requestProposalApply, requestProposalRelease, proposalPullRequest, type PendingProposal, type ProposalPullRequest } from "@/lib/modeler/metamodel-actions";
 import { BehaviorView } from "./behavior-view";
 
 export type ProposalResult = { ok: boolean; message: string };
@@ -50,6 +50,15 @@ const TEXT = {
     applying: (d: string) => `in corso dalle ${d}…`,
     prOpen: "PR aperta",
     applyFailed: "applicazione fallita",
+    review: "Rivedi",
+    hideReview: "Chiudi",
+    release: "Conferma e rilascia",
+    confirmRelease: "Rilasciare questa modifica? Il workflow applica le migrazioni al database di produzione, unisce la PR (parte il deploy) e chiude la proposta. Non si annulla.",
+    releasing: (d: string) => `rilascio in corso dalle ${d}…`,
+    merged: "unita, deploy in corso",
+    releaseFailed: "rilascio fallito",
+    onGitHub: "apri su GitHub",
+    prFacts: (p: ProposalPullRequest) => `${p.state}${p.merged ? ", merged" : ""} · ${p.changedFiles} file, +${p.additions} −${p.deletions} · ${p.mergeable === false ? "non unibile" : p.mergeable ? "unibile" : "stato in calcolo"} (${p.mergeableState})`,
   },
   en: {
     pending: (n: number) => (n === 1 ? "1 proposal saved and not applied yet" : `${n} proposals saved and not applied yet`),
@@ -69,6 +78,15 @@ const TEXT = {
     applying: (d: string) => `running since ${d}…`,
     prOpen: "PR open",
     applyFailed: "apply failed",
+    review: "Review",
+    hideReview: "Close",
+    release: "Confirm and release",
+    confirmRelease: "Release this change? The workflow applies the migrations to the production database, merges the PR (the deploy starts) and closes the proposal. This cannot be undone.",
+    releasing: (d: string) => `release running since ${d}…`,
+    merged: "merged, deploying",
+    releaseFailed: "release failed",
+    onGitHub: "open on GitHub",
+    prFacts: (p: ProposalPullRequest) => `${p.state}${p.merged ? ", merged" : ""} · ${p.changedFiles} files, +${p.additions} −${p.deletions} · ${p.mergeable === false ? "not mergeable" : p.mergeable ? "mergeable" : "computing"} (${p.mergeableState})`,
   },
 };
 
@@ -200,6 +218,22 @@ export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "
     setPending(await loadPending());
   };
 
+  // "Review": the pull request as GitHub describes it, under the proposal; "Confirm and release" starts the release workflow.
+  const [review, setReview] = useState<{ id: string; pr: ProposalPullRequest | null; error: string | null } | null>(null);
+  const toggleReview = async (p: Pending) => {
+    if (review?.id === p.id) { setReview(null); return; }
+    const res = await proposalPullRequest(p.id);
+    if ("ok" in res) setReview({ id: p.id, pr: null, error: res.message });
+    else setReview({ id: p.id, pr: res, error: null });
+  };
+  const releaseWeb = async (p: Pending) => {
+    if (!window.confirm(t.confirmRelease)) return;
+    const res = await requestProposalRelease(p.id);
+    setResult(res);
+    setReview(null);
+    setPending(await loadPending());
+  };
+
   const download = () => {
     if (!last) return;
     const blob = new Blob([JSON.stringify({ note: last.note, created_at: new Date().toISOString(), metamodel: last.metamodel, ...(last.behavior ? { behavior: last.behavior } : {}) }, null, 2)], {
@@ -248,6 +282,22 @@ export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "
                         {t.prOpen}
                       </a>
                     )}
+                    {canEdit && p.prUrl && !p.mergedAt && !p.releaseRequestedAt && (
+                      <button type="button" className="underline" onClick={() => toggleReview(p)}>
+                        {review?.id === p.id ? t.hideReview : t.review}
+                      </button>
+                    )}
+                    {canEdit && p.prUrl && p.releaseError && !p.mergedAt && (
+                      <button type="button" className="underline" onClick={() => toggleReview(p)}>
+                        {review?.id === p.id ? t.hideReview : t.retry}
+                      </button>
+                    )}
+                    {canEdit && p.prUrl && p.releaseRequestedAt && !p.mergedAt && !p.releaseError && (
+                      <span className="text-muted-foreground">{t.releasing(when(p.releaseRequestedAt))}</span>
+                    )}
+                    {canEdit && p.mergedAt && !p.deployedAt && !p.releaseError && (
+                      <span className="text-muted-foreground">{t.merged}</span>
+                    )}
                     {canEdit && !p.prUrl && p.applyRequestedAt && !p.applyError && !p.applyFinishedAt && (
                       <span className="text-muted-foreground">{t.applying(when(p.applyRequestedAt))}</span>
                     )}
@@ -259,6 +309,26 @@ export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "
                   </div>
                   {p.applyError && !p.prUrl && (
                     <p className="mt-1 text-xs text-destructive">{t.applyFailed}: {p.applyError}</p>
+                  )}
+                  {p.releaseError && (
+                    <p className="mt-1 text-xs text-destructive">{t.releaseFailed}: {p.releaseError}</p>
+                  )}
+                  {review?.id === p.id && (
+                    <div className="mt-2 rounded border bg-muted/40 p-2 text-xs">
+                      {review.error && <p className="text-destructive">{review.error}</p>}
+                      {review.pr && (
+                        <>
+                          <p className="font-medium">#{review.pr.number} {review.pr.title}</p>
+                          <p className="text-muted-foreground">{t.prFacts(review.pr)} · <a className="underline" href={review.pr.htmlUrl} target="_blank" rel="noreferrer">{t.onGitHub}</a></p>
+                          <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap font-mono">{review.pr.body.split("\n").slice(0, 60).join("\n")}</pre>
+                          {!p.mergedAt && review.pr.state === "open" && !review.pr.merged && (
+                            <button type="button" className="mt-2 rounded bg-primary px-2 py-1 font-medium text-primary-foreground" onClick={() => releaseWeb(p)}>
+                              {t.release}
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   )}
                   <pre className="mt-1 whitespace-pre-wrap font-mono text-xs text-muted-foreground">
                     {lines.length ? lines.slice(0, 8).join("\n") + (lines.length > 8 ? `\n${t.more(lines.length - 8)}` : "") : t.noChanges}

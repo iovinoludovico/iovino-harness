@@ -57,6 +57,10 @@ l'utente in un suo terminale).
   (primo deploy), il prossimo passo è il deploy con i passi della skill `core:deploy` (Supabase Auth, pannello,
   proxy): rimanda a quelli, non inventare istruzioni per il server; a deploy fatto, `/core:security-audit`.
 
+In CI gli stessi passi (pre-controlli, elenco, stop sulle migrazioni remote sconosciute o fuori ordine, `db push`
+--db-url) li fa il workflow `modeler-release` di un'app con il modellatore, avviato da «Conferma e rilascia» in
+`/admin/model` (skill `modeler:install`, sezione 7).
+
 ## Regole
 - Mai `supabase db reset --linked`, mai `supabase migration repair`, mai `--include-all` senza richiesta esplicita.
 - Mai modificare una migrazione già applicata: le correzioni sono migrazioni nuove.

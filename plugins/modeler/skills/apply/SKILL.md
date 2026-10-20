@@ -52,7 +52,9 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    In produzione la migrazione va applicata con `/core:db-push` prima del push del codice.
    Una proposta di produzione può arrivare anche come **PR già aperta** dal bottone «Applica» di `/admin/model`
    (workflow `modeler-apply`, skill `install` sezione 7): revisione della PR, `/core:db-push` prima del merge, merge
-   confermato, poi il punto 6 come per ogni proposta di produzione.
+   confermato, poi il punto 6 come per ogni proposta di produzione; oppure l'admin la rilascia da `/admin/model`
+   («Conferma e rilascia», workflow `modeler-release`), che fa db push, merge, attesa del deploy e `model:done` da
+   solo: in quel caso qui non c'è nulla da fare, salvo leggere l'esito sulla riga o nel run.
 6. Per le proposte arrivate da produzione, dopo il deploy e solo su richiesta dell'utente: `npm run model:done`
    (prova a vuoto) e `npm run model:done -- --write`. Segna `applied` in `model_change_requests` le proposte in
    `.modeler/proposals/applied/` e `rejected` quelle scartate dal modellatore locale (`rejected/`), così spariscono
