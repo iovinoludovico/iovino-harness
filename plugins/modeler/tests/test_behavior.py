@@ -175,6 +175,28 @@ class BehaviorTests(unittest.TestCase):
         errs = errors(behavior(), m)
         self.assertTrue(any("notify_bookings_guest" in x and "self.guest.email' is string" in x for x in errs), errs)
 
+    def test_recipients_travel_on_the_transition_event(self):
+        self.assertEqual(B.validate(behavior(), meta()).warnings, [])
+        b = behavior()
+        b["events"]["Invitation"]["assigned"] = {}
+        b["workflows"]["Invitation"]["transitions"]["approve"]["emits"] = ["assigned"]
+        b["reactions"].append({"name": "notify_assigned", "event": "Invitation.assigned", "notify": ["office"], "template": "assigned"})
+        w = [x for x in B.validate(b, meta()).warnings if "notify_assigned" in x]
+        self.assertEqual(len(w), 2, w)
+        self.assertIn("recipients on Invitation.assigned, a secondary event of transition `approve`", w[0])
+        self.assertIn("`when: transition = approve`", w[0])
+        self.assertIn("notifies on both Invitation.transitioned (notify_to_manage, notify_approved) and Invitation.assigned", w[1])
+        # the secondary event without recipients carries data only: fine
+        b["reactions"].pop()
+        self.assertEqual(B.validate(b, meta()).warnings, [])
+        # a reaction with recipients on an event no subscription receives
+        b = behavior()
+        b["subscriptions"][0]["events"] = ["Invitation.transitioned", "Guest.*"]
+        w = [x for x in B.validate(b, meta()).warnings if "notify_reverted" in x]
+        self.assertEqual(len(w), 1, w)
+        self.assertIn("notifies on Invitation.reverted but no subscription receives it", w[0])
+        self.assertEqual(B.transition_reactions(B.expand(behavior()), E.expand(meta()), "Invitation")["submit"], ["notify_submitted"])
+
     def test_collection_multiplicities_are_enforced_by_a_guard_or_reported(self):
         # the fixture: Invitation.invitationFunds is 1..* and dataComplete (a guard of submit) reads it: nothing to say
         self.assertEqual(B.validate(behavior(), meta()).warnings, [])
@@ -598,7 +620,8 @@ class GenerationTests(unittest.TestCase):
                      "The state is the attribute `state`.", "```mermaid\nstateDiagram-v2\n  draft: Draft", "  [*] --> draft", "  closed --> [*]",
                      "  in_management --> awaiting_confirmation: Visit ended (auto)", "  draft --> cancelled: Cancel",
                      "| `awaiting_confirmation` | Awaiting visit confirmation |  | `self.issuer` | `self.issuer`, `office` | after 7d (`visit_confirmation_reminder`) |",
-                     "| `approve` | Approve | pending_director → in_management | `director` | `not agencyBookingRequired` | `dataComplete` |  |  |",
+                     "| `approve` | Approve | pending_director → in_management | `director` | `not agencyBookingRequired` | `dataComplete` |  |  | `office` (`invitation_to_manage`); `self.issuer` (`invitation_approved`) |",
+                     "| `submit` | Submit | draft → pending_director | `self.issuer` |  | `dataComplete` |  |  | `director` (`invitation_submitted`) |",
                      "| `visit_ended` | Visit ended | in_management → awaiting_confirmation | system: `endDate + 1d` |  |  |  | `visit_ended` |",
                      "| `withdraw` | Cancel | draft, rejected → cancelled | `self.issuer`, `office` |", "| `reject` | Reject | pending_director → rejected | `director` |  |  | required |  |",
                      "Back to a previous state: `office`, `director`; from a final state: `office`; comment required.",
@@ -994,6 +1017,7 @@ class EngineTests(unittest.TestCase):
     def test_engine_sql_text(self):
         from metamodel import engine as N
         sql, notes = N.engine_sql(behavior(), meta())
+        self.assertIn("jsonb_build_object('recipients'", sql)      # every emitted event carries `recipients`, [] when nobody
         for frag in ["create or replace function public.invitation_principals(r public.invitations)",
                      "case when r.issuer = public.current_profile_id() then 'field:issuer' end",
                      "case when public.has_role('director', r.department) then 'director' end",

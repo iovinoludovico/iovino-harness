@@ -764,12 +764,52 @@ def _check_reactions(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> Non
             _check_expr(e, ctx, r["when"], f"{where}.when", rep)
         if not r["notify"]:
             rep.error(where, "notify: who is notified (principals; a reaction does one thing: notify)")
+        else:
+            _check_recipients_event(b, e, cname, event, where, rep)
+            if b["subscriptions"] and not any(p in (f"{cname}.*", on) for s in b["subscriptions"] for p in s["events"]):
+                rep.warn(where, f"notifies on {on} but no subscription receives it: add {cname}.* or {on} to the "
+                                "events of a subscription")
         for p in r["notify"]:
             _check_principal(b, e, cname, p, f"{where}.notify", rep, notify=True)
         if r.get("template") is None:
             rep.error(where, "template: the key of the message template the subscriber renders")
         elif not IDENT.match(str(r["template"])):
             rep.error(f"{where}.template", "a lowercase identifier")
+
+
+def _check_recipients_event(b: dict[str, Any], e: dict[str, Any], cname: str, event: str, where: str, rep: M.Report) -> None:
+    """The recipients of a user's action travel on `<Class>.transitioned` (`when: transition = <key>`): a subscriber of
+    the state change gets them in `recipients`. A reaction with `notify` on an event a transition emits (`emits`)
+    hides them from that subscriber; on both events it notifies twice."""
+    w = b["workflows"].get(cname)
+    if not w or event in WORKFLOW_EVENTS or event in LIFECYCLE_EVENTS:
+        return
+    named = transition_reactions(b, e, cname)
+    for tn, tr in w["transitions"].items():
+        if event not in tr["emits"]:
+            continue
+        rep.warn(where, f"recipients on {cname}.{event}, a secondary event of transition `{tn}`: subscribers of "
+                        f"{cname}.transitioned get none; move the reaction to {cname}.transitioned with "
+                        f"`when: transition = {tn}`")
+        if named.get(tn):
+            rep.warn(where, f"transition `{tn}` notifies on both {cname}.transitioned ({', '.join(named[tn])}) "
+                            f"and {cname}.{event}: double notifications")
+
+
+def transition_reactions(b: dict[str, Any], e: dict[str, Any], cname: str) -> dict[str, list[str]]:
+    """{transition key: [reaction names]} for the reactions on `<Class>.transitioned` whose `when` names the
+    transition (`transition = x`, `transition in [a, b]`). A `when` that does not type-check contributes nothing."""
+    out: dict[str, list[str]] = {}
+    for r in b["reactions"]:
+        if r.get("event") != f"{cname}.transitioned" or not r.get("when"):
+            continue
+        try:
+            node, _ = X.check(str(r["when"]), context(e, b, cname, "transitioned"), X.BOOL)
+        except X.ExprError:
+            continue
+        for key in _transition_keys(node) or []:
+            out.setdefault(key, []).append(str(r.get("name")))
+    return out
 
 
 def _check_subscriptions(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> None:
@@ -818,7 +858,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "states": "Stati", "state": "Stato", "kind": "Tipo", "initial": "iniziale", "final": "finale",
         "owner": "In attesa di", "editable_by": "Modificabile da", "reminder": "Sollecito", "reminder_text": "dopo {after} (`{template}`)",
         "transitions": "Transizioni", "transition": "Transizione", "from_to": "Da → A", "by": "Chi", "when": "Condizione",
-        "guard": "Requisito", "comment": "Commento", "at": "Scadenza", "emits": "Eventi", "system": "sistema: {at}",
+        "guard": "Requisito", "comment": "Commento", "at": "Scadenza", "emits": "Eventi", "notifies": "Avvisa", "system": "sistema: {at}",
         "revert": "Ritorno a uno stato precedente: {by}; da uno stato finale: {final_by}; commento {comment}.",
         "comment_required": "obbligatorio", "comment_optional": "facoltativo",
         "derivations": "Attributi calcolati", "attribute": "Attributo", "formula": "Formula", "in_code": "*calcolato nel codice*",
@@ -838,7 +878,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "states": "States", "state": "State", "kind": "Kind", "initial": "initial", "final": "final",
         "owner": "Waiting for", "editable_by": "Editable by", "reminder": "Reminder", "reminder_text": "after {after} (`{template}`)",
         "transitions": "Transitions", "transition": "Transition", "from_to": "From → To", "by": "Who", "when": "Condition",
-        "guard": "Requirement", "comment": "Comment", "at": "Due", "emits": "Events", "system": "system: {at}",
+        "guard": "Requirement", "comment": "Comment", "at": "Due", "emits": "Events", "notifies": "Notifies", "system": "system: {at}",
         "revert": "Back to a previous state: {by}; from a final state: {final_by}; comment {comment}.",
         "comment_required": "required", "comment_optional": "optional",
         "derivations": "Derived attributes", "attribute": "Attribute", "formula": "Formula", "in_code": "*computed in code*",
@@ -909,14 +949,18 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
                          ", ".join(_code(p) for p in s["editable_by"]), rem_text])
         out += [f"### {t['states']}", ""] + E._table([t["state"], t["label"], t["kind"], t["owner"], t["editable_by"], t["reminder"]], rows) + [""]
         rows = []
+        named = transition_reactions(b, e, cname)                  # who is notified on the state change, per transition
+        by_name = {r.get("name"): r for r in b["reactions"]}
         for tn, tr in w["transitions"].items():
             who = ", ".join(_code(p) for p in tr["by"]) if tr["by"] else t["system"].format(at=_code(tr["at"]))
             comment = t["comment_required"] if tr.get("comment") == "required" else ""
+            notifies = "; ".join(f"{', '.join(_code(p) for p in by_name[n]['notify'])} ({_code(by_name[n].get('template'))})"
+                                 for n in named.get(tn, []) if n in by_name)
             rows.append([_code(tn), _lbl(tr, tn, lang), f"{', '.join(tr['from'])} → {tr['to']}", who,
                          _code(tr.get("when")), _code(tr.get("guard")), comment,
-                         ", ".join(_code(x) for x in tr["emits"])])
+                         ", ".join(_code(x) for x in tr["emits"]), notifies])
         out += [f"### {t['transitions']}", ""] + E._table(
-            [t["transition"], t["label"], t["from_to"], t["by"], t["when"], t["guard"], t["comment"], t["emits"]], rows) + [""]
+            [t["transition"], t["label"], t["from_to"], t["by"], t["when"], t["guard"], t["comment"], t["emits"], t["notifies"]], rows) + [""]
         rv = w.get("revert")
         if rv:
             out += [t["revert"].format(by=", ".join(_code(p) for p in rv["by"]),
