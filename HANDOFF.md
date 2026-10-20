@@ -1,5 +1,5 @@
 # Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
-_Aggiornato: 2026-10-19 · branch `feat/modeler-collection-multiplicities` (2 commit sopra `main` `d9f433c`, non pushati)_
+_Aggiornato: 2026-10-20 · branch `feat/modeler-transition-recipients` (2 commit sopra `main` `35ef643`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -15,7 +15,14 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 - PR #21 (`1aba74a`, modeler 0.21.1): lo stato corrente di `<workflow-view>` è pieno del suo colore con testo bianco
   e anello, gli altri stati attenuati, `data-state-missing` per un valore non tra gli stati; sandbox a 0.21.1.
 - PR #22 (`d9f433c`, core 0.13.0, modeler 0.21.2): convenzione sui link costruiti dal database, appforge rimosso ovunque.
-- Branch locale `feat/modeler-collection-multiplicities` (quarta revisione delle note, da unire con `/core:ship`):
+- PR #23 (`35ef643`, modeler 0.22.0): cardinalità delle collezioni (notazione, warning di `validate`, skill).
+- Branch locale `feat/modeler-transition-recipients` (quinta revisione delle note, da unire con `/core:ship`):
+  `c2622dd feat(modeler): recipients of a transition travel on the state-change event` + `dab0d50 chore(release):
+  modeler 0.23.0`: regola ed esempio in `behavior-notation.md`; `validate` avvisa per destinatari su un evento
+  secondario (`emits`), per doppi destinatari e per reazioni che nessuna `subscription` riceve
+  (`_check_recipients_event`, `transition_reactions`); colonna «Avvisa» in `BEHAVIOR.md`; test sul `recipients`
+  sempre presente nel motore generato. Nessuna nota «da valutare» in `NOTES.md` (restano i due residui a condizione).
+- Storia (PR #23, già in `main`): branch `feat/modeler-collection-multiplicities`:
   `feat(modeler): minimum and maximum of a collection, enforced by a guard or reported` + release (modeler 0.22.0):
   notazione, `_check_multiplicities`/`_guarded` in `behavior.validate` (minimo senza guardia), warning di
   `ecore.validate` per `upper` finito (normalizzato a many), skill `metamodel` §3b e `apply`, fixture con
@@ -65,8 +72,8 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` del branch `feat/modeler-collection-multiplicities` (push, PR, merge su conferma); poi sugli altri
-   computer `claude plugin update core@iovino-harness modeler@iovino-harness`.
+1. `/core:ship` del branch `feat/modeler-transition-recipients` (push, PR, merge su conferma); poi sugli altri
+   computer `claude plugin update core@iovino-harness modeler@iovino-harness` (0.13.0 / 0.23.0).
 2. In order-management: `/modeler:install` per portare `public/modeler/metamodel-editor.js` a 0.21.1 e ricarica forzata
    di `/orders/[id]` scheda «Diagramma»; poi, per la convenzione nuova, migrazione `create or replace` delle `<e>_json`
    con una `record_url(entity, id)` SQL, redirect `/e/<entità>/<id>` → pagina nuova e test sull'`url` dei payload.

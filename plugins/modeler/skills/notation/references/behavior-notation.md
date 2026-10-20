@@ -115,6 +115,18 @@ A principal path always starts with `self.`: this tells the reference `issuer` a
 - A reaction is `event: <Class>.<event>`, an optional `when` (in `<Class>.transitioned` the variable `transition`
   is the key of the transition that fired: `transition in [submit, resubmit]`), `notify` (principals) and the
   `template` the subscriber renders. Names are unique identifiers.
+- The recipients of a user's action travel on the state change: a reaction on `<Class>.transitioned` with
+  `when: transition = <key>`, so a subscriber of `<Class>.transitioned` finds them in `recipients` (always present,
+  `[]` when nobody; a hand-written engine must do the same: `behavior --format sql`). An event a transition lists in
+  `emits` carries extra data (the values chosen, the previous ones), not recipients: a reaction with `notify` on it
+  hides them from the subscriber of the state change (and notifies twice if both events have recipients); `validate`
+  warns. Recipients belong on a secondary event only when no transition fires (a timed or external event).
+  ```yaml
+  transitions:
+    assign: {from: approved, to: assigned, by: [manager], emits: assigned}        # order.assigned: the assistants chosen
+  reactions:
+    - {name: notify_assigned, event: Order.transitioned, when: transition = assign, notify: [self.assistants.email], template: order_assigned}
+  ```
 - A subscription names the webhook URL by environment variable (`url_env`) or `url`, and the event patterns it
   receives: `<Class>.*`, `<Class>.<event>`, and the system patterns `user.*`, `webhook.test`.
 
