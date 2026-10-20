@@ -9,6 +9,10 @@
 // A proposal never alters the running app: the metamodel changes only through the repository
 // (domain.ecore.yaml + migration + code, then deploy). The page lists the proposals still waiting
 // (listMetamodelProposals) so that nobody wonders where a saved change went, and can reject one.
+// "Apply" on a production proposal (requestProposalApply) starts the `modeler-apply` GitHub Actions workflow
+// (repository_dispatch): Claude Code applies it on a branch and opens the pull request, whose link comes back on
+// the row (`npm run model:track`). Env of the app: MODELER_APPLY_REPO (owner/repo) and MODELER_APPLY_TOKEN (a
+// fine-grained token with Contents: write on that repository only); the token never leaves the server.
 
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -24,6 +28,10 @@ export type PendingProposal = {
   createdAt: string;
   status: string;          // open | pulled
   metamodel: unknown;
+  applyRequestedAt?: string | null;   // "Apply" pressed (production): the workflow is running or has finished
+  applyFinishedAt?: string | null;
+  prUrl?: string | null;              // the pull request the workflow opened
+  applyError?: string | null;         // why the last run failed (link to the run)
 };
 
 const MAX_BYTES = 1_000_000;
@@ -99,22 +107,60 @@ export async function listMetamodelProposals(): Promise<PendingProposal[]> {
   // supabase-js infers the row shape from the select string, so the two queries have different types: both are
   // read as `ProposalRow` (the fallback simply has no `behavior`).
   type ProposalRow = { id: unknown; metamodel: unknown; behavior?: unknown; note?: string | null;
-                       author_email?: string | null; status: unknown; created_at: unknown };
+                       author_email?: string | null; status: unknown; created_at: unknown;
+                       apply_requested_at?: string | null; apply_finished_at?: string | null;
+                       pr_url?: string | null; apply_error?: string | null };
+  type Rows = { data: ProposalRow[] | null; error: { message: string } | null };
   const select = (columns: string) => db
     .from("model_change_requests")
     .select(columns)
     .in("status", ["open", "pulled"])
     .order("created_at", { ascending: true });
-  let { data, error } = (await select("id, metamodel, behavior, note, author_email, status, created_at")) as
-    { data: ProposalRow[] | null; error: { message: string } | null };
-  if (error && /behavior/.test(error.message)) {
-    ({ data, error } = (await select("id, metamodel, note, author_email, status, created_at")) as
-      { data: ProposalRow[] | null; error: { message: string } | null });
-  }
+  const base = "id, metamodel, note, author_email, status, created_at";
+  // columns added over time (behaviour proposals, apply from the web): without them, select the rest
+  let { data, error } = (await select(`${base}, behavior, apply_requested_at, apply_finished_at, pr_url, apply_error`)) as Rows;
+  if (error && /apply_|pr_url/.test(error.message)) ({ data, error } = (await select(`${base}, behavior`)) as Rows);
+  if (error && /behavior/.test(error.message)) ({ data, error } = (await select(base)) as Rows);
   if (error) throw new Error(error.message);
   return (data ?? []).map((r) => ({ id: String(r.id), author: r.author_email ?? null, note: r.note ?? null,
                                     createdAt: String(r.created_at), status: String(r.status), metamodel: r.metamodel,
-                                    behavior: r.behavior ?? undefined }));
+                                    behavior: r.behavior ?? undefined,
+                                    applyRequestedAt: r.apply_requested_at ?? null, applyFinishedAt: r.apply_finished_at ?? null,
+                                    prUrl: r.pr_url ?? null, applyError: r.apply_error ?? null }));
+}
+
+/** Starts the `modeler-apply` workflow on a production proposal: a repository_dispatch to the app's GitHub
+ * repository, which pulls that proposal, runs Claude Code and opens the pull request (its link comes back on the
+ * row with `npm run model:track`). Development proposals are applied with /modeler:apply instead. */
+export async function requestProposalApply(id: string): Promise<ProposalResult> {
+  await requireModelerAdmin();
+  if (proposalMode() === "file") {
+    return { ok: false, message: "In development a proposal is applied with /modeler:apply (npm run model:apply)." };
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, message: "Invalid proposal" };
+  const repo = process.env.MODELER_APPLY_REPO;
+  const token = process.env.MODELER_APPLY_TOKEN;
+  if (!repo || !token) {
+    return { ok: false, message: "Apply from the web is not configured: set MODELER_APPLY_REPO (owner/repo) and MODELER_APPLY_TOKEN in the app's environment (see the modeler install skill, section 7)." };
+  }
+  const res = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+    body: JSON.stringify({ event_type: "modeler-apply", client_payload: { proposal_id: id } }),
+  }).catch((e: unknown) => ({ ok: false, status: 0, text: async () => String(e) }));
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).slice(0, 200);
+    return { ok: false, message: `GitHub refused the dispatch (${res.status}): ${detail || "check MODELER_APPLY_REPO and the token's permissions"}` };
+  }
+  const db = await modelerDb();
+  const { error } = await db.from("model_change_requests")
+    .update({ apply_requested_at: new Date().toISOString(), apply_finished_at: null, pr_url: null, apply_error: null })
+    .eq("id", id).in("status", ["open", "pulled"]);
+  if (error && /apply_|pr_url/.test(error.message)) {
+    return { ok: true, message: "Workflow started. model_change_requests has no apply columns yet (migration model_change_requests_apply in the install skill): the pull request link will not show here." };
+  }
+  if (error) return { ok: false, message: error.message };
+  return { ok: true, message: "Workflow started: the pull request will appear here when it is ready (a few minutes)." };
 }
 
 /** Rejects a pending proposal: moved to .modeler/proposals/rejected/ in development, status `rejected` in production. */

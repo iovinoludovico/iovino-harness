@@ -1,5 +1,5 @@
-# Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
-_Aggiornato: 2026-10-20 · branch `feat/modeler-notification-templates` (2 commit sopra `main` `d4dae36`, non pushati)_
+# Handoff — modellatore: skill `behavior`, proposte dal prompt, applicazione dal web (PR via GitHub Actions)
+_Aggiornato: 2026-10-20 · branch `feat/modeler-apply-from-web` sopra `feat/modeler-propose-from-prompt` e `feat/modeler-behavior-skill` (6 commit sopra `main` `60932ed`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -7,6 +7,45 @@ dettaglio di un record di un'entità con workflow mostra un div con il diagramma
 evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 
 ## Stato
+- Branch `feat/modeler-apply-from-web` (il terzo in pila; da unire con `/core:ship`): in `/admin/model` di produzione
+  il bottone «Applica (apre una PR)» (`requestProposalApply` in `metamodel-actions.ts`) manda un `repository_dispatch`
+  (`MODELER_APPLY_REPO`/`MODELER_APPLY_TOKEN` nel pannello dell'app) al workflow `.github/workflows/modeler-apply.yml`
+  (template `kit/github/`, installato una volta): Supabase locale, `model:pull --id`, Claude Code headless con il
+  plugin (`--permission-mode dontAsk`, `--max-budget-usd`, regole in `.github/modeler-apply-rules.md`), push del
+  branch `model/<id8>`, `gh pr create`, `model:track --pr` (o `--error` su fallimento). Colonne nuove
+  (`kit/model_change_requests_apply.sql`): `apply_requested_at`, `apply_finished_at`, `pr_url`, `apply_error`; il
+  banner mostra «PR aperta» (link), «in corso dalle…», «applicazione fallita» + «Riprova». CLI: `pull --id <uuid>`
+  (`pull_sql`, `_uuid`), `track`, script `model:track`. Skill `install` §7 (segreti, costi, cosa resta manuale),
+  `apply`, `deploy` (variabili del pannello), convenzioni, README, help. Test: `test_pull_one_proposal_and_track_the_outcome`,
+  install/reinstall (workflow parsato, migrazione una volta). Provato nella sandbox in modalità `db` (stub `access.ts`
+  ora su `pg`): quattro stati del banner e dispatch vero verso GitHub (401 con token finto, messaggio mostrato).
+  **Non provato**: un run reale del workflow (serve un repository con i segreti; la skill dice come provarlo con
+  `workflow_dispatch`) e il costo reale per run (`total_cost_usd`): la stima in `install` §7 va confermata al primo run.
+- Branch `feat/modeler-propose-from-prompt` (sopra `feat/modeler-behavior-skill`; da unire con `/core:ship`, in un'unica
+  PR o due): comando CLI `propose` (`cli.cmd_propose`): una bozza in `.modeler/drafts/domain.ecore.yaml` (e
+  `behavior.yaml`) diventa `.modeler/proposals/<data>-prompt.json`, lo stesso JSON del modellatore web (`author:
+  claude`, `source: prompt`, `metamodel` = `runtime_json`, `behavior` = `behavior.json`), validata, con il diff
+  stampato; senza differenze o con bozza non valida non salva. `model:propose` tra gli script, `.modeler/drafts/`
+  in `.gitignore`, `proposals` segna «from the prompt», hook di sessione «or by /modeler:metamodel». Skill
+  `metamodel`: con il modellatore installato la modifica si fa sulla bozza e diventa proposta (§3.3), §4
+  «Applicare» chiede se applicare subito (passi di `apply`) o lasciarla in attesa; `behavior` §2, `apply`, `install`,
+  convenzioni, README, help aggiornati. Test: 3 nuovi (`test_propose_*`). Provato nella sandbox: la proposta compare
+  nel banner di `/admin/model` con diff e «Apri nell'editor» la mostra nel diagramma (poi scartata: la sandbox
+  resta com'era, a parte l'aggiornamento del modellatore).
+- Branch locale `feat/modeler-behavior-skill` (da unire con `/core:ship`): nuova skill
+  `plugins/modeler/skills/behavior/SKILL.md` (dove; `show`; dalle parole al modello con le regole che stavano in
+  `metamodel` §3b: derivazioni, guardie, destinatari sull'evento di stato, cardinalità, `templates:`, ambiguità in
+  un giro; struttura nella stessa modifica via `metamodel`; allineamento: validate, sync, motore generato o a mano,
+  codice, test, proposte via `apply`). `metamodel` resta per la struttura con un §3b di rimando; puntatori
+  aggiornati: `cli.workflow_hint`, nota di `reverse` (`dbschema`), intestazione di `behavior.yaml` (`behavior.dumps`),
+  hook di sessione, `behavior-view.tsx`, skill `install` (frase per il `CLAUDE.md` dell'app), `apply` (motore
+  generato o a mano), `notation`, convenzioni e `project-init` di core, README, `help/harness-process.html`.
+  Test: `workflow_hint` atteso con `/modeler:behavior`. Non provato: la skill su un'app vera (dopo `/reload-plugins`,
+  nella sandbox `/modeler:behavior show Task` e una reazione di prova).
+- PR #26 (`60932ed`, modeler 0.25.0): testi delle notifiche nel modello (`templates:`), resi dal motore, override
+  dalla pagina admin del kit. In order-management i testi sono già nell'app (PR #14 di quel repository: classe
+  `NotificationTemplate`, tabella `notification_templates` con colonna `template`, rendering in `render.ts`,
+  `/admin/templates`; n8n spedisce soltanto): l'allineamento al kit è facoltativo (vedi «Prossimi passi»).
 - `origin/main` è alla PR #20 (`2e6d80c`): **core 0.12.0, modeler 0.21.0**. Storia di oggi: PR #18 `<workflow-view>`
   (modeler 0.19.0); PR #19 `cli.workflow_hint` in `install`/hook/`reverse`, «Motore a mano» in `metamodel` §3b,
   `help/harness-process.html` (core 0.11.0, modeler 0.20.0); PR #20 vista esistente e `<WorkflowView>` in due schede
@@ -94,16 +133,21 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` del branch `feat/modeler-notification-templates` (push, PR, merge su conferma); poi sugli altri
-   computer `claude plugin update core@iovino-harness modeler@iovino-harness` (0.14.0 / 0.25.0).
-2. In order-management: portare i testi delle email dal nodo Code di n8n a `templates:` di `behavior.yaml`
-   (`/modeler:metamodel`), `model:validate`, `model:sync`; con il motore a mano il dispatcher legge
-   `behavior.json.templates` e gli override con lo stesso `render_template` (il modello generato dal kit non
-   sostituisce l'SQL dell'app); la classe `NotificationTemplate` dell'app può lasciare il posto alla tabella
-   `notification_templates` del kit.
-3. In order-management, con il modeler 0.25.0: `/modeler:install` segue da solo il punto 6 della skill; al primo
-   `npm run model:pull` senza `psql` verificare la busta di `supabase db query` (se il formato differisce, adattare
-   `dbschema.cli_query`).
+0. Misura del costo nella sandbox, dall'utente in un suo terminale (chiave API mai in chat né nel repository):
+   `cd ~/Documents/GitHub/modeler-sandbox && ANTHROPIC_API_KEY=… claude -p "/modeler:apply <file> --write" --output-format json
+   --permission-mode dontAsk --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run *),Bash(git *)" --max-turns 40 --max-budget-usd 5`
+   su una proposta di prova (`model:propose`); `total_cost_usd` tara `MODELER_APPLY_BUDGET` e la tabella in `install` §7.
+1. `/core:ship` dei tre branch in pila (`feat/modeler-behavior-skill`, `feat/modeler-propose-from-prompt`,
+   `feat/modeler-apply-from-web`: una PR per branch o una sola dall'ultimo; push, PR, merge su conferma); poi `/reload-plugins` e sugli
+   altri computer `claude plugin update core@iovino-harness modeler@iovino-harness`. Prova nella sandbox:
+   `/modeler:behavior show Task` e una reazione di prova («avvisa l'assegnatario quando il task torna in todo»):
+   reazione, template, `sync`, `engine --write` senza passare da `model:migrate`.
+2. In order-management (modeler installato 0.23.0): `/modeler:install` segue da solo il punto 6 della skill e porta nel
+   `CLAUDE.md` dell'app la riga su `/modeler:behavior`; rifiutare la migrazione `notification_templates` del kit
+   (colonna `key`; la tabella dell'app ha `template` e la sua pagina). Facoltativo: `templates:` in `behavior.yaml`
+   con i testi del seed riscritti con i segnaposto della notazione (`{{self.code}}`, `{{actor.name}}`, `{{url}}`) e
+   `render.ts` che li risolve. Al primo `npm run model:pull` senza `psql` verificare la busta di `supabase db query`
+   (se il formato differisce, adattare `dbschema.cli_query`).
 4. In order-management, per la convenzione sui link costruiti dal database: migrazione `create or replace` delle
    `<e>_json` con una `record_url(entity, id)` SQL, redirect `/e/<entità>/<id>` → pagina nuova e test sull'`url`.
 3. In invitations-af e order-management: `/modeler:install` (0.19.0) e `<WorkflowView>` nelle pagine di dettaglio delle

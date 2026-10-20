@@ -141,14 +141,15 @@ def session(data: dict) -> int:
                          "then /reload-plugins).")
         if (root / BEHAVIOR_FILE).exists():
             lines.append(f"Behaviour model: {root / BEHAVIOR_FILE} (roles, derivations, workflows, events, reactions), "
-                         "written on the concepts of the metamodel and checked against it by `npm run model:validate`.")
+                         "written on the concepts of the metamodel and checked against it by `npm run model:validate`; "
+                         "it is edited with /modeler:behavior, in the same change as the code that runs it.")
         else:
             hint = cli.workflow_hint(root)                   # workflows in code, no behaviour model yet
             if hint:
                 lines.append(hint)
         pending = sorted(cli.proposals_dir(root / METAMODEL_FILE).glob("*.json"))
         if pending:
-            lines.append(f"{len(pending)} proposal(s) saved by the admin modeler and not applied yet "
+            lines.append(f"{len(pending)} proposal(s) saved by the admin modeler or by /modeler:metamodel and not applied yet "
                          f"(.modeler/proposals/: {', '.join(p.name for p in pending[:5])}): tell the user and "
                          "propose /modeler:apply. Production proposals: `pull`.")
         docs = cli.docs_status(root)

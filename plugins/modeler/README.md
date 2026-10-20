@@ -27,7 +27,13 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   development, a `model_change_requests` row in production) applied with `/modeler:apply`, which goes on with
   the migration and the code in the same change. Until then `/admin/model` lists it above the editor (date,
   author, note, the changes as `modeler diff` prints them), where it can be opened or rejected, and the session
-  start reminds the developer of the proposals in `.modeler/proposals/`.
+  start reminds the developer of the proposals in `.modeler/proposals/`. In production the page also has
+  **Apply (opens a PR)**: a `repository_dispatch` starts the app's `modeler-apply` workflow (installed with the kit),
+  which pulls that proposal (`model:pull --id`), runs Claude Code headless on it (budget-capped, API key) and opens
+  the pull request, whose link comes back on the row (`model:track`); merge, `db-push` and `done` stay manual.
+  A change proposed from the prompt takes
+  the same road: `/modeler:metamodel` edits a draft in `.modeler/drafts/` and `npm run model:propose` saves it as a
+  pending proposal (`author: claude`, «from the prompt»), so the modeler shows it before it is applied.
 - `drift` compares the metamodel with a live database (local Supabase by default): "aligned" is the invariant.
 - Behaviour is the second model, **`behavior.yaml`** next to the metamodel: roles, derivations of the attributes
   marked `derived: true`, workflows (states, transitions, guards, timed transitions), events, reactions (who is
@@ -44,7 +50,7 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   stores them (clauses, principals, timed triggers); `drift` compares the workflows with the versions published in
   the database. While an app has no `behavior.yaml` but keeps workflows in code (`*_perform_transition`,
   `*.transitioned` events, `CUSTOM(*-workflow)`, a state column with an enumerated check, an enum state attribute),
-  `install`, `reverse` and the session hook say so and propose `/modeler:metamodel` to describe them without changing
+  `install`, `reverse` and the session hook say so and propose `/modeler:behavior` to describe them without changing
   the behaviour. In the web modeler, when the page passes `behavior.json` (`install` says so while it does not),
   the diagram shows the behaviour next to the structure: a class with a workflow has a «workflow» head and,
   when selected, its **state diagram in a panel under the canvas** (laid out at the panel's width with the real
@@ -77,7 +83,8 @@ From the harness clone: `./install.sh` (installs `core` and `modeler`). From Git
 | Command | What it does |
 |---|---|
 | `/modeler:install [app] [DSN]` | metamodel from the database if missing, modeler and CLI in the app (re-run to upgrade) |
-| `/modeler:metamodel <description> \| show` | metamodel from natural language, then migration, code, drift |
+| `/modeler:metamodel <description> \| show` | metamodel from natural language as a proposal the modeler lists, then apply: migration, code, drift |
+| `/modeler:behavior <description> \| show [Class]` | behaviour model from natural language or from the code, then sync, engine (generated or hand-written), tests |
 | `/modeler:apply [proposal] \| pull [DSN]` | applies the proposals saved by the modeler |
 
 Knowledge skill loaded automatically: `notation` (syntax of both models, storage mapping, ambiguities to settle).
@@ -98,6 +105,9 @@ python3 scripts/modeler.py reverse --db postgresql://postgres:postgres@127.0.0.1
 python3 scripts/modeler.py install ~/code/my-app
 # inside the app
 npm run model:validate && npm run model:sync
+npm run model:propose -- --note "phone of a person"  # .modeler/drafts/domain.ecore.yaml -> pending proposal
+npm run model:pull -- --id <uuid>                     # one production proposal (what the modeler-apply workflow does)
+npm run model:track -- <uuid> --pr <url> --write      # the PR link on that proposal (or --error "…")
 npm run model:migrate                                # preview the migration draft (from HEAD)
 npm run model:migrate -- --name add_phone --write    # save it in supabase/migrations/, then resolve TODO(modeler)
 npm run model:drift

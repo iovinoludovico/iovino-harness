@@ -11,7 +11,7 @@
 
 import Script from "next/script";
 import { useCallback, useEffect, useRef, useState, type DetailedHTMLProps, type HTMLAttributes, type Ref } from "react";
-import { listMetamodelProposals, rejectMetamodelProposal, type PendingProposal } from "@/lib/modeler/metamodel-actions";
+import { listMetamodelProposals, rejectMetamodelProposal, requestProposalApply, type PendingProposal } from "@/lib/modeler/metamodel-actions";
 import { BehaviorView } from "./behavior-view";
 
 export type ProposalResult = { ok: boolean; message: string };
@@ -44,6 +44,12 @@ const TEXT = {
     more: (n: number) => `… e altre ${n}`,
     confirmSave: (n: number) => `C'è già ${n === 1 ? "una proposta" : `${n} proposte`} in attesa: salvarne un'altra?`,
     by: "di",
+    applyWeb: "Applica (apre una PR)",
+    retry: "Riprova",
+    confirmApply: "Avviare l'applicazione automatica? Claude Code applica la proposta su un branch e apre una pull request (qualche minuto, qualche dollaro di credito API). Merge e migrazione in produzione restano manuali.",
+    applying: (d: string) => `in corso dalle ${d}…`,
+    prOpen: "PR aperta",
+    applyFailed: "applicazione fallita",
   },
   en: {
     pending: (n: number) => (n === 1 ? "1 proposal saved and not applied yet" : `${n} proposals saved and not applied yet`),
@@ -57,6 +63,12 @@ const TEXT = {
     more: (n: number) => `… and ${n} more`,
     confirmSave: (n: number) => `${n === 1 ? "A proposal is" : `${n} proposals are`} already waiting: save another one?`,
     by: "by",
+    applyWeb: "Apply (opens a PR)",
+    retry: "Retry",
+    confirmApply: "Start the automatic apply? Claude Code applies the proposal on a branch and opens a pull request (a few minutes, a few dollars of API credit). Merge and the production migration stay manual.",
+    applying: (d: string) => `running since ${d}…`,
+    prOpen: "PR open",
+    applyFailed: "apply failed",
   },
 };
 
@@ -181,6 +193,13 @@ export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "
     else setPending(await loadPending());
   };
 
+  const applyWeb = async (p: Pending) => {
+    if (!window.confirm(t.confirmApply)) return;
+    const res = await requestProposalApply(p.id);
+    setResult(res);
+    setPending(await loadPending());
+  };
+
   const download = () => {
     if (!last) return;
     const blob = new Blob([JSON.stringify({ note: last.note, created_at: new Date().toISOString(), metamodel: last.metamodel, ...(last.behavior ? { behavior: last.behavior } : {}) }, null, 2)], {
@@ -224,7 +243,23 @@ export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "
                         {t.reject}
                       </button>
                     )}
+                    {canEdit && p.prUrl && (
+                      <a className="font-medium underline" href={p.prUrl} target="_blank" rel="noreferrer">
+                        {t.prOpen}
+                      </a>
+                    )}
+                    {canEdit && !p.prUrl && p.applyRequestedAt && !p.applyError && !p.applyFinishedAt && (
+                      <span className="text-muted-foreground">{t.applying(when(p.applyRequestedAt))}</span>
+                    )}
+                    {canEdit && !p.prUrl && (!p.applyRequestedAt || p.applyError || p.applyFinishedAt) && (
+                      <button type="button" className="underline" onClick={() => applyWeb(p)}>
+                        {p.applyError ? t.retry : t.applyWeb}
+                      </button>
+                    )}
                   </div>
+                  {p.applyError && !p.prUrl && (
+                    <p className="mt-1 text-xs text-destructive">{t.applyFailed}: {p.applyError}</p>
+                  )}
                   <pre className="mt-1 whitespace-pre-wrap font-mono text-xs text-muted-foreground">
                     {lines.length ? lines.slice(0, 8).join("\n") + (lines.length > 8 ? `\n${t.more(lines.length - 8)}` : "") : t.noChanges}
                   </pre>

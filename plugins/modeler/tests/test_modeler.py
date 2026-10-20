@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from metamodel import __version__  # noqa: E402
 from metamodel import cli  # noqa: E402
+from metamodel import core as M  # noqa: E402
 from metamodel import dbschema as D  # noqa: E402
 from metamodel import behavior as B  # noqa: E402
 from metamodel import ecore as E  # noqa: E402
@@ -483,6 +484,20 @@ class AppTests(unittest.TestCase):
         self.assertEqual(scripts["model:drift"], cli.NPM_SCRIPTS["model:drift"])
         self.assertEqual(scripts["model:migrate"], cli.NPM_SCRIPTS["model:migrate"])
         self.assertEqual(scripts["model:docs"], cli.NPM_SCRIPTS["model:docs"])
+        self.assertEqual(scripts["model:propose"], cli.NPM_SCRIPTS["model:propose"])
+        self.assertEqual(scripts["model:track"], cli.NPM_SCRIPTS["model:track"])
+        # apply from the web: the workflow and its rules (adapted: the app owns them) and the columns of the outcome
+        self.assertIn(".github/workflows/modeler-apply.yml", written)
+        self.assertIn(".github/modeler-apply-rules.md", written)
+        self.assertTrue(any(w.endswith("_model_change_requests_apply.sql") for w in written))
+        wf = (self.app / ".github/workflows/modeler-apply.yml").read_text()
+        for needle in ("repository_dispatch", "workflow_dispatch", "model:pull -- --id", "model:track", "--max-budget-usd",
+                       "--append-system-prompt-file .github/modeler-apply-rules.md", "gh pr create"):
+            self.assertIn(needle, wf)
+        doc = M.import_yaml().safe_load(wf)                                                 # the template parses
+        on = doc.get("on", doc.get(True))                                                   # `on` is a YAML 1.1 bool
+        self.assertEqual(set(on.keys()), {"repository_dispatch", "workflow_dispatch"})
+        self.assertIn("apply-summary.md", (self.app / ".github/modeler-apply-rules.md").read_text())
         self.assertIn("## Persona", (self.app / "docs/DOMAIN.md").read_text())
         self.assertEqual(cli.docs_status(self.app)["state"], "aligned")
         doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
@@ -554,7 +569,7 @@ class AppTests(unittest.TestCase):
         hint = cli.workflow_hint(self.app)
         self.assertIn("workflows in code but no behavior.yaml", hint)
         for sign in ("perform_transition functions in 20260101000000_orders.sql", "a state column with a check",
-                     "CUSTOM(*-workflow) in customizations.md", "/modeler:metamodel"):
+                     "CUSTOM(*-workflow) in customizations.md", "/modeler:behavior"):
             self.assertIn(sign, hint)
         self.assertNotIn("enum state attribute", hint)
         # an enum state attribute in the metamodel is a sign too
@@ -673,6 +688,7 @@ class AppTests(unittest.TestCase):
         self.assertTrue(text.startswith("node_modules/\n.env*\n"))
         self.assertEqual(text.count("__pycache__/"), 1)
         self.assertEqual(text.count(".modeler/backups/"), 1)
+        self.assertEqual(text.count(".modeler/drafts/"), 1)
         cli.install(self.app)                                   # idempotent
         self.assertEqual((self.app / ".gitignore").read_text(), text)
         (self.app / ".gitignore").unlink()
@@ -715,8 +731,11 @@ class AppTests(unittest.TestCase):
         (self.app / "src/lib/modeler/access.ts").write_text("// adapted to the app\n")
         (self.app / "public/modeler/metamodel-editor.js").write_text("// old\n")
         (self.app / "tools/modeler/VERSION").write_text("0.0.1\n")
+        (self.app / ".github/workflows/modeler-apply.yml").write_text("# adapted workflow\n")
         written = cli.install(self.app)
         self.assertEqual((self.app / "src/lib/modeler/access.ts").read_text(), "// adapted to the app\n")
+        self.assertEqual((self.app / ".github/workflows/modeler-apply.yml").read_text(), "# adapted workflow\n")
+        self.assertFalse(any(w.endswith("_model_change_requests_apply.sql") for w in written))   # migration once
         self.assertIn("customElements", (self.app / "public/modeler/metamodel-editor.js").read_text())
         self.assertEqual(cli.installed_version(self.app), __version__)
         self.assertFalse(any(w.endswith("_model_change_requests.sql") for w in written))   # migration once
@@ -753,6 +772,53 @@ class AppTests(unittest.TestCase):
         self.assertEqual(cli._dsn_target("postgresql://u:secret@h:5432/db"), "u@h:5432/db")
         self.assertTrue(cli._has_password("postgresql://u:secret@h/db"))
         self.assertFalse(cli._has_password("postgresql://postgres.ref@h:6543/postgres"))
+
+    def test_pull_one_proposal_and_track_the_outcome(self):
+        # the modeler-apply workflow pulls one proposal by id (even if already pulled) and writes the PR link back
+        from unittest import mock
+        fake = Path(self.tmp.name) / "bin"
+        fake.mkdir()
+        log = Path(self.tmp.name) / "argv.log"
+        pid = "11111111-2222-3333-4444-555555555555"
+        row = ('{"id":"' + pid + '","author_email":"a@b.it","note":"phone","created_at":"2026-10-20 10:00:00",'
+               '"metamodel":{"package":"app","classes":{"A":{}},"enums":{}}}')
+        (fake / "psql").write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > " + str(log) + "\n"
+                                   "case \"$*\" in *pr_url*) echo '[{\"id\":\"" + pid + "\",\"status\":\"pulled\","
+                                   "\"pr_url\":\"https://github.com/o/r/pull/7\",\"apply_error\":null}]';; "
+                                   "*) echo '[" + row + "]';; esac\n")
+        (fake / "psql").chmod(0o755)
+        env = {"PATH": str(fake), "MODELER_PROD_DB": "postgresql://postgres:pw@db.example.supabase.co:5432/postgres"}
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(cli.cmd_pull(argparse.Namespace(path=str(self.app), db=None, id=pid)), 0)
+        sql = log.read_text()
+        self.assertIn(f"id = '{pid}' and status in ('open', 'pulled')", sql)
+        self.assertNotIn("where status = 'open'", sql)
+        files = list((self.app / ".modeler" / "proposals").glob("*.json"))
+        self.assertEqual([f.name for f in files], ["2026-10-20T10-00-00-11111111.json"])
+        with self.assertRaises(M.ModelError):                                           # never inlined unchecked
+            cli.pull_sql("1; drop table x")
+        self.assertIn("where status = 'open'", cli.pull_sql(None))
+        # track: dry run prints the SQL, --write runs it and reports the row
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(out):
+            ns = argparse.Namespace(path=str(self.app), id=pid, pr="https://github.com/o/r/pull/7", error=None, db=None, write=False)
+            self.assertEqual(cli.cmd_track(ns), 0)
+        self.assertIn("set pr_url = 'https://github.com/o/r/pull/7', apply_error = null", out.getvalue())
+        self.assertIn("dry run", out.getvalue())
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            ns.write = True
+            self.assertEqual(cli.cmd_track(ns), 0)
+        self.assertIn("pr_url = 'https://github.com/o/r/pull/7'", log.read_text())
+        self.assertIn("status pulled, pr_url https://github.com/o/r/pull/7", out.getvalue())
+        with self.assertRaises(M.ModelError):
+            cli.cmd_track(argparse.Namespace(path=str(self.app), id="nope", pr=None, error="x", db=None, write=False))
+        # an error message with a quote is escaped
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli.cmd_track(argparse.Namespace(path=str(self.app), id=pid, pr=None, error="run failed: it's gone", db=None, write=False))
+        self.assertIn("apply_error = 'run failed: it''s gone'", out.getvalue())
 
     def test_pull_without_a_password_stops_before_psql(self):
         dsn = "postgresql://postgres.abcref@aws-0-eu-central-1.pooler.supabase.com:5432/postgres"
@@ -881,6 +947,101 @@ class AppTests(unittest.TestCase):
         self.assertEqual(cli.cmd_apply(ns), 1)
         self.assertNotIn("Ghost", (self.app / "domain.ecore.yaml").read_text())
 
+
+    def _propose(self, **kw):
+        ns = argparse.Namespace(path=str(self.app), draft=None, behavior=None, note=None, author="claude", keep=False)
+        ns.__dict__.update(kw)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            rc = cli.cmd_propose(ns)
+        return rc, out.getvalue()
+
+    def test_propose_saves_a_draft_as_a_pending_proposal(self):
+        # /modeler:metamodel edits a draft, not the file: `propose` turns it into the JSON the admin modeler lists,
+        # so the change is visible (diff, open, reject) before `apply` brings it into domain.ecore.yaml
+        cli.install(self.app)
+        drafts = self.app / ".modeler" / "drafts"
+        drafts.mkdir(parents=True)
+        rc, out = self._propose()
+        self.assertEqual(rc, 1)
+        self.assertIn("no draft", out)
+        draft = drafts / "domain.ecore.yaml"
+        draft.write_text(FIXTURE.read_text().replace("    doc: Una persona fisica\n    attributes:\n",
+                                                     "    doc: Una persona fisica\n    attributes:\n      telefono: EString\n", 1))
+        self.assertIn("telefono", draft.read_text())
+        expected = E.runtime_json(E.load(draft))
+        rc, out = self._propose(note="telefono della persona")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("+ Persona.telefono: EString", out)
+        self.assertIn("/admin/model", out)
+        files = sorted((self.app / ".modeler" / "proposals").glob("*.json"))
+        self.assertEqual(len(files), 1)
+        self.assertTrue(files[0].name.endswith("-prompt.json"))
+        doc = json.loads(files[0].read_text())
+        self.assertEqual((doc["author"], doc["source"], doc["note"]), ("claude", "prompt", "telefono della persona"))
+        self.assertEqual(doc["metamodel"], expected)                           # what metamodel.json would hold
+        self.assertIn("npm run model:apply -- .modeler/proposals/", out)
+        self.assertIn("telefono", doc["metamodel"]["classes"]["Persona"]["attributes"])
+        self.assertNotIn("behavior", doc)                                      # the app has no behavior.yaml
+        self.assertFalse(draft.exists())                                       # consumed
+        self.assertNotIn("telefono", (self.app / "domain.ecore.yaml").read_text())   # the file waits for apply
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_proposals(argparse.Namespace(path=str(self.app))), 0)
+        self.assertIn("by claude  (from the prompt)  telefono della persona", out.getvalue())
+        self.assertIn("+ Persona.telefono: EString", out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(argparse.Namespace(path=str(self.app), proposal=None, write=True, rewrite=False)), 0)
+        self.assertIn("telefono", (self.app / "domain.ecore.yaml").read_text())
+        self.assertTrue((self.app / ".modeler" / "proposals" / "applied" / files[0].name).exists())
+        # --keep leaves the draft in place
+        draft.write_text((self.app / "domain.ecore.yaml").read_text().replace("telefono: EString", "telefono: EString\n      cellulare: EString", 1))
+        rc, out = self._propose(keep=True)
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(draft.exists())
+
+    def test_propose_refuses_no_changes_and_invalid_drafts(self):
+        cli.install(self.app)
+        drafts = self.app / ".modeler" / "drafts"
+        drafts.mkdir(parents=True)
+        draft = drafts / "domain.ecore.yaml"
+        draft.write_text(FIXTURE.read_text())                                  # identical
+        rc, out = self._propose()
+        self.assertEqual(rc, 1)
+        self.assertIn("no changes against domain.ecore.yaml", out)
+        self.assertFalse(list((self.app / ".modeler" / "proposals").glob("*.json")))
+        self.assertTrue(draft.exists())                                        # kept: nothing was saved
+        draft.write_text(FIXTURE.read_text().replace("type: Account", "type: Ghost", 1))
+        rc, out = self._propose()
+        self.assertEqual(rc, 1)
+        self.assertIn("not a valid metamodel", out)
+        self.assertFalse(list((self.app / ".modeler" / "proposals").glob("*.json")))
+
+    def test_propose_carries_the_behaviour(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures"
+        (self.app / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        (self.app / "behavior.yaml").write_text((fixtures / "invitations.behavior.yaml").read_text())
+        cli.install(self.app)
+        drafts = self.app / ".modeler" / "drafts"
+        drafts.mkdir(parents=True)
+        (drafts / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        btext = (fixtures / "invitations.behavior.yaml").read_text()
+        # a behaviour draft alone: the metamodel draft is identical, the proposal carries the new transition
+        (drafts / "behavior.yaml").write_text(btext.replace("    transitions:", "    transitions:\n      pause: {from: in_management, to: paused, by: [office]}", 1)
+                                              .replace("    states:", "    states:\n      paused: {label: {it: Sospeso, en: Paused}, owner: [office]}", 1))
+        rc, out = self._propose(note="pausa")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("behaviour: + state Invitation.paused", out)
+        self.assertIn("behaviour: + transition Invitation.pause: in_management -> paused", out)
+        doc = json.loads(next((self.app / ".modeler" / "proposals").glob("*.json")).read_text())
+        self.assertIn("paused", doc["behavior"]["workflows"]["Invitation"]["states"])
+        self.assertFalse((drafts / "behavior.yaml").exists())
+        # a behaviour draft that breaks against the draft metamodel is refused
+        (drafts / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        (drafts / "behavior.yaml").write_text(btext.replace("by: [office]", "by: [ghost_role]", 1))
+        rc, out = self._propose()
+        self.assertEqual(rc, 1)
+        self.assertIn("behavior.yaml is not valid against the draft metamodel", out)
 
     def test_apply_writes_the_behaviour_of_a_proposal(self):
         fixtures = Path(__file__).resolve().parent / "fixtures"
@@ -1040,7 +1201,7 @@ class HookTests(unittest.TestCase):
             (props / "2026-10-15T10-00-00.json").write_text("{}")
             (props / "applied" / "old.json").write_text("{}")
             out = self.run_hook("session", {"cwd": d})
-            self.assertIn("1 proposal(s) saved by the admin modeler and not applied yet", out.stdout)
+            self.assertIn("1 proposal(s) saved by the admin modeler or by /modeler:metamodel and not applied yet", out.stdout)
             self.assertIn("2026-10-15T10-00-00.json", out.stdout)
             self.assertEqual(self.run_hook("session", {"cwd": tempfile.gettempdir()}).stdout, "")
             (Path(d) / "tools" / "modeler").mkdir(parents=True)

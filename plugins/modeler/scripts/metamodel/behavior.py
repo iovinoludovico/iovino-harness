@@ -168,7 +168,7 @@ def dumps(raw: dict[str, Any]) -> str:
     flow_map = lambda m: block({k: (_Flow(v) if isinstance(v, dict) else v) for k, v in m.items()})  # noqa: E731
     r = _clean(_tidy(raw))
     out = ["# Behaviour of the domain (behavior.yaml): roles, derivations, workflows, events, reactions.",
-           "# Edit it from the prompt (/modeler:metamodel), in the app's modeler (/admin/model) or by hand; `npm run",
+           "# Edit it from the prompt (/modeler:behavior), in the app's modeler (/admin/model) or by hand; `npm run",
            "# model:validate` checks it against domain.ecore.yaml.", ""]
     for key in ("metamodel", "doc"):
         if r.get(key):   # a scalar: never a flow mapping at the top level (it would end the document)

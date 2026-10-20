@@ -78,8 +78,9 @@ Differenze rispetto alla strada A:
 | `/core:harness-note <lezione>` | Qualcosa da migliorare nell'harness: finisce in `NOTES.md` |
 | `/core:harness-review` | Nel repository harness: valuta le note aperte, applica quelle approvate, segna applicata/scartata/rinviata |
 | `/modeler:install` | Mette il modellatore in un'app (o lo aggiorna): metamodello dal database se manca, `/admin/model`, `npm run model:*` |
-| `/modeler:metamodel <descrizione>` | Metamodello dal prompt, poi migrazione, codice e `model:drift` |
-| `/modeler:apply` | Applica le proposte salvate dal modellatore web (sviluppo o produzione) |
+| `/modeler:metamodel <descrizione>` | Metamodello dal prompt come proposta visibile in `/admin/model`, poi apply: migrazione, codice e `model:drift` |
+| `/modeler:behavior <descrizione>` | Comportamento dal prompt o dal codice (workflow, guardie, notifiche, testi), poi `sync`, motore e test |
+| `/modeler:apply` | Applica le proposte salvate dal modellatore web (sviluppo o produzione); in produzione anche dal bottone «Applica», che apre la PR via GitHub Actions |
 
 Gli agenti `core:code-reviewer` e `core:debugger` vengono usati da Claude quando servono, o su richiesta ("fai rivedere il diff al code-reviewer").
 

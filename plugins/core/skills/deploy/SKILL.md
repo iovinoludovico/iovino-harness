@@ -66,6 +66,9 @@ Record A `<app>.iovino-systems.cloud` → IP del VPS. Un errore del certificato 
      ignorato: il nome lo dà il pannello; Watchtower filtra per etichetta di scope);
    - **Variabili**: `DATABASE_URL` (session pooler, con la password) è l'unica senza predefinito ed è un segreto:
      solo qui. Le altre (`deploy/.env.production.example`) solo per cambiare i predefiniti del compose.
+     Con il modellatore e l'applicazione dal web (skill `modeler:install`, sezione 7) anche `MODELER_APPLY_REPO`
+     (`owner/repo`) e `MODELER_APPLY_TOKEN` (token fine-grained, solo Contents: write su quel repository): secondo
+     segreto del pannello, mai nel compose né nel repository.
 3. Deploy dal pannello **dopo** che il workflow ha pubblicato le immagini (primo push su `main`).
 4. Le modifiche al compose si fanno nel pannello e si riportano in `deploy/docker-compose.prod.yml` (e
    viceversa): repository e server restano uguali.

@@ -28,6 +28,7 @@ from . import sqlgen as G
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]            # modeler.py, metamodel/, vendor/
 KIT_DIR = SCRIPTS_DIR.parent / "kit"                          # only in the plugin, not in the vendored copy
 STATE_DIR = ".modeler"                                        # proposals and backups, in the app repository
+DRAFTS_DIR = "drafts"                                         # under STATE_DIR: the drafts `propose` turns into proposals
 METAMODEL_JSON = Path("src/lib/modeler/metamodel.json")       # what the admin page reads
 BEHAVIOR_JSON = Path("src/lib/modeler/behavior.json")         # the behaviour as the app reads it (typed expressions, SQL)
 DOMAIN_MD = Path("docs/DOMAIN.md")                            # the domain explained, generated; hand notes allowed
@@ -45,7 +46,9 @@ NPM_SCRIPTS = {
     "model:docs": "python3 tools/modeler/modeler.py docs",
     "model:drift": "python3 tools/modeler/modeler.py drift",
     "model:proposals": "python3 tools/modeler/modeler.py proposals",
+    "model:propose": "python3 tools/modeler/modeler.py propose",
     "model:pull": "python3 tools/modeler/modeler.py pull",
+    "model:track": "python3 tools/modeler/modeler.py track",
     "model:done": "python3 tools/modeler/modeler.py done",
     "model:apply": "python3 tools/modeler/modeler.py apply",
     "model:migrate": "python3 tools/modeler/modeler.py migrate",
@@ -125,6 +128,10 @@ def _has_password(dsn: str) -> bool:
 
 def proposals_dir(meta_path: Path) -> Path:
     return meta_path.parent / STATE_DIR / "proposals"
+
+
+def drafts_dir(meta_path: Path) -> Path:
+    return meta_path.parent / STATE_DIR / DRAFTS_DIR
 
 
 def _write_json(path: Path, data: Any) -> None:
@@ -358,9 +365,66 @@ def cmd_proposals(a) -> int:
         bprop = _behavior_of(f)
         if bprop is not None:
             changes += [f"behaviour: {c}" for c in B.diff(bcurrent, bprop)]
-        print(f"{f.name}  by {doc.get('author', '?')}  {doc.get('note', '')}")
+        origin = "  (from the prompt)" if doc.get("source") == "prompt" else ""
+        print(f"{f.name}  by {doc.get('author', '?')}{origin}  {doc.get('note', '')}")
         for c in changes[:20]:
             print(f"    {c}")
+    return 0
+
+
+def cmd_propose(a) -> int:
+    """A draft of the metamodel (and of the behaviour) becomes a pending proposal, the same JSON the admin modeler
+    saves: the page lists it at once (diff, open, reject) and `apply` brings it into the files. Written by
+    /modeler:metamodel so a change proposed from the prompt is visible in the modeler before it is applied."""
+    meta_path = find_metamodel(a.path)
+    ddir = drafts_dir(meta_path)
+    draft = Path(a.draft) if a.draft else ddir / E.METAMODEL_FILE
+    if not draft.exists():
+        print(f"no draft at {draft}: copy {E.METAMODEL_FILE} there, edit it, then `propose`", file=sys.stderr)
+        return 1
+    bdraft = Path(a.behavior) if a.behavior else (ddir / B.BEHAVIOR_FILE if (ddir / B.BEHAVIOR_FILE).exists() else None)
+    current = E.load(meta_path)
+    new = E.load(draft)
+    rep = E.validate(new)
+    if not rep.ok:
+        print(f"The draft is not a valid metamodel: nothing was saved.\n{rep.render()}")
+        return 1
+    changes = E.diff(current, new)
+    bpath = behavior_file(meta_path)
+    bcurrent = B.load(bpath) if bpath is not None else None
+    bnew = B.load(bdraft) if bdraft is not None else bcurrent     # no behaviour draft: the current one travels along
+    bchanges: list[str] = []
+    if bnew is not None:
+        brep = B.validate(bnew, new)
+        if not brep.ok:
+            what = bdraft.name if bdraft is not None else f"the current {B.BEHAVIOR_FILE}"
+            print(f"{what} is not valid against the draft metamodel (fix the behaviour in the same draft): "
+                  f"nothing was saved.\n{brep.render()}")
+            return 1
+        bchanges = [f"behaviour: {c}" for c in B.diff(bcurrent or {}, bnew)]
+    if not changes and not bchanges:
+        print(f"no changes against {meta_path.name}" + (f" and {bpath.name}" if bpath else "") + ": nothing was saved")
+        return 1
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    out = proposals_dir(meta_path) / f"{stamp}-prompt.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    doc: dict[str, Any] = {"author": a.author, "source": "prompt", "note": a.note or "",
+                           "created_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                           "metamodel": E.runtime_json(new)}
+    if bnew is not None:
+        doc["behavior"] = B.runtime_json(bnew, new)
+    out.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"Proposal {out.name}" + (f"  {a.note}" if a.note else ""))
+    print("\n".join(f"  {c}" for c in changes + bchanges))
+    if rep.warnings:
+        print(rep.render())
+    print(f"\nSaved in {STATE_DIR}/proposals/: the admin modeler (/admin/model) lists it among the pending proposals. "
+          f"Apply it with /modeler:apply (`npm run model:apply -- {out.relative_to(meta_path.parent)} --write`), "
+          "or reject it from the modeler.")
+    if not a.keep:
+        draft.unlink()
+        if bdraft is not None and bdraft.exists():
+            bdraft.unlink()
     return 0
 
 
@@ -516,8 +580,32 @@ def _other_proposals(meta_path: Path, src: Path, old: dict[str, Any],
 PULL_SQL = """
 with picked as (
   update public.model_change_requests set status = 'pulled'
-   where status = 'open' returning *)
+   where {where} returning *)
 select coalesce(json_agg(picked order by created_at), '[]') from picked
+"""
+
+
+def pull_sql(proposal_id: str | None = None) -> str:
+    """All the open proposals; with an id, that one row even if already pulled (a CI run may start again)."""
+    if proposal_id is None:
+        return PULL_SQL.format(where="status = 'open'")
+    return PULL_SQL.format(where=f"id = '{_uuid(proposal_id)}' and status in ('open', 'pulled')")
+
+
+def _uuid(value: str) -> str:
+    """A full uuid, lower case, or a ModelError: ids are inlined in SQL, so nothing else may pass."""
+    v = str(value).strip().lower()
+    if not UUID_RE.fullmatch(v):
+        raise M.ModelError(f"not a proposal id (uuid): {value!r}")
+    return v
+
+
+TRACK_SQL = """
+with t as (
+  update public.model_change_requests
+     set pr_url = {pr}, apply_error = {error}, apply_finished_at = now()
+   where id = '{id}' returning id, status, pr_url, apply_error)
+select coalesce(json_agg(t), '[]') from t
 """
 
 
@@ -601,9 +689,10 @@ NO_PROD_DB = ("no production database: link the app with `supabase link --projec
 def cmd_pull(a) -> int:
     """Copies the open proposals stored by the production modeler into .modeler/proposals/."""
     meta_path = find_metamodel(a.path)
+    sql = pull_sql(getattr(a, "id", None))
     try:
         dsn, linked = _prod_target(a, meta_path.parent)
-        rows = _prod_query(dsn, PULL_SQL, "pulling from", linked=linked, root=meta_path.parent) or []
+        rows = _prod_query(dsn, sql, "pulling from", linked=linked, root=meta_path.parent) or []
     except NoProductionDb:
         print(NO_PROD_DB, file=sys.stderr)
         return 2
@@ -617,6 +706,34 @@ def cmd_pull(a) -> int:
         _write_json(d / name, doc)
         print(f"  + {d / name}")
     print(f"{len(rows)} proposal(s) pulled" + ("; review them with `proposals`" if rows else ""))
+    if getattr(a, "id", None) and not rows:
+        print(f"proposal {a.id} not found, or already applied/rejected", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_track(a) -> int:
+    """Writes on a production proposal the outcome of an apply run (the PR link, or the error): the admin page
+    shows it next to the proposal. Used by the `modeler-apply` workflow; the row keeps its status until `done`."""
+    meta_path = find_metamodel(a.path)
+    pid = _uuid(a.id)
+    lit = lambda v: "null" if v is None else "'" + str(v).replace("'", "''") + "'"  # noqa: E731
+    sql = TRACK_SQL.format(id=pid, pr=lit(a.pr), error=lit(a.error))
+    if not a.write:
+        print(sql.strip())
+        print("\n(dry run: pass --write to update model_change_requests)")
+        return 0
+    try:
+        dsn, linked = _prod_target(a, meta_path.parent)
+        rows = _prod_query(dsn, sql, "tracking on", linked=linked, root=meta_path.parent) or []
+    except NoProductionDb:
+        print(NO_PROD_DB, file=sys.stderr)
+        return 2
+    if not rows:
+        print(f"proposal {pid} not found in model_change_requests", file=sys.stderr)
+        return 1
+    r = rows[0]
+    print(f"{r['id']}: status {r['status']}, pr_url {r.get('pr_url') or '-'}, apply_error {r.get('apply_error') or '-'}")
     return 0
 
 
@@ -1004,6 +1121,13 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
         if has_templates(target) and not list(mig.glob("*_notification_templates.sql")):
             stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1)).strftime("%Y%m%d%H%M%S")
             copy(KIT_DIR / "notification_templates.sql", f"supabase/migrations/{stamp}_notification_templates.sql")
+        if not list(mig.glob("*_model_change_requests_apply.sql")):
+            stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=2)).strftime("%Y%m%d%H%M%S")
+            copy(KIT_DIR / "model_change_requests_apply.sql",
+                 f"supabase/migrations/{stamp}_model_change_requests_apply.sql")
+    # apply from the web: the workflow and its rules belong to the app (adapted, written once)
+    copy(KIT_DIR / "github" / "modeler-apply.yml", ".github/workflows/modeler-apply.yml", overwrite=False)
+    copy(KIT_DIR / "github" / "modeler-apply-rules.md", ".github/modeler-apply-rules.md", overwrite=False)
     pkg = target / "package.json"
     data = json.loads(pkg.read_text(encoding="utf-8"))
     scripts = data.setdefault("scripts", {})
@@ -1022,6 +1146,8 @@ GITIGNORE_ENTRIES = (
      "# Python bytecode of the vendored modeler CLI (tools/modeler)\n__pycache__/\n"),
     ({".modeler/backups/", ".modeler/backups", "**/.modeler/backups/", ".modeler/"},
      "# backups written by `model:apply` and `model:sync --force` (not to commit: they would dirty the tree)\n.modeler/backups/\n"),
+    ({".modeler/drafts/", ".modeler/drafts", "**/.modeler/drafts/", ".modeler/"},
+     "# drafts that `model:propose` turns into proposals (the proposal is what gets reviewed and committed)\n.modeler/drafts/\n"),
 )
 
 
@@ -1148,9 +1274,9 @@ def workflow_hint(root: Path) -> str | None:
     if not signs:
         return None
     where = "; ".join(f"{what} in {', '.join(sorted(v)[:3])}" for what, v in signs.items())
-    return (f"The app has workflows in code but no {B.BEHAVIOR_FILE} ({where}): propose /modeler:metamodel to "
+    return (f"The app has workflows in code but no {B.BEHAVIOR_FILE} ({where}): propose /modeler:behavior to "
             "describe them in behavior.yaml from what the code does, without changing the behaviour or replacing a "
-            "hand-written engine (metamodel skill, 3b).")
+            "hand-written engine (behavior skill, 0 and 4).")
 
 
 def cmd_install(a) -> int:
@@ -1228,6 +1354,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("path", nargs="?")
     s.set_defaults(fn=cmd_proposals)
 
+    s = sub.add_parser("propose", help=f"save a draft of the metamodel (and of the behaviour) as a pending proposal in "
+                                       f"{STATE_DIR}/proposals, the ones the admin modeler lists")
+    s.add_argument("draft", nargs="?", help=f"draft metamodel (default {STATE_DIR}/{DRAFTS_DIR}/{E.METAMODEL_FILE})")
+    s.add_argument("--path", help="metamodel file or app directory")
+    s.add_argument("--behavior", help=f"draft behaviour (default {STATE_DIR}/{DRAFTS_DIR}/{B.BEHAVIOR_FILE} if present)")
+    s.add_argument("--note", help="what the change is for (the user's request, one line)")
+    s.add_argument("--author", default="claude")
+    s.add_argument("--keep", action="store_true", help="keep the drafts (by default they are removed once saved)")
+    s.set_defaults(fn=cmd_propose)
+
     s = sub.add_parser("apply", help="apply a proposal (default: the latest pending one)")
     s.add_argument("proposal", nargs="?")
     s.add_argument("--path", help="metamodel file or app directory")
@@ -1247,7 +1383,17 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("pull", help="copy the proposals saved in production (model_change_requests)")
     s.add_argument("path", nargs="?")
     s.add_argument("--db", help="DSN (default: MODELER_PROD_DB or the Supabase project linked with `supabase link`)")
+    s.add_argument("--id", help="one proposal (uuid), even if already pulled: what the modeler-apply workflow does")
     s.set_defaults(fn=cmd_pull)
+
+    s = sub.add_parser("track", help="write on a production proposal the outcome of an apply run (PR link or error)")
+    s.add_argument("id", help="the proposal (uuid)")
+    s.add_argument("--path", help="metamodel file or app directory")
+    s.add_argument("--pr", help="URL of the pull request opened for it")
+    s.add_argument("--error", help="why the run failed (e.g. the URL of the workflow run)")
+    s.add_argument("--db", help="DSN (default: MODELER_PROD_DB or the Supabase project linked with `supabase link`)")
+    s.add_argument("--write", action="store_true", help="update model_change_requests (otherwise print the SQL)")
+    s.set_defaults(fn=cmd_track)
 
     s = sub.add_parser("done", help="mark in production the pulled proposals applied or rejected in the repository")
     s.add_argument("path", nargs="?")

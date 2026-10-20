@@ -56,7 +56,12 @@ rivedilo **con l'utente**:
   `public.notification_templates`),
 - `supabase/migrations/<ts>_notification_templates.sql` (solo la prima volta e solo se `behavior.yaml` ha `templates:`:
   la tabella degli override che il motore e la pagina usano),
-- `src/lib/modeler/metamodel-actions.ts` (salva, elenca e scarta le proposte: file in sviluppo, tabella in produzione),
+- `src/lib/modeler/metamodel-actions.ts` (salva, elenca e scarta le proposte: file in sviluppo, tabella in produzione;
+  «Applica» su una proposta di produzione avvia il workflow `modeler-apply`),
+- `supabase/migrations/<ts>_model_change_requests_apply.sql` (solo la prima volta: le colonne `pr_url`, `apply_error`,
+  `apply_requested_at`, `apply_finished_at` dell'esito di un'applicazione dal web),
+- `.github/workflows/modeler-apply.yml` e `.github/modeler-apply-rules.md` (solo se mancano: il workflow che applica
+  una proposta di produzione con Claude Code e apre la PR, e le regole del run; sezione 7),
 - `src/lib/modeler/access.ts` (solo se manca: chi è admin e quale client Supabase usare),
 - `src/lib/modeler/metamodel.json` (il metamodello letto dalla pagina),
 - `docs/DOMAIN.md` (la descrizione del dominio generata dal metamodello; si rigenera con `npm run model:sync`).
@@ -122,13 +127,16 @@ rivedilo **con l'utente**:
   `src/app/(admin)/admin/notifications/page.tsx`, link nella navigazione admin) e applica la migrazione
   `notification_templates` (in locale, poi `/core:db-push`). Il motore generato (`npm run model:engine -- --write`)
   rende `subject` e `body` in `recipients`; con un motore a mano il dispatcher legge i testi da `behavior.json`
-  (`templates`) e gli override dalla tabella, con lo stesso `render_template` del motore.
+  (`templates`) e gli override dalla tabella, con lo stesso `render_template` del motore (skill `behavior`, punto 4).
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
-- `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`); non ignorare
-  `.modeler/proposals/` (le proposte si rivedono nel repository).
+- `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`), `.modeler/backups/` e
+  `.modeler/drafts/` (le bozze che `model:propose` trasforma in proposte); non ignorare `.modeler/proposals/` (le
+  proposte si rivedono nel repository).
 - In `CLAUDE.md` dell'app: "Il metamodello del dominio è `domain.ecore.yaml`: ogni modifica di schema parte da
   lì (/modeler:metamodel) insieme alla migrazione; `npm run model:sync` aggiorna il modellatore,
-  `npm run model:drift` deve dare 'aligned'. Le proposte del modellatore si applicano con /modeler:apply.
+  `npm run model:drift` deve dare 'aligned'. Il comportamento (workflow, guardie, notifiche e i loro testi) è
+  `behavior.yaml`: si modifica con /modeler:behavior nella stessa modifica del codice che lo esegue. Le proposte del
+  modellatore si applicano con /modeler:apply.
   `docs/DOMAIN.md` è generato dal metamodello: lì si annotano a mano dettagli e regole da portare nel metamodello
   (/modeler:metamodel), mai la struttura." Se l'app formatta `docs/` con Prettier, aggiungi `docs/DOMAIN.md` a
   `.prettierignore`.
@@ -157,5 +165,33 @@ passo per passo:
    quelle con `modeler` nel titolo e più recenti della versione installata) e ciò che l'app deve ancora fare a mano;
 5. proponi `/core:ship` (porta anche le migrazioni nuove in cloud prima del push, se ce ne sono).
 `install` aggiunge a `.gitignore` anche `.modeler/backups/` (i backup di `apply` e `sync --force` sporcavano
-l'albero e bloccavano `ship`). Senza `psql`, `pull`, `done`, `drift` e `reverse` usano `supabase db query`
+l'albero e bloccavano `ship`) e `.modeler/drafts/`. Senza `psql`, `pull`, `done`, `drift` e `reverse` usano `supabase db query`
 (`--linked` via Management API con il token di `supabase login`, altrimenti `--db-url`).
+
+## 7. Applicare dal web (facoltativo)
+Una proposta salvata in produzione si applica anche dal bottone «Applica (apre una PR)» di `/admin/model`: la server
+action `requestProposalApply` manda un `repository_dispatch` al repository GitHub dell'app e il workflow
+`.github/workflows/modeler-apply.yml` fa il checkout, avvia Supabase locale, scarica quella sola proposta
+(`npm run model:pull -- --id <uuid>`), lancia Claude Code headless con il plugin `modeler`
+(`claude -p "/modeler:apply <file>" --output-format json --permission-mode dontAsk --max-budget-usd …`, regole in
+`.github/modeler-apply-rules.md`), fa push del branch `model/<id8>`, apre la PR e scrive il link sulla riga
+(`npm run model:track -- <uuid> --pr <url> --write`); se il run fallisce scrive l'errore e la pagina offre «Riprova».
+Restano manuali, per scelta: la revisione della PR, `/core:db-push` prima del merge, il merge (il deploy parte da
+`main`) e `npm run model:done -- --write` dopo il deploy. I drop e i cambi di tipo restano commentati nella
+migrazione: li elenca la PR.
+- Da impostare una volta, nel repository GitHub dell'app, nell'environment `modeler-apply` (Settings →
+  Environments; il job gira lì e GitHub lo crea al primo run se manca; con «Required reviewers» ogni run aspetta
+  l'approvazione di una persona prima di spendere) o nei secrets del repository (Settings → Secrets and variables →
+  Actions): segreti `ANTHROPIC_API_KEY` (i run si pagano con il credito API, non con l'abbonamento) e `MODELER_PROD_DB` (DSN del
+  pooler del progetto Supabase, con la password: serve solo a `pull`/`track`, nessuna migrazione passa da lì);
+  variabili facoltative `MODELER_APPLY_MODEL` (default `claude-opus-5-5`), `MODELER_APPLY_BUDGET` (dollari per run,
+  default 10), `MODELER_HARNESS` (marketplace, default `iovinoludovico/iovino-harness`; se il repository dell'harness
+  è privato il passo «Claude Code and the modeler plugin» va adattato con un token).
+- Nel pannello dell'app (Docker Manager, come `DATABASE_URL`; skill `core:deploy`): `MODELER_APPLY_REPO`
+  (`owner/repo`) e `MODELER_APPLY_TOKEN`, un token fine-grained con il solo permesso Contents: write su quel
+  repository (serve al `repository_dispatch`). Senza, il bottone spiega cosa manca.
+- Costo per run (stima; il valore reale è `total_cost_usd` nel riepilogo del job): modifica piccola (attributo,
+  relazione, letterale) 2–5 $ con Opus 5.5, 1–2,5 $ con Sonnet 5.5; media (classe nuova con tabella, policy, form,
+  pagina) 8–20 $ / 4–10 $. `MODELER_APPLY_BUDGET` ferma il run oltre la soglia (la riga mostra l'errore, nessuna PR).
+- Prova: Actions → `modeler-apply` → «Run workflow» con l'id di una proposta di prova; la PR va chiusa senza merge.
+  Il workflow è dell'app: `install` non lo sovrascrive (adattalo liberamente, es. i servizi di `supabase start`).
