@@ -1,5 +1,5 @@
 # Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
-_Aggiornato: 2026-10-20 · branch `feat/modeler-transition-recipients` (2 commit sopra `main` `35ef643`, non pushati)_
+_Aggiornato: 2026-10-20 · branch `feat/release-cycle-automation` (2 commit sopra `main` `bcb7da4`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -16,7 +16,19 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   e anello, gli altri stati attenuati, `data-state-missing` per un valore non tra gli stati; sandbox a 0.21.1.
 - PR #22 (`d9f433c`, core 0.13.0, modeler 0.21.2): convenzione sui link costruiti dal database, appforge rimosso ovunque.
 - PR #23 (`35ef643`, modeler 0.22.0): cardinalità delle collezioni (notazione, warning di `validate`, skill).
-- Branch locale `feat/modeler-transition-recipients` (quinta revisione delle note, da unire con `/core:ship`):
+- PR #24 (`bcb7da4`, modeler 0.23.0): destinatari sull'evento del cambio di stato (notazione, warning, colonna «Avvisa»).
+- Branch locale `feat/release-cycle-automation` (sesta revisione delle note, da unire con `/core:ship`):
+  `92e59f2 feat: automate the plugin release cycle …` + `62d9ca5 chore(release): core 0.14.0, modeler 0.24.0`.
+  Skill `install`: «0. Versione del plugin» (cache contro `origin/main` dell'harness, comando di aggiornamento e
+  stop) e «6. Aggiornamento di un'app già installata» (branch, install, validate, sync, controlli, commit con i titoli
+  delle PR, `/core:ship`); hook di sessione con il comando di aggiornamento. Skill `ship`: migrazioni non in cloud →
+  passi di `db-push` con una sola conferma; dopo il merge polling del run di deploy sullo SHA del merge, proposta di
+  `model:done` e di `core:handoff`. CLI: `dbschema.cli_query` (`supabase db query -o json`, `--linked` via Management
+  API senza password, busta agent-mode aperta e HTML unescaped) usata senza `psql` da `pull`/`done`
+  (`_prod_target`) e da `drift`/`reverse`; `.modeler/backups/` in `.gitignore`. Guard di `core`: `supabase db query`
+  che scrive chiede, una select passa. **Non provato qui**: la CLI Supabase non è installata su questo Mac; il formato
+  dell'output viene dal sorgente della CLI (`SIDE_EFFECTS.md` di `db query`), da verificare al primo `model:pull` reale.
+- Storia (PR #24, già in `main`): branch `feat/modeler-transition-recipients`:
   `c2622dd feat(modeler): recipients of a transition travel on the state-change event` + `dab0d50 chore(release):
   modeler 0.23.0`: regola ed esempio in `behavior-notation.md`; `validate` avvisa per destinatari su un evento
   secondario (`emits`), per doppi destinatari e per reazioni che nessuna `subscription` riceve
@@ -72,11 +84,13 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` del branch `feat/modeler-transition-recipients` (push, PR, merge su conferma); poi sugli altri
-   computer `claude plugin update core@iovino-harness modeler@iovino-harness` (0.13.0 / 0.23.0).
-2. In order-management: `/modeler:install` per portare `public/modeler/metamodel-editor.js` a 0.21.1 e ricarica forzata
-   di `/orders/[id]` scheda «Diagramma»; poi, per la convenzione nuova, migrazione `create or replace` delle `<e>_json`
-   con una `record_url(entity, id)` SQL, redirect `/e/<entità>/<id>` → pagina nuova e test sull'`url` dei payload.
+1. `/core:ship` del branch `feat/release-cycle-automation` (push, PR, merge su conferma); poi sugli altri
+   computer `claude plugin update core@iovino-harness modeler@iovino-harness` (0.14.0 / 0.24.0).
+2. In order-management, con il modeler 0.24.0: `/modeler:install` segue da solo il punto 6 della skill; al primo
+   `npm run model:pull` senza `psql` verificare la busta di `supabase db query` (se il formato differisce, adattare
+   `dbschema.cli_query`).
+3. In order-management, per la convenzione sui link costruiti dal database: migrazione `create or replace` delle
+   `<e>_json` con una `record_url(entity, id)` SQL, redirect `/e/<entità>/<id>` → pagina nuova e test sull'`url`.
 3. In invitations-af e order-management: `/modeler:install` (0.19.0) e `<WorkflowView>` nelle pagine di dettaglio delle
    entità con workflow (Invitation a 11 stati: a tutta larghezza).
 4. Eventuale: stati già attraversati (da `workflow_history`) con un riempimento più leggero, prop `workflow` alternativa.
