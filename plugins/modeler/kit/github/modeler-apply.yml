@@ -8,7 +8,10 @@
 # the production database beyond that row: the migration reaches production with /core:db-push before the merge,
 # and `npm run model:done -- --write` closes the proposal after the deploy.
 #
-# Secrets (repository → Settings → Secrets and variables → Actions):
+# The job runs in the GitHub environment `modeler-apply` (Settings → Environments; created on the first run if
+# missing): put the secrets there, or in the repository secrets (both are read). On that environment "Required
+# reviewers" makes every run wait for a person's approval before it spends anything.
+# Secrets (environment `modeler-apply`, or repository → Settings → Secrets and variables → Actions):
 #   ANTHROPIC_API_KEY   bills the runs on the API credit (the key, not a subscription login)
 #   MODELER_PROD_DB     DSN of the production database with the password (the pooler URL of the Supabase project):
 #                       used only by `model:pull --id` and `model:track`
@@ -43,6 +46,7 @@ env:
 jobs:
   apply:
     runs-on: ubuntu-latest
+    environment: modeler-apply
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

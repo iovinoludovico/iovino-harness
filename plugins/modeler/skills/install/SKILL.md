@@ -179,8 +179,10 @@ action `requestProposalApply` manda un `repository_dispatch` al repository GitHu
 Restano manuali, per scelta: la revisione della PR, `/core:db-push` prima del merge, il merge (il deploy parte da
 `main`) e `npm run model:done -- --write` dopo il deploy. I drop e i cambi di tipo restano commentati nella
 migrazione: li elenca la PR.
-- Da impostare una volta, nel repository GitHub dell'app (Settings → Secrets and variables → Actions):
-  segreti `ANTHROPIC_API_KEY` (i run si pagano con il credito API, non con l'abbonamento) e `MODELER_PROD_DB` (DSN del
+- Da impostare una volta, nel repository GitHub dell'app, nell'environment `modeler-apply` (Settings →
+  Environments; il job gira lì e GitHub lo crea al primo run se manca; con «Required reviewers» ogni run aspetta
+  l'approvazione di una persona prima di spendere) o nei secrets del repository (Settings → Secrets and variables →
+  Actions): segreti `ANTHROPIC_API_KEY` (i run si pagano con il credito API, non con l'abbonamento) e `MODELER_PROD_DB` (DSN del
   pooler del progetto Supabase, con la password: serve solo a `pull`/`track`, nessuna migrazione passa da lì);
   variabili facoltative `MODELER_APPLY_MODEL` (default `claude-opus-5-5`), `MODELER_APPLY_BUDGET` (dollari per run,
   default 10), `MODELER_HARNESS` (marketplace, default `iovinoludovico/iovino-harness`; se il repository dell'harness
