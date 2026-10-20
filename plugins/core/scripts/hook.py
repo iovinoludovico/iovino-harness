@@ -310,6 +310,9 @@ ASK_RULES = [
 RAW_ASK_RULES = [
     (re.compile(r"\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA)\b", re.IGNORECASE), "DDL distruttivo sul database"),
     (re.compile(r"\bDELETE\s+FROM\s+\w+\s*(;|\"|'|$)", re.IGNORECASE), "DELETE senza WHERE"),
+    # supabase db query: a select passes (also --linked: production, read only); a statement that writes asks
+    (re.compile(r"\bsupabase\s+db\s+query\b.*\b(UPDATE|INSERT|DELETE|ALTER|DROP|TRUNCATE|CREATE|GRANT|REVOKE)\b",
+                re.IGNORECASE | re.DOTALL), "scrittura sul database con supabase db query"),
 ]
 
 

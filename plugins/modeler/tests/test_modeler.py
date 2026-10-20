@@ -647,11 +647,43 @@ class AppTests(unittest.TestCase):
         text = (self.app / ".gitignore").read_text()
         self.assertTrue(text.startswith("node_modules/\n.env*\n"))
         self.assertEqual(text.count("__pycache__/"), 1)
+        self.assertEqual(text.count(".modeler/backups/"), 1)
         cli.install(self.app)                                   # idempotent
         self.assertEqual((self.app / ".gitignore").read_text(), text)
         (self.app / ".gitignore").unlink()
         cli.install(self.app)                                   # created when missing
         self.assertIn("__pycache__/", (self.app / ".gitignore").read_text())
+
+    def test_pull_falls_back_to_the_supabase_cli_without_psql(self):
+        # no psql on PATH: pull reaches the linked project with `supabase db query -o json --linked`, unwraps the
+        # agent-mode envelope and undoes its HTML escaping
+        from unittest import mock
+        fake = Path(self.tmp.name) / "bin"
+        fake.mkdir()
+        log = Path(self.tmp.name) / "argv.log"
+        row = ('{"id":"11111111-2222-3333-4444-555555555555","author_email":"a@b.it","note":"x &amp; y",'
+               '"created_at":"2026-10-20 10:00:00","metamodel":{"package":"app","classes":{"A":{}},"enums":{}}}')
+        (fake / "supabase").write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > " + str(log) + "\n"
+                                       "echo 'Connecting to remote database...' >&2\n"
+                                       "echo '{\"rows\":[{\"json_agg\":[" + row + "]}],\"boundary\":\"abc\",\"warning\":\"untrusted\"}'\n")
+        (fake / "supabase").chmod(0o755)
+        (self.app / "supabase" / ".temp").mkdir()
+        (self.app / "supabase" / ".temp" / "project-ref").write_text("abcdefgh\n")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, {"PATH": str(fake)}, clear=False):
+            os.environ.pop("MODELER_PROD_DB", None)
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(cli.cmd_pull(argparse.Namespace(path=str(self.app), db=None)), 0)
+        args = log.read_text().splitlines()
+        self.assertEqual(args[:5], ["db", "query", "-o", "json", "--linked"])
+        self.assertIn("model_change_requests", "\n".join(args[5:]))           # the SQL spans several lines
+        self.assertIn("with the Supabase CLI", err.getvalue())
+        files = list((self.app / ".modeler" / "proposals").glob("*.json"))
+        self.assertEqual(len(files), 1, files)
+        doc = json.loads(files[0].read_text())
+        self.assertEqual((doc["note"], doc["author"], doc["metamodel"]["classes"]), ("x & y", "a@b.it", {"A": {}}))
+        # the plain shape (no envelope) and a JSON column returned as text are read too
+        self.assertEqual(D._unescape_html({"a": ["x &lt; y"]}), {"a": ["x < y"]})
 
     def test_reinstall_upgrades_owned_files_and_keeps_adapted_ones(self):
         cli.install(self.app)
@@ -705,6 +737,7 @@ class AppTests(unittest.TestCase):
         env["PGPASSFILE"] = str(self.app / "no-pgpass")
         with unittest.mock.patch.dict(os.environ, env, clear=True), \
                 unittest.mock.patch.object(cli, "_can_prompt", return_value=False), \
+                unittest.mock.patch("shutil.which", return_value="/usr/bin/psql"), \
                 unittest.mock.patch("subprocess.run") as psql, contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(D.DbError) as err:
                 cli._prod_query(dsn, "select 1", "pulling from")
@@ -988,6 +1021,11 @@ class HookTests(unittest.TestCase):
             (Path(d) / "tools" / "modeler").mkdir(parents=True)
             (Path(d) / "tools" / "modeler" / "VERSION").write_text(__version__ + "\n")
             self.assertIn("docs/DOMAIN.md missing", self.run_hook("session", {"cwd": d}).stdout)
+            (Path(d) / "tools" / "modeler" / "VERSION").write_text("0.0.1\n")
+            out = self.run_hook("session", {"cwd": d}).stdout
+            self.assertIn("The app ships modeler 0.0.1", out)
+            self.assertIn("claude plugin update modeler@iovino-harness", out)
+            (Path(d) / "tools" / "modeler" / "VERSION").write_text(__version__ + "\n")
             (Path(d) / "docs").mkdir()
             (Path(d) / "docs" / "domain.md").write_text("# other\n")
             self.assertIn("docs/domain.md differs from docs/DOMAIN.md only by letter case",

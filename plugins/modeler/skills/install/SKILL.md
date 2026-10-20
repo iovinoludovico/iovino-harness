@@ -16,6 +16,16 @@ Rilanciare questa skill aggiorna i file del modellatore (editor, wrapper, vista 
 non tocca quelli adattati all'app (`src/lib/modeler/access.ts`, la pagina admin): se `install` segnala
 "behavior.yaml found", aggiorna la pagina come dice il punto 4.
 
+## 0. Versione del plugin (prima di tutto)
+La cache del plugin può essere indietro rispetto all'harness: confronta la versione caricata
+(`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json`) con quella di `origin/main` dell'harness:
+`gh api repos/iovinoludovico/iovino-harness/contents/plugins/modeler/.claude-plugin/plugin.json --jq .content | base64 -d`
+(o, se il clone dell'harness è sul computer, `git -C <clone> fetch -q && git -C <clone> show origin/main:plugins/modeler/.claude-plugin/plugin.json`).
+Se la cache è indietro, fermati e fai eseguire all'utente, nel suo terminale:
+`claude plugin marketplace update iovino-harness && claude plugin update modeler@iovino-harness`, poi `/reload-plugins`
+e una nuova invocazione di questa skill. Se è aggiornata, prosegui: prima installazione (punti 1-5) o aggiornamento
+di un'app già installata (punto 6).
+
 ## 1. Database da leggere (solo se manca `domain.ecore.yaml`)
 Di solito il Supabase locale dell'app: `supabase start`, poi il DSN con la porta di `[db]` in
 `supabase/config.toml` (la CLI la ricava da sola se ometti `--db`). Se non è avviato chiedi all'utente di
@@ -123,3 +133,18 @@ typecheck, lint, test e build dell'app; poi apri `/admin/model` in sviluppo, fai
 deve comparire un file in `.modeler/proposals/`; se c'è un workflow, apri il dettaglio di un record a due larghezze
 (desktop e telefono) e controlla che il diagramma mostri lo stato corrente e scorra invece di stringersi. Prima del deploy, la migrazione `model_change_requests` va
 applicata al cloud con `/core:db-push`.
+
+## 6. Aggiornamento di un'app già installata (automatico)
+Quando `tools/modeler/VERSION` è più vecchio del plugin (l'inizio sessione lo segnala), fai da solo, senza chiedere
+passo per passo:
+1. branch `chore/modeler-<versione>` da `main` aggiornato;
+2. `install <app>` (punto 3), poi `npm run model:validate` e `npm run model:sync`;
+3. typecheck, lint e test dell'app (gli script di `package.json`); se `install` stampa un suggerimento
+   («behavior.yaml found», «workflows in code», `<WorkflowView>`), applicalo o riportalo all'utente;
+4. commit `chore(modeler): upgrade the modeler to <versione>` con, nel corpo, i titoli delle PR dell'harness tra le
+   due versioni (`gh pr list --repo iovinoludovico/iovino-harness --state merged --limit 30 --json number,title,mergedAt`,
+   quelle con `modeler` nel titolo e più recenti della versione installata) e ciò che l'app deve ancora fare a mano;
+5. proponi `/core:ship` (porta anche le migrazioni nuove in cloud prima del push, se ce ne sono).
+`install` aggiunge a `.gitignore` anche `.modeler/backups/` (i backup di `apply` e `sync --force` sporcavano
+l'albero e bloccavano `ship`). Senza `psql`, `pull`, `done`, `drift` e `reverse` usano `supabase db query`
+(`--linked` via Management API con il token di `supabase login`, altrimenti `--db-url`).
