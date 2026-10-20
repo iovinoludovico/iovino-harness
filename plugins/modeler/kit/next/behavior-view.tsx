@@ -5,7 +5,7 @@
 // workflow per class (states, transitions), derived attributes with their formula, events, reactions, subscriptions.
 // The same content as docs/BEHAVIOR.md; the class selected in the editor is highlighted (no scrolling: the diagram
 // stays where the user is looking). The behaviour changes in
-// behavior.yaml (/modeler:metamodel), not here.
+// behavior.yaml (/modeler:behavior), not here.
 
 import type { ReactNode } from "react";
 
@@ -48,7 +48,7 @@ type Props = {
 
 const TEXT = {
   it: {
-    title: "Comportamento", note: "Generato da behavior.yaml (npm run model:sync): il comportamento si modifica nel modello con /modeler:metamodel, non qui.",
+    title: "Comportamento", note: "Generato da behavior.yaml (npm run model:sync): il comportamento si modifica nel modello con /modeler:behavior, non qui.",
     roles: "Ruoli", role: "Ruolo", label: "Etichetta", scope: "Ambito", global: "globale", per: (c: string) => `per ${c}`,
     builtinRoles: "Oltre ai ruoli predefiniti admin (amministratori) e creator (chi ha creato il record).",
     workflow: (c: string) => `Workflow di ${c}`, stateAttr: (a: string) => `Lo stato è l'attributo ${a}.`,
@@ -67,7 +67,7 @@ const TEXT = {
     subscriptions: "Sottoscrizioni", url: "URL", none: "—",
   },
   en: {
-    title: "Behaviour", note: "Generated from behavior.yaml (npm run model:sync): the behaviour changes in the model with /modeler:metamodel, not here.",
+    title: "Behaviour", note: "Generated from behavior.yaml (npm run model:sync): the behaviour changes in the model with /modeler:behavior, not here.",
     roles: "Roles", role: "Role", label: "Label", scope: "Scope", global: "global", per: (c: string) => `per ${c}`,
     builtinRoles: "Besides the built-in roles admin (administrators) and creator (who created the record).",
     workflow: (c: string) => `Workflow of ${c}`, stateAttr: (a: string) => `The state is the attribute ${a}.`,

@@ -44,7 +44,7 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   stores them (clauses, principals, timed triggers); `drift` compares the workflows with the versions published in
   the database. While an app has no `behavior.yaml` but keeps workflows in code (`*_perform_transition`,
   `*.transitioned` events, `CUSTOM(*-workflow)`, a state column with an enumerated check, an enum state attribute),
-  `install`, `reverse` and the session hook say so and propose `/modeler:metamodel` to describe them without changing
+  `install`, `reverse` and the session hook say so and propose `/modeler:behavior` to describe them without changing
   the behaviour. In the web modeler, when the page passes `behavior.json` (`install` says so while it does not),
   the diagram shows the behaviour next to the structure: a class with a workflow has a «workflow» head and,
   when selected, its **state diagram in a panel under the canvas** (laid out at the panel's width with the real
@@ -78,6 +78,7 @@ From the harness clone: `./install.sh` (installs `core` and `modeler`). From Git
 |---|---|
 | `/modeler:install [app] [DSN]` | metamodel from the database if missing, modeler and CLI in the app (re-run to upgrade) |
 | `/modeler:metamodel <description> \| show` | metamodel from natural language, then migration, code, drift |
+| `/modeler:behavior <description> \| show [Class]` | behaviour model from natural language or from the code, then sync, engine (generated or hand-written), tests |
 | `/modeler:apply [proposal] \| pull [DSN]` | applies the proposals saved by the modeler |
 
 Knowledge skill loaded automatically: `notation` (syntax of both models, storage mapping, ambiguities to settle).

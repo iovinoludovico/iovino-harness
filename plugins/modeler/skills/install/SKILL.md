@@ -122,13 +122,15 @@ rivedilo **con l'utente**:
   `src/app/(admin)/admin/notifications/page.tsx`, link nella navigazione admin) e applica la migrazione
   `notification_templates` (in locale, poi `/core:db-push`). Il motore generato (`npm run model:engine -- --write`)
   rende `subject` e `body` in `recipients`; con un motore a mano il dispatcher legge i testi da `behavior.json`
-  (`templates`) e gli override dalla tabella, con lo stesso `render_template` del motore.
+  (`templates`) e gli override dalla tabella, con lo stesso `render_template` del motore (skill `behavior`, punto 4).
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
 - `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`); non ignorare
   `.modeler/proposals/` (le proposte si rivedono nel repository).
 - In `CLAUDE.md` dell'app: "Il metamodello del dominio è `domain.ecore.yaml`: ogni modifica di schema parte da
   lì (/modeler:metamodel) insieme alla migrazione; `npm run model:sync` aggiorna il modellatore,
-  `npm run model:drift` deve dare 'aligned'. Le proposte del modellatore si applicano con /modeler:apply.
+  `npm run model:drift` deve dare 'aligned'. Il comportamento (workflow, guardie, notifiche e i loro testi) è
+  `behavior.yaml`: si modifica con /modeler:behavior nella stessa modifica del codice che lo esegue. Le proposte del
+  modellatore si applicano con /modeler:apply.
   `docs/DOMAIN.md` è generato dal metamodello: lì si annotano a mano dettagli e regole da portare nel metamodello
   (/modeler:metamodel), mai la struttura." Se l'app formatta `docs/` con Prettier, aggiungi `docs/DOMAIN.md` a
   `.prettierignore`.

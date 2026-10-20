@@ -34,8 +34,9 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    valida contro il metamodello proposto (se non è valido non scrive nulla, né metamodello né comportamento) e
    riscrive `behavior.yaml` per intero (backup in `.modeler/backups/`; i commenti del file non si conservano e
    vengono elencati): controlla `git diff behavior.yaml` e riporta a mano i commenti che contano. Poi `sync`
-   rigenera `behavior.json` e `docs/BEHAVIOR.md`; se il comportamento è cambiato, `npm run model:engine -- --write`
-   rigenera il motore (una migrazione sostituita) e `npm run model:drift` confronta i workflow. Il file cambia solo nelle righe di ciò che è
+   rigenera `behavior.json` e `docs/BEHAVIOR.md`; se il comportamento è cambiato, il motore segue la skill `behavior`,
+   punto 4: `npm run model:engine -- --write` con il motore generato (una migrazione sostituita), SQL da riportare
+   a mano con un motore scritto a mano (`CUSTOM(*-workflow)`: mai `engine --write`); poi `npm run model:drift`. Il file cambia solo nelle righe di ciò che è
    cambiato (ordine, stile e commenti restano); le posizioni del diagramma salvate dall'editor non entrano (il
    file tiene le sue). Se la modifica non si può scrivere riga per riga (intestazione del package, file con un
    layout insolito) `--write` si ferma senza scrivere: applicala a mano, oppure, solo se l'utente accetta di
@@ -43,7 +44,7 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    righe attese, fermati e segnalalo invece di committare. Se la proposta porta una collezione a `lower > 0` o a un
    `upper` finito (es. `orderLines` da `0..*` a `1..*`), il database non impone il vincolo: proponi subito la guardia
    sulla prima transizione del workflow (`orderLines.notEmpty()`; chiedi su quale) o la regola dell'app, con un test
-   della transizione bloccata (skill `metamodel`, 3b); `validate` lo segnala finché manca.
+   della transizione bloccata (skill `behavior`, punto 2); `validate` lo segnala finché manca.
 5. Prosegui come la skill `metamodel`, sezione "Allineare l'applicazione": `npm run model:migrate -- --name <nome>
    --write` (bozza dal metamodello committato a quello appena scritto), TODO risolti, codice, migrazione
    applicata in locale, `npm run model:drift` → "aligned", typecheck, lint e test.

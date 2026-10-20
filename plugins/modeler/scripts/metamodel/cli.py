@@ -1148,9 +1148,9 @@ def workflow_hint(root: Path) -> str | None:
     if not signs:
         return None
     where = "; ".join(f"{what} in {', '.join(sorted(v)[:3])}" for what, v in signs.items())
-    return (f"The app has workflows in code but no {B.BEHAVIOR_FILE} ({where}): propose /modeler:metamodel to "
+    return (f"The app has workflows in code but no {B.BEHAVIOR_FILE} ({where}): propose /modeler:behavior to "
             "describe them in behavior.yaml from what the code does, without changing the behaviour or replacing a "
-            "hand-written engine (metamodel skill, 3b).")
+            "hand-written engine (behavior skill, 0 and 4).")
 
 
 def cmd_install(a) -> int:

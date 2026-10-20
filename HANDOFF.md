@@ -1,5 +1,5 @@
-# Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
-_Aggiornato: 2026-10-20 · branch `feat/modeler-notification-templates` (2 commit sopra `main` `d4dae36`, non pushati)_
+# Handoff — modellatore: skill `/modeler:behavior` per il modello di comportamento
+_Aggiornato: 2026-10-20 · branch `feat/modeler-behavior-skill` (1 commit sopra `main` `60932ed`, non pushato)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -7,6 +7,20 @@ dettaglio di un record di un'entità con workflow mostra un div con il diagramma
 evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 
 ## Stato
+- Branch locale `feat/modeler-behavior-skill` (da unire con `/core:ship`): nuova skill
+  `plugins/modeler/skills/behavior/SKILL.md` (dove; `show`; dalle parole al modello con le regole che stavano in
+  `metamodel` §3b: derivazioni, guardie, destinatari sull'evento di stato, cardinalità, `templates:`, ambiguità in
+  un giro; struttura nella stessa modifica via `metamodel`; allineamento: validate, sync, motore generato o a mano,
+  codice, test, proposte via `apply`). `metamodel` resta per la struttura con un §3b di rimando; puntatori
+  aggiornati: `cli.workflow_hint`, nota di `reverse` (`dbschema`), intestazione di `behavior.yaml` (`behavior.dumps`),
+  hook di sessione, `behavior-view.tsx`, skill `install` (frase per il `CLAUDE.md` dell'app), `apply` (motore
+  generato o a mano), `notation`, convenzioni e `project-init` di core, README, `help/harness-process.html`.
+  Test: `workflow_hint` atteso con `/modeler:behavior`. Non provato: la skill su un'app vera (dopo `/reload-plugins`,
+  nella sandbox `/modeler:behavior show Task` e una reazione di prova).
+- PR #26 (`60932ed`, modeler 0.25.0): testi delle notifiche nel modello (`templates:`), resi dal motore, override
+  dalla pagina admin del kit. In order-management i testi sono già nell'app (PR #14 di quel repository: classe
+  `NotificationTemplate`, tabella `notification_templates` con colonna `template`, rendering in `render.ts`,
+  `/admin/templates`; n8n spedisce soltanto): l'allineamento al kit è facoltativo (vedi «Prossimi passi»).
 - `origin/main` è alla PR #20 (`2e6d80c`): **core 0.12.0, modeler 0.21.0**. Storia di oggi: PR #18 `<workflow-view>`
   (modeler 0.19.0); PR #19 `cli.workflow_hint` in `install`/hook/`reverse`, «Motore a mano» in `metamodel` §3b,
   `help/harness-process.html` (core 0.11.0, modeler 0.20.0); PR #20 vista esistente e `<WorkflowView>` in due schede
@@ -94,16 +108,16 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` del branch `feat/modeler-notification-templates` (push, PR, merge su conferma); poi sugli altri
-   computer `claude plugin update core@iovino-harness modeler@iovino-harness` (0.14.0 / 0.25.0).
-2. In order-management: portare i testi delle email dal nodo Code di n8n a `templates:` di `behavior.yaml`
-   (`/modeler:metamodel`), `model:validate`, `model:sync`; con il motore a mano il dispatcher legge
-   `behavior.json.templates` e gli override con lo stesso `render_template` (il modello generato dal kit non
-   sostituisce l'SQL dell'app); la classe `NotificationTemplate` dell'app può lasciare il posto alla tabella
-   `notification_templates` del kit.
-3. In order-management, con il modeler 0.25.0: `/modeler:install` segue da solo il punto 6 della skill; al primo
-   `npm run model:pull` senza `psql` verificare la busta di `supabase db query` (se il formato differisce, adattare
-   `dbschema.cli_query`).
+1. `/core:ship` del branch `feat/modeler-behavior-skill` (push, PR, merge su conferma); poi `/reload-plugins` e sugli
+   altri computer `claude plugin update core@iovino-harness modeler@iovino-harness`. Prova nella sandbox:
+   `/modeler:behavior show Task` e una reazione di prova («avvisa l'assegnatario quando il task torna in todo»):
+   reazione, template, `sync`, `engine --write` senza passare da `model:migrate`.
+2. In order-management (modeler installato 0.23.0): `/modeler:install` segue da solo il punto 6 della skill e porta nel
+   `CLAUDE.md` dell'app la riga su `/modeler:behavior`; rifiutare la migrazione `notification_templates` del kit
+   (colonna `key`; la tabella dell'app ha `template` e la sua pagina). Facoltativo: `templates:` in `behavior.yaml`
+   con i testi del seed riscritti con i segnaposto della notazione (`{{self.code}}`, `{{actor.name}}`, `{{url}}`) e
+   `render.ts` che li risolve. Al primo `npm run model:pull` senza `psql` verificare la busta di `supabase db query`
+   (se il formato differisce, adattare `dbschema.cli_query`).
 4. In order-management, per la convenzione sui link costruiti dal database: migrazione `create or replace` delle
    `<e>_json` con una `record_url(entity, id)` SQL, redirect `/e/<entità>/<id>` → pagina nuova e test sull'`url`.
 3. In invitations-af e order-management: `/modeler:install` (0.19.0) e `<WorkflowView>` nelle pagine di dettaglio delle

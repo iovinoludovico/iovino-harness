@@ -141,7 +141,8 @@ def session(data: dict) -> int:
                          "then /reload-plugins).")
         if (root / BEHAVIOR_FILE).exists():
             lines.append(f"Behaviour model: {root / BEHAVIOR_FILE} (roles, derivations, workflows, events, reactions), "
-                         "written on the concepts of the metamodel and checked against it by `npm run model:validate`.")
+                         "written on the concepts of the metamodel and checked against it by `npm run model:validate`; "
+                         "it is edited with /modeler:behavior, in the same change as the code that runs it.")
         else:
             hint = cli.workflow_hint(root)                   # workflows in code, no behaviour model yet
             if hint:

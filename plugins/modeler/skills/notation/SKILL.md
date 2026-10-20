@@ -8,7 +8,7 @@ description: Riferimento delle notazioni del metamodello di dominio domain.ecore
 Il metamodello descrive la **struttura** del dominio di un'applicazione Next.js + Supabase: package, classi,
 attributi, riferimenti, enum, ereditarietà. È la fonte di verità dello schema: ogni modifica di schema parte da
 qui e va nella stessa modifica con la migrazione e il codice che la usa. Il comportamento (ruoli, workflow,
-guardie, eventi, reazioni, webhook) sta nel **modello di comportamento `behavior.yaml`**, accanto al metamodello:
+guardie, eventi, reazioni, webhook) sta nel **modello di comportamento `behavior.yaml`** (skill `behavior`), accanto al metamodello:
 è scritto sui concetti del metamodello con espressioni tipizzate (`reason.compensationType = hourly and hours > 0`)
 e verificato contro di esso da `validate`, dall'hook a ogni modifica di uno dei due file e in CI. Gli attributi
 calcolati sono `derived: true` nel metamodello e hanno la formula in `derivations` del behavior. Ciò che nessuno

@@ -554,7 +554,7 @@ class AppTests(unittest.TestCase):
         hint = cli.workflow_hint(self.app)
         self.assertIn("workflows in code but no behavior.yaml", hint)
         for sign in ("perform_transition functions in 20260101000000_orders.sql", "a state column with a check",
-                     "CUSTOM(*-workflow) in customizations.md", "/modeler:metamodel"):
+                     "CUSTOM(*-workflow) in customizations.md", "/modeler:behavior"):
             self.assertIn(sign, hint)
         self.assertNotIn("enum state attribute", hint)
         # an enum state attribute in the metamodel is a sign too
