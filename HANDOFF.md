@@ -1,5 +1,5 @@
 # Handoff — modellatore: diagramma del workflow con lo stato corrente nelle pagine di dettaglio
-_Aggiornato: 2026-10-20 · branch `feat/release-cycle-automation` (2 commit sopra `main` `bcb7da4`, non pushati)_
+_Aggiornato: 2026-10-20 · branch `feat/modeler-notification-templates` (2 commit sopra `main` `d4dae36`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -17,7 +17,17 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 - PR #22 (`d9f433c`, core 0.13.0, modeler 0.21.2): convenzione sui link costruiti dal database, appforge rimosso ovunque.
 - PR #23 (`35ef643`, modeler 0.22.0): cardinalità delle collezioni (notazione, warning di `validate`, skill).
 - PR #24 (`bcb7da4`, modeler 0.23.0): destinatari sull'evento del cambio di stato (notazione, warning, colonna «Avvisa»).
-- Branch locale `feat/release-cycle-automation` (sesta revisione delle note, da unire con `/core:ship`):
+- PR #25 (`d4dae36`, core 0.14.0, modeler 0.24.0): ciclo di release automatizzato (install con controllo versione e
+  aggiornamento automatico, ship con db-push e attesa del deploy, fallback `supabase db query`, guard).
+- Branch locale `feat/modeler-notification-templates` (settima revisione delle note, da unire con `/core:ship`):
+  `d0224ba feat(modeler): notification texts in the model, rendered by the engine, overridable from the admin page` +
+  `90d9979 chore(release): modeler 0.25.0`. `templates:` in `behavior.yaml` (per lingua, segnaposto sul record e
+  sull'evento), `validate` (`_check_templates`), `BEHAVIOR.md`, `behavior.json`; motore: `render_template`,
+  `<entità>_template_vars`, `<entità>_recipients` con `subject`/`body` resi e override da `notification_templates`;
+  kit: `notification_templates.sql`, `notification-templates.tsx` (matrice), `notification-actions.ts`,
+  `templates-page.tsx`, `install` (`has_templates`, `templates_page_hint`); skill `metamodel` e `install`.
+  Provato sulla sandbox (database reale): override, testi del modello, sollecito; sandbox a 0.25.0 con i testi di Task.
+- Storia (PR #25, già in `main`): branch `feat/release-cycle-automation`:
   `92e59f2 feat: automate the plugin release cycle …` + `62d9ca5 chore(release): core 0.14.0, modeler 0.24.0`.
   Skill `install`: «0. Versione del plugin» (cache contro `origin/main` dell'harness, comando di aggiornamento e
   stop) e «6. Aggiornamento di un'app già installata» (branch, install, validate, sync, controlli, commit con i titoli
@@ -84,12 +94,17 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` del branch `feat/release-cycle-automation` (push, PR, merge su conferma); poi sugli altri
-   computer `claude plugin update core@iovino-harness modeler@iovino-harness` (0.14.0 / 0.24.0).
-2. In order-management, con il modeler 0.24.0: `/modeler:install` segue da solo il punto 6 della skill; al primo
+1. `/core:ship` del branch `feat/modeler-notification-templates` (push, PR, merge su conferma); poi sugli altri
+   computer `claude plugin update core@iovino-harness modeler@iovino-harness` (0.14.0 / 0.25.0).
+2. In order-management: portare i testi delle email dal nodo Code di n8n a `templates:` di `behavior.yaml`
+   (`/modeler:metamodel`), `model:validate`, `model:sync`; con il motore a mano il dispatcher legge
+   `behavior.json.templates` e gli override con lo stesso `render_template` (il modello generato dal kit non
+   sostituisce l'SQL dell'app); la classe `NotificationTemplate` dell'app può lasciare il posto alla tabella
+   `notification_templates` del kit.
+3. In order-management, con il modeler 0.25.0: `/modeler:install` segue da solo il punto 6 della skill; al primo
    `npm run model:pull` senza `psql` verificare la busta di `supabase db query` (se il formato differisce, adattare
    `dbschema.cli_query`).
-3. In order-management, per la convenzione sui link costruiti dal database: migrazione `create or replace` delle
+4. In order-management, per la convenzione sui link costruiti dal database: migrazione `create or replace` delle
    `<e>_json` con una `record_url(entity, id)` SQL, redirect `/e/<entità>/<id>` → pagina nuova e test sull'`url`.
 3. In invitations-af e order-management: `/modeler:install` (0.19.0) e `<WorkflowView>` nelle pagine di dettaglio delle
    entità con workflow (Invitation a 11 stati: a tutta larghezza).
