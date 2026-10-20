@@ -1,6 +1,6 @@
 ---
 name: apply
-description: Applica le proposte di modifica del metamodello salvate dal modellatore web di un'app (.modeler/proposals in sviluppo, tabella model_change_requests in produzione, o un file scaricato) e porta la modifica fino a migrazione, codice e verifica di allineamento. Va usata quando l'utente dice "applica la proposta del modellatore", "ho salvato una modifica in /admin/model", "ci sono proposte da produzione", o invoca /modeler:apply.
+description: Applica le proposte di modifica del metamodello salvate dal modellatore web di un'app o da /modeler:metamodel (.modeler/proposals in sviluppo, tabella model_change_requests in produzione, o un file scaricato) e porta la modifica fino a migrazione, codice e verifica di allineamento. Va usata quando l'utente dice "applica la proposta del modellatore", "ho salvato una modifica in /admin/model", "ci sono proposte da produzione", o invoca /modeler:apply.
 argument-hint: "[file della proposta] | pull [DSN di produzione]"
 ---
 
@@ -20,7 +20,8 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
      non hanno un terminale e `psql` non può chiedere la password. Mai chiedere la password in chat, scriverla
      in file del repository o nel comando.
    - Manca lo script `model:pull`: il modellatore installato è vecchio, aggiornalo con `/modeler:install`.
-2. `npm run model:proposals`: elenca le proposte con le differenze rispetto a `domain.ecore.yaml` e, per le proposte
+2. `npm run model:proposals`: elenca le proposte (dal modellatore web, o «from the prompt» se salvate da
+   `/modeler:metamodel` con `model:propose`) con le differenze rispetto a `domain.ecore.yaml` e, per le proposte
    che portano anche il comportamento (chiave `behavior`, salvata dal modellatore quando l'app ha `behavior.yaml`),
    le righe `behaviour: …` (ruoli, derivazioni, stati, transizioni, ritorno, eventi, reazioni).
 3. `npm run model:apply -- [file]` (prova a vuoto; senza file, la proposta più recente): mostra all'utente le
@@ -45,7 +46,7 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    `upper` finito (es. `orderLines` da `0..*` a `1..*`), il database non impone il vincolo: proponi subito la guardia
    sulla prima transizione del workflow (`orderLines.notEmpty()`; chiedi su quale) o la regola dell'app, con un test
    della transizione bloccata (skill `behavior`, punto 2); `validate` lo segnala finché manca.
-5. Prosegui come la skill `metamodel`, sezione "Allineare l'applicazione": `npm run model:migrate -- --name <nome>
+5. Prosegui come la skill `metamodel`, sezione "Applicare": `npm run model:migrate -- --name <nome>
    --write` (bozza dal metamodello committato a quello appena scritto), TODO risolti, codice, migrazione
    applicata in locale, `npm run model:drift` → "aligned", typecheck, lint e test.
    In produzione la migrazione va applicata con `/core:db-push` prima del push del codice.

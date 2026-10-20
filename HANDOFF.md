@@ -1,5 +1,5 @@
-# Handoff — modellatore: skill `/modeler:behavior` per il modello di comportamento
-_Aggiornato: 2026-10-20 · branch `feat/modeler-behavior-skill` (1 commit sopra `main` `60932ed`, non pushato)_
+# Handoff — modellatore: skill `/modeler:behavior` e proposte dal prompt visibili nel modellatore
+_Aggiornato: 2026-10-20 · branch `feat/modeler-propose-from-prompt` sopra `feat/modeler-behavior-skill` (4 commit sopra `main` `60932ed`, non pushati)_
 
 ## Obiettivo
 Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
@@ -7,6 +7,17 @@ dettaglio di un record di un'entità con workflow mostra un div con il diagramma
 evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
 
 ## Stato
+- Branch `feat/modeler-propose-from-prompt` (sopra `feat/modeler-behavior-skill`; da unire con `/core:ship`, in un'unica
+  PR o due): comando CLI `propose` (`cli.cmd_propose`): una bozza in `.modeler/drafts/domain.ecore.yaml` (e
+  `behavior.yaml`) diventa `.modeler/proposals/<data>-prompt.json`, lo stesso JSON del modellatore web (`author:
+  claude`, `source: prompt`, `metamodel` = `runtime_json`, `behavior` = `behavior.json`), validata, con il diff
+  stampato; senza differenze o con bozza non valida non salva. `model:propose` tra gli script, `.modeler/drafts/`
+  in `.gitignore`, `proposals` segna «from the prompt», hook di sessione «or by /modeler:metamodel». Skill
+  `metamodel`: con il modellatore installato la modifica si fa sulla bozza e diventa proposta (§3.3), §4
+  «Applicare» chiede se applicare subito (passi di `apply`) o lasciarla in attesa; `behavior` §2, `apply`, `install`,
+  convenzioni, README, help aggiornati. Test: 3 nuovi (`test_propose_*`). Provato nella sandbox: la proposta compare
+  nel banner di `/admin/model` con diff e «Apri nell'editor» la mostra nel diagramma (poi scartata: la sandbox
+  resta com'era, a parte l'aggiornamento del modellatore).
 - Branch locale `feat/modeler-behavior-skill` (da unire con `/core:ship`): nuova skill
   `plugins/modeler/skills/behavior/SKILL.md` (dove; `show`; dalle parole al modello con le regole che stavano in
   `metamodel` §3b: derivazioni, guardie, destinatari sull'evento di stato, cardinalità, `templates:`, ambiguità in
@@ -108,7 +119,7 @@ evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
   `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
 
 ## Prossimi passi
-1. `/core:ship` del branch `feat/modeler-behavior-skill` (push, PR, merge su conferma); poi `/reload-plugins` e sugli
+1. `/core:ship` dei branch `feat/modeler-behavior-skill` e `feat/modeler-propose-from-prompt` (push, PR, merge su conferma); poi `/reload-plugins` e sugli
    altri computer `claude plugin update core@iovino-harness modeler@iovino-harness`. Prova nella sandbox:
    `/modeler:behavior show Task` e una reazione di prova («avvisa l'assegnatario quando il task torna in todo»):
    reazione, template, `sync`, `engine --write` senza passare da `model:migrate`.

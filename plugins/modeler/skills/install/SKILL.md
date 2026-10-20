@@ -124,8 +124,9 @@ rivedilo **con l'utente**:
   rende `subject` e `body` in `recipients`; con un motore a mano il dispatcher legge i testi da `behavior.json`
   (`templates`) e gli override dalla tabella, con lo stesso `render_template` del motore (skill `behavior`, punto 4).
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
-- `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`); non ignorare
-  `.modeler/proposals/` (le proposte si rivedono nel repository).
+- `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`), `.modeler/backups/` e
+  `.modeler/drafts/` (le bozze che `model:propose` trasforma in proposte); non ignorare `.modeler/proposals/` (le
+  proposte si rivedono nel repository).
 - In `CLAUDE.md` dell'app: "Il metamodello del dominio è `domain.ecore.yaml`: ogni modifica di schema parte da
   lì (/modeler:metamodel) insieme alla migrazione; `npm run model:sync` aggiorna il modellatore,
   `npm run model:drift` deve dare 'aligned'. Il comportamento (workflow, guardie, notifiche e i loro testi) è

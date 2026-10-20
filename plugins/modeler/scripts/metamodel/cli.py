@@ -28,6 +28,7 @@ from . import sqlgen as G
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]            # modeler.py, metamodel/, vendor/
 KIT_DIR = SCRIPTS_DIR.parent / "kit"                          # only in the plugin, not in the vendored copy
 STATE_DIR = ".modeler"                                        # proposals and backups, in the app repository
+DRAFTS_DIR = "drafts"                                         # under STATE_DIR: the drafts `propose` turns into proposals
 METAMODEL_JSON = Path("src/lib/modeler/metamodel.json")       # what the admin page reads
 BEHAVIOR_JSON = Path("src/lib/modeler/behavior.json")         # the behaviour as the app reads it (typed expressions, SQL)
 DOMAIN_MD = Path("docs/DOMAIN.md")                            # the domain explained, generated; hand notes allowed
@@ -45,6 +46,7 @@ NPM_SCRIPTS = {
     "model:docs": "python3 tools/modeler/modeler.py docs",
     "model:drift": "python3 tools/modeler/modeler.py drift",
     "model:proposals": "python3 tools/modeler/modeler.py proposals",
+    "model:propose": "python3 tools/modeler/modeler.py propose",
     "model:pull": "python3 tools/modeler/modeler.py pull",
     "model:done": "python3 tools/modeler/modeler.py done",
     "model:apply": "python3 tools/modeler/modeler.py apply",
@@ -125,6 +127,10 @@ def _has_password(dsn: str) -> bool:
 
 def proposals_dir(meta_path: Path) -> Path:
     return meta_path.parent / STATE_DIR / "proposals"
+
+
+def drafts_dir(meta_path: Path) -> Path:
+    return meta_path.parent / STATE_DIR / DRAFTS_DIR
 
 
 def _write_json(path: Path, data: Any) -> None:
@@ -358,9 +364,66 @@ def cmd_proposals(a) -> int:
         bprop = _behavior_of(f)
         if bprop is not None:
             changes += [f"behaviour: {c}" for c in B.diff(bcurrent, bprop)]
-        print(f"{f.name}  by {doc.get('author', '?')}  {doc.get('note', '')}")
+        origin = "  (from the prompt)" if doc.get("source") == "prompt" else ""
+        print(f"{f.name}  by {doc.get('author', '?')}{origin}  {doc.get('note', '')}")
         for c in changes[:20]:
             print(f"    {c}")
+    return 0
+
+
+def cmd_propose(a) -> int:
+    """A draft of the metamodel (and of the behaviour) becomes a pending proposal, the same JSON the admin modeler
+    saves: the page lists it at once (diff, open, reject) and `apply` brings it into the files. Written by
+    /modeler:metamodel so a change proposed from the prompt is visible in the modeler before it is applied."""
+    meta_path = find_metamodel(a.path)
+    ddir = drafts_dir(meta_path)
+    draft = Path(a.draft) if a.draft else ddir / E.METAMODEL_FILE
+    if not draft.exists():
+        print(f"no draft at {draft}: copy {E.METAMODEL_FILE} there, edit it, then `propose`", file=sys.stderr)
+        return 1
+    bdraft = Path(a.behavior) if a.behavior else (ddir / B.BEHAVIOR_FILE if (ddir / B.BEHAVIOR_FILE).exists() else None)
+    current = E.load(meta_path)
+    new = E.load(draft)
+    rep = E.validate(new)
+    if not rep.ok:
+        print(f"The draft is not a valid metamodel: nothing was saved.\n{rep.render()}")
+        return 1
+    changes = E.diff(current, new)
+    bpath = behavior_file(meta_path)
+    bcurrent = B.load(bpath) if bpath is not None else None
+    bnew = B.load(bdraft) if bdraft is not None else bcurrent     # no behaviour draft: the current one travels along
+    bchanges: list[str] = []
+    if bnew is not None:
+        brep = B.validate(bnew, new)
+        if not brep.ok:
+            what = bdraft.name if bdraft is not None else f"the current {B.BEHAVIOR_FILE}"
+            print(f"{what} is not valid against the draft metamodel (fix the behaviour in the same draft): "
+                  f"nothing was saved.\n{brep.render()}")
+            return 1
+        bchanges = [f"behaviour: {c}" for c in B.diff(bcurrent or {}, bnew)]
+    if not changes and not bchanges:
+        print(f"no changes against {meta_path.name}" + (f" and {bpath.name}" if bpath else "") + ": nothing was saved")
+        return 1
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    out = proposals_dir(meta_path) / f"{stamp}-prompt.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    doc: dict[str, Any] = {"author": a.author, "source": "prompt", "note": a.note or "",
+                           "created_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                           "metamodel": E.runtime_json(new)}
+    if bnew is not None:
+        doc["behavior"] = B.runtime_json(bnew, new)
+    out.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"Proposal {out.name}" + (f"  {a.note}" if a.note else ""))
+    print("\n".join(f"  {c}" for c in changes + bchanges))
+    if rep.warnings:
+        print(rep.render())
+    print(f"\nSaved in {STATE_DIR}/proposals/: the admin modeler (/admin/model) lists it among the pending proposals. "
+          f"Apply it with /modeler:apply (`npm run model:apply -- {out.relative_to(meta_path.parent)} --write`), "
+          "or reject it from the modeler.")
+    if not a.keep:
+        draft.unlink()
+        if bdraft is not None and bdraft.exists():
+            bdraft.unlink()
     return 0
 
 
@@ -1022,6 +1085,8 @@ GITIGNORE_ENTRIES = (
      "# Python bytecode of the vendored modeler CLI (tools/modeler)\n__pycache__/\n"),
     ({".modeler/backups/", ".modeler/backups", "**/.modeler/backups/", ".modeler/"},
      "# backups written by `model:apply` and `model:sync --force` (not to commit: they would dirty the tree)\n.modeler/backups/\n"),
+    ({".modeler/drafts/", ".modeler/drafts", "**/.modeler/drafts/", ".modeler/"},
+     "# drafts that `model:propose` turns into proposals (the proposal is what gets reviewed and committed)\n.modeler/drafts/\n"),
 )
 
 
@@ -1227,6 +1292,16 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("proposals", help=f"list the proposals saved by the modeler ({STATE_DIR}/proposals)")
     s.add_argument("path", nargs="?")
     s.set_defaults(fn=cmd_proposals)
+
+    s = sub.add_parser("propose", help=f"save a draft of the metamodel (and of the behaviour) as a pending proposal in "
+                                       f"{STATE_DIR}/proposals, the ones the admin modeler lists")
+    s.add_argument("draft", nargs="?", help=f"draft metamodel (default {STATE_DIR}/{DRAFTS_DIR}/{E.METAMODEL_FILE})")
+    s.add_argument("--path", help="metamodel file or app directory")
+    s.add_argument("--behavior", help=f"draft behaviour (default {STATE_DIR}/{DRAFTS_DIR}/{B.BEHAVIOR_FILE} if present)")
+    s.add_argument("--note", help="what the change is for (the user's request, one line)")
+    s.add_argument("--author", default="claude")
+    s.add_argument("--keep", action="store_true", help="keep the drafts (by default they are removed once saved)")
+    s.set_defaults(fn=cmd_propose)
 
     s = sub.add_parser("apply", help="apply a proposal (default: the latest pending one)")
     s.add_argument("proposal", nargs="?")

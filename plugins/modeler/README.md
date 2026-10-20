@@ -27,7 +27,9 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   development, a `model_change_requests` row in production) applied with `/modeler:apply`, which goes on with
   the migration and the code in the same change. Until then `/admin/model` lists it above the editor (date,
   author, note, the changes as `modeler diff` prints them), where it can be opened or rejected, and the session
-  start reminds the developer of the proposals in `.modeler/proposals/`.
+  start reminds the developer of the proposals in `.modeler/proposals/`. A change proposed from the prompt takes
+  the same road: `/modeler:metamodel` edits a draft in `.modeler/drafts/` and `npm run model:propose` saves it as a
+  pending proposal (`author: claude`, «from the prompt»), so the modeler shows it before it is applied.
 - `drift` compares the metamodel with a live database (local Supabase by default): "aligned" is the invariant.
 - Behaviour is the second model, **`behavior.yaml`** next to the metamodel: roles, derivations of the attributes
   marked `derived: true`, workflows (states, transitions, guards, timed transitions), events, reactions (who is
@@ -77,7 +79,7 @@ From the harness clone: `./install.sh` (installs `core` and `modeler`). From Git
 | Command | What it does |
 |---|---|
 | `/modeler:install [app] [DSN]` | metamodel from the database if missing, modeler and CLI in the app (re-run to upgrade) |
-| `/modeler:metamodel <description> \| show` | metamodel from natural language, then migration, code, drift |
+| `/modeler:metamodel <description> \| show` | metamodel from natural language as a proposal the modeler lists, then apply: migration, code, drift |
 | `/modeler:behavior <description> \| show [Class]` | behaviour model from natural language or from the code, then sync, engine (generated or hand-written), tests |
 | `/modeler:apply [proposal] \| pull [DSN]` | applies the proposals saved by the modeler |
 
@@ -99,6 +101,7 @@ python3 scripts/modeler.py reverse --db postgresql://postgres:postgres@127.0.0.1
 python3 scripts/modeler.py install ~/code/my-app
 # inside the app
 npm run model:validate && npm run model:sync
+npm run model:propose -- --note "phone of a person"  # .modeler/drafts/domain.ecore.yaml -> pending proposal
 npm run model:migrate                                # preview the migration draft (from HEAD)
 npm run model:migrate -- --name add_phone --write    # save it in supabase/migrations/, then resolve TODO(modeler)
 npm run model:drift

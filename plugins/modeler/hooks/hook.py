@@ -149,7 +149,7 @@ def session(data: dict) -> int:
                 lines.append(hint)
         pending = sorted(cli.proposals_dir(root / METAMODEL_FILE).glob("*.json"))
         if pending:
-            lines.append(f"{len(pending)} proposal(s) saved by the admin modeler and not applied yet "
+            lines.append(f"{len(pending)} proposal(s) saved by the admin modeler or by /modeler:metamodel and not applied yet "
                          f"(.modeler/proposals/: {', '.join(p.name for p in pending[:5])}): tell the user and "
                          "propose /modeler:apply. Production proposals: `pull`.")
         docs = cli.docs_status(root)

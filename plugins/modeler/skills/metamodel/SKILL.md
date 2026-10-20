@@ -26,7 +26,11 @@ cosa è diventato struttura, cosa regola, cosa non si è potuto collocare (chied
 
 ## 1. Dove
 Cerca `domain.ecore.yaml` nella cartella corrente o nelle superiori.
-- Esiste: la modifica parte da lì (modifiche minime, rinomine con `renamed_from`).
+- Esiste e il modellatore è installato (`tools/modeler/`): la modifica diventa una **proposta** visibile in
+  `/admin/model` (sezione 3, punto 3) e `domain.ecore.yaml` cambia solo all'apply; modifiche minime, rinomine con
+  `renamed_from`.
+- Esiste ma il modellatore non è installato: modifica `domain.ecore.yaml` direttamente (nessuna pagina che
+  mostri una proposta) e prosegui con la sezione 4.
 - Non esiste ma l'app ha già un database: proponi prima `/modeler:install` (ricava il metamodello dal database
   con `reverse`): non riscrivere a mano uno schema che esiste già.
 - App nuova: scrivi il metamodello da zero alla radice del repository.
@@ -46,8 +50,16 @@ il client lo supporta); `--format storage` mostra tabelle e colonne.
    - Una Persona può avere più Account? (`[0..1]` / `[*]`)
    - Dall'Account si risale alla Persona? (opposite `persona`)
    - L'Account si cancella con la Persona? (containment)
-3. Scrivi o modifica `domain.ecore.yaml`. L'hook PostToolUse lo valida: correggi subito gli errori.
-4. Mostra il risultato in Emfatic e come diagramma, più `show --format storage` quando conta il database.
+3. **Bozza e proposta** (modellatore installato): copia `domain.ecore.yaml` in `.modeler/drafts/` (e `behavior.yaml`
+   se la modifica lo tocca: skill `behavior`) e modifica la bozza, non il file; l'hook PostToolUse valida la bozza
+   come il file vero (stesso nome): correggi subito gli errori. Poi
+   `npm run model:propose -- --note "<la richiesta dell'utente, in una riga>"`: valida, stampa il diff, salva la
+   proposta in `.modeler/proposals/<data>-prompt.json` (lo stesso JSON che salva il modellatore web) e cancella la
+   bozza. Nessuna differenza o bozza non valida: non salva nulla, correggi e ripeti. Di' all'utente che la
+   proposta è in `/admin/model` tra quelle in attesa (banner sopra l'editor: diff, «Apri» per vederla nel
+   diagramma, «Scarta»). App nuova o modellatore assente: scrivi `domain.ecore.yaml` direttamente.
+4. Mostra il risultato in Emfatic e come diagramma (`show --format emfatic|mermaid <bozza o file>`), più
+   `show --format storage` quando conta il database.
 
 ## 3b. Il comportamento: `behavior.yaml`
 Stati e transizioni, chi le esegue, scadenze, campi calcolati, eventi, notifiche e i loro testi non vanno nel
@@ -59,7 +71,12 @@ una guardia o un destinatario viene segnalata subito, e va sistemata qui. Con un
 (`CUSTOM(*-workflow)`) non si lancia `npm run model:engine -- --write`: i dettagli sono nella skill `behavior`,
 sezione 4.
 
-## 4. Allineare l'applicazione (nella stessa modifica, su un branch)
+## 4. Applicare (nella stessa modifica, su un branch)
+Con una proposta in attesa chiedi con AskUserQuestion: «Applico ora (migrazione, sync, codice, drift)» (consigliato)
+o «La lascio in attesa nel modellatore». Nel secondo caso il resoconto finisce con il file della proposta e il
+rimando a `/modeler:apply`. Nel primo, e quando il file è stato modificato direttamente, i passi sono quelli
+della skill `apply`: `npm run model:apply -- <file> --write` (solo con la proposta; controlla `git diff
+domain.ecore.yaml`), poi:
 1. **Migrazione**: `npm run model:migrate` mostra la bozza generata dal confronto tra il metamodello committato
    (`HEAD`) e quello nuovo (`--from HEAD~1` se l'hai già committato, `--from empty` per lo schema intero); poi
    `npm run model:migrate -- --name <nome> --write` la salva in `supabase/migrations/`. Tabelle, colonne, FK con

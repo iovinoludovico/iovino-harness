@@ -41,7 +41,7 @@
 
 ## Stack ricorrente
 - Web: Next.js + Supabase cloud (RLS, logica nel database), Docker, GitHub Actions → GHCR (immagini private). Produzione: VPS Hostinger gestito dal **Docker Manager** del pannello (un progetto per app con nome stabile, compose di `deploy/` incollato invariato, `DATABASE_URL` unico segreto e solo nelle variabili del pannello) dietro Nginx Proxy Manager, aggiornato da Watchtower; mai un `.env` da copiare via SSH. I passi di server, proxy, rollback e diagnosi sono nella skill `core:deploy`: non inventarli. Ogni app con deploy automatico mostra nell'header la build in esercizio, `#<numero di commit di main> · <sha breve>` (lo stesso SHA del tag `sha-<commit>` dell'immagine), con valori inlineati dalla build e mai letti a runtime: ricetta nella sezione «Build visibile» di `core:deploy`. Dopo il primo deploy in produzione e dopo cambi di Auth, dominio o infrastruttura: `/core:security-audit`.
-- App model-based (plugin modeler): metamodello `domain.ecore.yaml` dal prompt (`/modeler:metamodel`) o dal database (`/modeler:install`), comportamento `behavior.yaml` dal prompt o dal codice (`/modeler:behavior`); il modellatore web fa parte dell'app e salva proposte che si applicano con `/modeler:apply`.
+- App model-based (plugin modeler): metamodello `domain.ecore.yaml` dal prompt (`/modeler:metamodel`: una proposta visibile nel modellatore finché non è applicata) o dal database (`/modeler:install`), comportamento `behavior.yaml` dal prompt o dal codice (`/modeler:behavior`); il modellatore web fa parte dell'app e salva proposte che si applicano con `/modeler:apply`.
 - Ricerca MDE: Eclipse/EMF, Epsilon (ETL, EOL, EVL), Java/Spring Boot, metamodelli Ecore/Emfatic.
 
 ## Fine sessione

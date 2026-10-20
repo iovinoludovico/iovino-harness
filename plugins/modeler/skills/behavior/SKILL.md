@@ -66,7 +66,10 @@ mantieni nomi e lingua dell'utente.
   testo; se un passaggio a tempo è automatico (`at`) o un sollecito (`reminder`).
 Scrivi o modifica `behavior.yaml`. L'hook PostToolUse lo valida contro il metamodello (anche quando cambia il
 metamodello: una rinomina che rompe una guardia o un destinatario viene segnalata subito): correggi subito gli
-errori; `npm run model:validate` fa lo stesso in CI.
+errori; `npm run model:validate` fa lo stesso in CI. Con il modellatore installato la modifica può passare dalla
+stessa bozza e proposta di `metamodel` (sezione 3, punto 3: `.modeler/drafts/behavior.yaml` accanto alla bozza del
+metamodello, poi `npm run model:propose`), così compare in `/admin/model` prima di essere applicata; con un motore a
+mano o senza modellatore modifica il file direttamente.
 
 ## 3. Se serve anche la struttura
 Un attributo `derived` nuovo, un attributo di stato o un letterale dell'enum che manca, un riferimento usato da una

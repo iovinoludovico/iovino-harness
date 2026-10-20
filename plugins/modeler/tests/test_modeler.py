@@ -483,6 +483,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(scripts["model:drift"], cli.NPM_SCRIPTS["model:drift"])
         self.assertEqual(scripts["model:migrate"], cli.NPM_SCRIPTS["model:migrate"])
         self.assertEqual(scripts["model:docs"], cli.NPM_SCRIPTS["model:docs"])
+        self.assertEqual(scripts["model:propose"], cli.NPM_SCRIPTS["model:propose"])
         self.assertIn("## Persona", (self.app / "docs/DOMAIN.md").read_text())
         self.assertEqual(cli.docs_status(self.app)["state"], "aligned")
         doc = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
@@ -673,6 +674,7 @@ class AppTests(unittest.TestCase):
         self.assertTrue(text.startswith("node_modules/\n.env*\n"))
         self.assertEqual(text.count("__pycache__/"), 1)
         self.assertEqual(text.count(".modeler/backups/"), 1)
+        self.assertEqual(text.count(".modeler/drafts/"), 1)
         cli.install(self.app)                                   # idempotent
         self.assertEqual((self.app / ".gitignore").read_text(), text)
         (self.app / ".gitignore").unlink()
@@ -882,6 +884,101 @@ class AppTests(unittest.TestCase):
         self.assertNotIn("Ghost", (self.app / "domain.ecore.yaml").read_text())
 
 
+    def _propose(self, **kw):
+        ns = argparse.Namespace(path=str(self.app), draft=None, behavior=None, note=None, author="claude", keep=False)
+        ns.__dict__.update(kw)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            rc = cli.cmd_propose(ns)
+        return rc, out.getvalue()
+
+    def test_propose_saves_a_draft_as_a_pending_proposal(self):
+        # /modeler:metamodel edits a draft, not the file: `propose` turns it into the JSON the admin modeler lists,
+        # so the change is visible (diff, open, reject) before `apply` brings it into domain.ecore.yaml
+        cli.install(self.app)
+        drafts = self.app / ".modeler" / "drafts"
+        drafts.mkdir(parents=True)
+        rc, out = self._propose()
+        self.assertEqual(rc, 1)
+        self.assertIn("no draft", out)
+        draft = drafts / "domain.ecore.yaml"
+        draft.write_text(FIXTURE.read_text().replace("    doc: Una persona fisica\n    attributes:\n",
+                                                     "    doc: Una persona fisica\n    attributes:\n      telefono: EString\n", 1))
+        self.assertIn("telefono", draft.read_text())
+        expected = E.runtime_json(E.load(draft))
+        rc, out = self._propose(note="telefono della persona")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("+ Persona.telefono: EString", out)
+        self.assertIn("/admin/model", out)
+        files = sorted((self.app / ".modeler" / "proposals").glob("*.json"))
+        self.assertEqual(len(files), 1)
+        self.assertTrue(files[0].name.endswith("-prompt.json"))
+        doc = json.loads(files[0].read_text())
+        self.assertEqual((doc["author"], doc["source"], doc["note"]), ("claude", "prompt", "telefono della persona"))
+        self.assertEqual(doc["metamodel"], expected)                           # what metamodel.json would hold
+        self.assertIn("npm run model:apply -- .modeler/proposals/", out)
+        self.assertIn("telefono", doc["metamodel"]["classes"]["Persona"]["attributes"])
+        self.assertNotIn("behavior", doc)                                      # the app has no behavior.yaml
+        self.assertFalse(draft.exists())                                       # consumed
+        self.assertNotIn("telefono", (self.app / "domain.ecore.yaml").read_text())   # the file waits for apply
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_proposals(argparse.Namespace(path=str(self.app))), 0)
+        self.assertIn("by claude  (from the prompt)  telefono della persona", out.getvalue())
+        self.assertIn("+ Persona.telefono: EString", out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(argparse.Namespace(path=str(self.app), proposal=None, write=True, rewrite=False)), 0)
+        self.assertIn("telefono", (self.app / "domain.ecore.yaml").read_text())
+        self.assertTrue((self.app / ".modeler" / "proposals" / "applied" / files[0].name).exists())
+        # --keep leaves the draft in place
+        draft.write_text((self.app / "domain.ecore.yaml").read_text().replace("telefono: EString", "telefono: EString\n      cellulare: EString", 1))
+        rc, out = self._propose(keep=True)
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(draft.exists())
+
+    def test_propose_refuses_no_changes_and_invalid_drafts(self):
+        cli.install(self.app)
+        drafts = self.app / ".modeler" / "drafts"
+        drafts.mkdir(parents=True)
+        draft = drafts / "domain.ecore.yaml"
+        draft.write_text(FIXTURE.read_text())                                  # identical
+        rc, out = self._propose()
+        self.assertEqual(rc, 1)
+        self.assertIn("no changes against domain.ecore.yaml", out)
+        self.assertFalse(list((self.app / ".modeler" / "proposals").glob("*.json")))
+        self.assertTrue(draft.exists())                                        # kept: nothing was saved
+        draft.write_text(FIXTURE.read_text().replace("type: Account", "type: Ghost", 1))
+        rc, out = self._propose()
+        self.assertEqual(rc, 1)
+        self.assertIn("not a valid metamodel", out)
+        self.assertFalse(list((self.app / ".modeler" / "proposals").glob("*.json")))
+
+    def test_propose_carries_the_behaviour(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures"
+        (self.app / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        (self.app / "behavior.yaml").write_text((fixtures / "invitations.behavior.yaml").read_text())
+        cli.install(self.app)
+        drafts = self.app / ".modeler" / "drafts"
+        drafts.mkdir(parents=True)
+        (drafts / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        btext = (fixtures / "invitations.behavior.yaml").read_text()
+        # a behaviour draft alone: the metamodel draft is identical, the proposal carries the new transition
+        (drafts / "behavior.yaml").write_text(btext.replace("    transitions:", "    transitions:\n      pause: {from: in_management, to: paused, by: [office]}", 1)
+                                              .replace("    states:", "    states:\n      paused: {label: {it: Sospeso, en: Paused}, owner: [office]}", 1))
+        rc, out = self._propose(note="pausa")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("behaviour: + state Invitation.paused", out)
+        self.assertIn("behaviour: + transition Invitation.pause: in_management -> paused", out)
+        doc = json.loads(next((self.app / ".modeler" / "proposals").glob("*.json")).read_text())
+        self.assertIn("paused", doc["behavior"]["workflows"]["Invitation"]["states"])
+        self.assertFalse((drafts / "behavior.yaml").exists())
+        # a behaviour draft that breaks against the draft metamodel is refused
+        (drafts / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        (drafts / "behavior.yaml").write_text(btext.replace("by: [office]", "by: [ghost_role]", 1))
+        rc, out = self._propose()
+        self.assertEqual(rc, 1)
+        self.assertIn("behavior.yaml is not valid against the draft metamodel", out)
+
     def test_apply_writes_the_behaviour_of_a_proposal(self):
         fixtures = Path(__file__).resolve().parent / "fixtures"
         (self.app / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
@@ -1040,7 +1137,7 @@ class HookTests(unittest.TestCase):
             (props / "2026-10-15T10-00-00.json").write_text("{}")
             (props / "applied" / "old.json").write_text("{}")
             out = self.run_hook("session", {"cwd": d})
-            self.assertIn("1 proposal(s) saved by the admin modeler and not applied yet", out.stdout)
+            self.assertIn("1 proposal(s) saved by the admin modeler or by /modeler:metamodel and not applied yet", out.stdout)
             self.assertIn("2026-10-15T10-00-00.json", out.stdout)
             self.assertEqual(self.run_hook("session", {"cwd": tempfile.gettempdir()}).stdout, "")
             (Path(d) / "tools" / "modeler").mkdir(parents=True)

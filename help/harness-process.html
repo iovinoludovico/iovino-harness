@@ -137,7 +137,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted);max-width:72ch}
   <h2><span class="n">2</span>Dai due modelli al database</h2>
   <p class="lead">Il plugin <code>modeler</code> tiene due sorgenti di verità: la struttura in <code>domain.ecore.yaml</code> e il comportamento in <code>behavior.yaml</code>, validato contro la prima; due skill, <code>/modeler:metamodel</code> e <code>/modeler:behavior</code>, li scrivono dal prompt e cambiano insieme il codice. Tutto il resto si genera; <code>drift</code> dice se il database è ancora allineato.</p>
   <figure>
-  <svg viewBox="0 0 1000 470" role="img" aria-label="Pipeline del modeler: il metamodello nasce dal prompt (/modeler:metamodel), dal database o da una proposta; behavior.yaml nasce dal prompt o dal codice (/modeler:behavior) ed è validato contro il metamodello; i comandi validate, sync, migrate, engine e drift producono documentazione, json per l'app, migrazioni SQL, il motore SQL e il controllo di allineamento con il database; DOMAIN.md generato è anche l'inbox delle note a mano che tornano nel metamodello.">
+  <svg viewBox="0 0 1000 470" role="img" aria-label="Pipeline del modeler: il metamodello nasce dal prompt (/modeler:metamodel, che con il modellatore installato salva una proposta), dal database o da una proposta del modellatore web; behavior.yaml nasce dal prompt o dal codice (/modeler:behavior) ed è validato contro il metamodello; i comandi validate, sync, migrate, engine e drift producono documentazione, json per l'app, migrazioni SQL, il motore SQL e il controllo di allineamento con il database; DOMAIN.md generato è anche l'inbox delle note a mano che tornano nel metamodello.">
     <defs>
       <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
       <marker id="a2h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
@@ -157,7 +157,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted);max-width:72ch}
     <text class="t s" x="120" y="179">dal database esistente</text>
     <rect class="box" x="30" y="220" width="180" height="52" rx="3"/>
     <text class="t m" x="120" y="242">/admin/model → apply</text>
-    <text class="t s" x="120" y="259">proposta dal modellatore web (fig. 3)</text>
+    <text class="t s" x="120" y="259">proposta dal web o dal prompt (fig. 3)</text>
     <rect class="box file" x="30" y="300" width="180" height="52" rx="3"/>
     <text class="t m" x="120" y="322">docs/DOMAIN.md</text>
     <text class="t s" x="120" y="339">note a mano (inbox)</text>
