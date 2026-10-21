@@ -43,9 +43,15 @@ mantieni nomi e lingua dell'utente.
   del record; `or`, calcoli e navigazioni vanno in un attributo derivato (`npm run model:behavior -- --format
   engine` dice cosa il motore non valuta).
 - L'attributo di stato (`state:` del workflow) è un `EString` o un enum con un letterale per stato.
-- I destinatari di una transizione viaggiano sull'evento del cambio di stato (`Order.transitioned` con `when:
-  transition = …`), non su un evento secondario; ogni reazione con `notify` ha una `subscription` che la riceve,
-  altrimenti `validate` avvisa.
+- «Avvisa X quando Y», con Y una transizione: `notify: [X]` e `template: <chiave>` **sulla transizione** Y (con una
+  condizione in più sul record `notify: {to: [X], template: …, when: …}`), non una reazione: il motore la vede come la
+  reazione `notify_<transizione>` su `<Classe>.transitioned`, `behavior.json` porta `notifies` su ogni transizione
+  (anche per le reazioni scritte per esteso), il modellatore e `<WorkflowView>` la mostrano sulla freccia (✉, destinatari
+  nel tooltip, colonna «Avvisa» della transizione), `BEHAVIOR.md` nella colonna «Avvisa». Una reazione esplicita resta
+  per ciò che non è legato a una sola transizione (più transizioni, `reverted`, un evento a tempo o esterno, una
+  condizione solo sul record). I destinatari viaggiano sempre sull'evento del cambio di stato (`Order.transitioned`),
+  non su un evento secondario; ogni notifica ha una `subscription` che la riceve, altrimenti `validate` avvisa. Le
+  notifiche stanno qui, nel comportamento, mai nel metamodello: un `ref` o un attributo non può dire «chi avvisare quando».
 - Una collezione con un minimo (`lower: 1`, `[+]`) o un massimo finito: il database la memorizza come many, quindi il
   minimo si impone con una guardia della prima transizione del workflow (`orderLines.notEmpty()`,
   `lines.size() >= 2`: le parti arrivano dopo il record, un vincolo all'inserimento è impossibile) o, senza workflow,
@@ -135,8 +141,8 @@ risolti, `model:drift`). Mai un `behavior.yaml` che cita feature che il metamode
    punto 4), sottoscrittori (n8n spedisce `recipients[].subject/body`, non compone testi).
 5. Test: la transizione bloccata dalla guardia, i destinatari della reazione, il sollecito, un testo reso (pgTAP o
    test dell'app); poi typecheck, lint e test dell'app.
-6. Le modifiche fatte dal modellatore web (`/admin/model`: pannello del workflow della classe selezionata, ruoli e
-   reazioni nella barra laterale) arrivano come proposta: si applicano con `/modeler:apply`, che poi segue questi
+6. Le modifiche fatte dal modellatore web (`/admin/model`: pannello del workflow della classe selezionata, con le colonne
+   «Avvisa» e «Template» della transizione; ruoli e reazioni nella barra laterale) arrivano come proposta: si applicano con `/modeler:apply`, che poi segue questi
    stessi passi.
 
 Il comportamento (workflow, derivazioni, eventi, reazioni, testi) sta in `behavior.yaml`; le regole di dominio

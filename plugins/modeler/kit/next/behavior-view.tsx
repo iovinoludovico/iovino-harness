@@ -19,12 +19,14 @@ type State = {
 type Transition = {
   from?: string[]; to?: string | null; by?: string[]; when?: Typed; guard?: Typed; comment?: string | null;
   at?: string | null; emits?: string[]; label?: Label;
+  notify?: string[]; template?: string | null;
+  notifies?: { name: string; notify: string[]; template?: string | null; own?: boolean }[];   // who is told when it fires (both forms)
 };
 type Workflow = {
   state?: string; states?: Record<string, State>; transitions?: Record<string, Transition>;
   revert?: { by?: string[]; final_by?: string[]; comment?: string | null } | null;
 };
-type Reaction = { name?: string; event?: string; when?: Typed; notify?: string[]; template?: string };
+type Reaction = { name?: string; event?: string; when?: Typed; notify?: string[]; template?: string; _transition?: string };
 type Subscription = { name?: string; url?: string; url_env?: string; events?: string[] };
 type Use = { kind: string; of: string };
 type Uses = Record<string, { attributes?: Record<string, Use[]>; references?: Record<string, Use[]>; class?: Use[] }>;
@@ -60,7 +62,7 @@ const TEXT = {
     reminder: "Sollecito", requires: "Richiede", after: (d: string, t: string) => `dopo ${d} (${t})`,
     stateModel: "Il metamodello per stato",
     stateModelNote: "Come la classe appare in ogni stato (model dello stato): ● richiesto, 🔒 sola lettura, ○ assente (non mostrato né modificabile, il valore resta), {a, b} valori ammessi; vuoto: come nel metamodello.",
-    transitions: "Transizioni", transition: "Transizione", fromTo: "Da → A", by: "Chi", when: "Condizione", guard: "Requisito",
+    transitions: "Transizioni", transition: "Transizione", fromTo: "Da → A", by: "Chi", when: "Condizione", guard: "Requisito", notifies: "Avvisa",
     comment: "Commento", required: "obbligatorio", optional: "facoltativo", emits: "Eventi", system: (at: string) => `sistema: ${at}`,
     revert: (by: string, finalBy: string, c: string) => `Ritorno a uno stato precedente: ${by}; da uno stato finale: ${finalBy}; commento ${c}.`,
     derivations: "Attributi calcolati", cls: "Classe", attribute: "Attributo", formula: "Formula", inCode: "calcolato nel codice",
@@ -83,7 +85,7 @@ const TEXT = {
     reminder: "Reminder", requires: "Requires", after: (d: string, t: string) => `after ${d} (${t})`,
     stateModel: "The class as seen from each state",
     stateModelNote: "What the class looks like in every state (model of the state): ● required, 🔒 read only, ○ hidden (not shown nor editable, the value stays), {a, b} the allowed literals; empty: as in the metamodel.",
-    transitions: "Transitions", transition: "Transition", fromTo: "From → To", by: "Who", when: "Condition", guard: "Requirement",
+    transitions: "Transitions", transition: "Transition", fromTo: "From → To", by: "Who", when: "Condition", guard: "Requirement", notifies: "Notifies",
     comment: "Comment", required: "required", optional: "optional", emits: "Events", system: (at: string) => `system: ${at}`,
     revert: (by: string, finalBy: string, c: string) => `Back to a previous state: ${by}; from a final state: ${finalBy}; comment ${c}.`,
     derivations: "Derived attributes", cls: "Class", attribute: "Attribute", formula: "Formula", inCode: "computed in code",
@@ -185,7 +187,7 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
   }
   const usedBy = (us: Use[]) => us.map((u) => `${t.kinds[u.kind] ?? u.kind}: ${u.of}`).join(", ");
   const events = Object.entries(b.events ?? {}).flatMap(([cn, evs]) => Object.entries(evs ?? {}).map(([en, ev]) => [cn, en, ev?.doc ?? ""] as const));
-  const reactions = b.reactions ?? [];
+  const reactions = (b.reactions ?? []).filter((r) => !r._transition);   // a transition's notification is in its row
   const subscriptions = b.subscriptions ?? [];
 
   return (
@@ -250,7 +252,7 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
             )}
             <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t.transitions}</h4>
             <Table
-              head={[t.transition, t.label, t.fromTo, t.by, t.when, t.guard, t.comment, t.emits]}
+              head={[t.transition, t.label, t.fromTo, t.by, t.when, t.guard, t.comment, t.emits, t.notifies]}
               rows={transitions.map(([tn, tr]) => [
                 <Code key="t">{tn}</Code>,
                 label(tr.label, tn, l),
@@ -260,6 +262,11 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
                 <Code key="g">{tr.guard?.text}</Code>,
                 tr.comment === "required" ? t.required : "",
                 <Codes key="e" items={tr.emits} />,
+                <span key="n">
+                  {(tr.notifies ?? []).map((n, i) => (
+                    <span key={n.name}>{i ? "; " : ""}<Codes items={n.notify} />{n.template ? <> (<Code>{n.template}</Code>)</> : null}</span>
+                  ))}
+                </span>,
               ])}
             />
             {rv && (

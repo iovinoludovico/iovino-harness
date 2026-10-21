@@ -39,7 +39,8 @@ workflows:
       closed:   {final: true}
     transitions:
       submit:   {from: draft, to: pending, by: [self.issuer], guard: dataComplete, label: {it: Emetti, en: Submit}}
-      approve:  {from: pending, to: closed, by: [director], when: not agencyBookingRequired, guard: dataComplete}
+      approve:  {from: pending, to: closed, by: [director], when: not agencyBookingRequired, guard: dataComplete,
+                 notify: [self.issuer], template: invitation_approved}        # who is told when it fires (see Transitions)
       reject:   {from: pending, to: draft, by: [director], comment: required}
       expire:   {from: pending, to: closed, at: endDate + 1d, emits: expired}      # timed: no `by`
     revert: {by: [office], final_by: [office], comment: required}
@@ -48,8 +49,8 @@ events:                                 # events a class emits besides the built
   Invitation:
     expired: {doc: Nobody approved it in time}
 
-reactions:                              # one reaction = notify someone when an event happens
-  - {name: notify_submitted, event: Invitation.transitioned, when: "transition in [submit]", notify: [director], template: invitation_submitted}
+reactions:                              # one reaction = notify someone when an event happens (not bound to one transition)
+  - {name: notify_submitted, event: Invitation.transitioned, when: "transition in [submit, resubmit]", notify: [director], template: invitation_submitted}
   - {name: notify_guest, event: Invitation.transitioned, when: transition = approve, notify: [self.guest.email], template: approved_guest}
   - {name: notify_reverted, event: Invitation.reverted, notify: [self.issuer], template: invitation_reverted}
 
@@ -148,6 +149,15 @@ unknown role in `users_by`. Without `view_as` nothing changes: `impersonator_id(
   attribute with an optional offset: `endDate + 1d`, run by the scheduler). `when` hides the transition when
   false (a condition), `guard` blocks it explaining what is missing (a requirement); `comment: required|optional`;
   `emits` lists events declared in `events.<Class>` that fire with the transition.
+  **`notify: [creator, director]` and `template: order_approved`** say who is told when the transition fires (the
+  long form `notify: {to: [...], template: ..., when: <condition>}` adds a condition of its own on the record): it is the
+  short form of a reaction `event: <Class>.transitioned, when: transition = <key>`, and that reaction, named
+  `notify_<key>`, is what the engine, `recipients`, `validate` (template present, principals resolvable, a
+  subscription receiving it) and the subscribers see; the file keeps the short form (`dumps`, the proposals of the
+  web modeler). `behavior.json` lists `notifies` on every transition, for both forms; the modeler and `<WorkflowView>`
+  mark the arrow with ✉ (recipients and template in the tooltip, the transition's row has «Notifies»), `BEHAVIOR.md`
+  has the «Notifies» column. A reaction stays explicit for what is not bound to one transition: several transitions
+  (`transition in [a, b]`), `reverted`, a timed or external event, a condition on the record only.
 - `revert`: who can bring a record back to a previous state (`by`), also from a final one (`final_by`).
 
 ## Events, reactions, subscriptions
@@ -156,7 +166,10 @@ unknown role in `users_by`. Without `view_as` nothing changes: `impersonator_id(
   by `emits` and by reactions; the application emits them with the event core (`emit_entity_event`).
 - A reaction is `event: <Class>.<event>`, an optional `when` (in `<Class>.transitioned` the variable `transition`
   is the key of the transition that fired: `transition in [submit, resubmit]`), `notify` (principals) and the
-  `template` the subscriber renders. Names are unique identifiers.
+  `template` the subscriber renders. Names are unique identifiers. The notification of **one** transition is written
+  on the transition (`notify`, `template`: see Workflows); a reaction is for everything else. Notifications are
+  behaviour, never structure: `domain.ecore.yaml` has no key for «who is told when» (a reference or an attribute
+  cannot carry it).
 - The recipients of a user's action travel on the state change: a reaction on `<Class>.transitioned` with
   `when: transition = <key>`, so a subscriber of `<Class>.transitioned` finds them in `recipients` (always present,
   `[]` when nobody; a hand-written engine must do the same: `behavior --format sql`). An event a transition lists in
@@ -282,6 +295,7 @@ workflow, derivations or reactions (`<entity>` = the snake_case of the class, `i
 | "dopo N giorni dalla data di fine", "scade il …" | a timed transition `at: <date attribute> + Nd` |
 | "si calcola come", "è completo quando" | `derived: true` on the attribute (metamodel) and its formula in `derivations` |
 | "X è obbligatorio da quando è in …", "X non si tocca più dopo …", "in bozza X non compare", "qui Y vale solo a o b" | `requires` / `model` of that state (the class as seen from the state) |
-| "avvisa X quando Y" | a reaction `event: <Class>.<event>`, `when`, `notify`, `template`, and its texts in `templates:` |
+| "avvisa X quando Y", Y a transition | `notify: [X]` and `template` on the transition Y (`notify: {to, template, when}` with a condition of its own), its texts in `templates:` |
+| "avvisa X quando Y", Y an event, several transitions, a condition on the record | a reaction `event: <Class>.<event>`, `when`, `notify`, `template`, and its texts in `templates:` |
 | "n8n riceve gli eventi di …" | a subscription |
 | what no key expresses (arithmetic, external calls) | code, a customization (`docs/customizations.md`, `CUSTOM(<id>)`) |

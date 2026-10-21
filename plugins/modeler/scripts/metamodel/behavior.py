@@ -44,7 +44,9 @@ VIEW_AS_KEYS = {"users_by", "doc"}   # «view as»: who may use the application 
 WORKFLOW_KEYS = {"state", "states", "transitions", "revert", "doc"}
 STATE_KEYS = {"initial", "final", "label", "doc", "owner", "editable_by", "reminder", "color", "requires", "model"}
 MODEL_KEYS = {"lower", "readonly", "hidden", "in"}   # the overlay of a state on a feature (`states.<key>.model`)
-TRANSITION_KEYS = {"from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "doc"}
+TRANSITION_KEYS = {"from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "doc", "notify", "template"}
+NOTIFY_KEYS = {"to", "template", "when"}            # `notify: {to, template, when}` on a transition (the long form of `notify: [...]`)
+INTERNAL_KEYS = {"notify_when", "notifies", "_notify_extra", "_transition"}   # canonical/runtime keys, never written in the file
 REVERT_KEYS = {"by", "final_by", "comment"}
 REMINDER_KEYS = {"after", "template"}
 EVENT_KEYS = {"doc", "label"}
@@ -105,6 +107,9 @@ def _tidy(raw: dict[str, Any]) -> dict[str, Any]:
             for k in ("when", "guard"):
                 if isinstance(_mapping(t).get(k), str):
                     t[k] = " ".join(t[k].split())
+            n = _mapping(t).get("notify")
+            if isinstance(n, dict) and isinstance(n.get("when"), str):
+                n["when"] = " ".join(n["when"].split())
     for rx in _list(r.get("reactions")):
         if isinstance(_mapping(rx).get("when"), str):
             rx["when"] = " ".join(rx["when"].split())
@@ -150,13 +155,18 @@ def from_editor(doc: dict[str, Any]) -> dict[str, Any]:
         states = {sn: {k: v for k, v in _mapping(st).items()} for sn, st in _mapping(w.get("states")).items()}
         transitions = {}
         for tn, t in _mapping(w.get("transitions")).items():
-            t = {k: (text(v) if k in ("when", "guard") else v) for k, v in _mapping(t).items()}
+            t = {k: (text(v) if k in ("when", "guard", "notify_when") else v) for k, v in _mapping(t).items()
+                 if k not in ("notifies", "_notify_extra")}
             if isinstance(t.get("from"), list) and len(t["from"]) == 1:
                 t["from"] = t["from"][0]
+            nwhen = t.pop("notify_when", None)
+            if nwhen and t.get("notify"):          # a notification with its own condition: the long form
+                t["notify"] = {"to": t["notify"], "template": t.pop("template", None), "when": nwhen}
             transitions[tn] = t
         raw["workflows"][cn] = {**{k: v for k, v in w.items() if k not in ("states", "transitions")}, "states": states, "transitions": transitions}
     raw["events"] = {cn: {en: (ev or {}) for en, ev in _mapping(evs).items()} for cn, evs in _mapping(doc.get("events")).items()}
-    raw["reactions"] = [{k: (text(v) if k == "when" else v) for k, v in _mapping(r).items()} for r in _list(doc.get("reactions"))]
+    raw["reactions"] = [{k: (text(v) if k == "when" else v) for k, v in _mapping(r).items()} for r in _list(doc.get("reactions"))
+                        if not _mapping(r).get("_transition")]      # the notification of a transition is written on the transition
     raw["subscriptions"] = [dict(_mapping(sub)) for sub in _list(doc.get("subscriptions"))]
     raw["templates"] = {k: {lang: dict(_mapping(tx)) for lang, tx in _mapping(langs).items()} for k, langs in _mapping(doc.get("templates")).items()}
     return _clean(raw)
@@ -268,7 +278,9 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
             if tn not in ow["transitions"]:
                 out.append(f"+ transition {cn}.{tn}: {', '.join(tr['from'])} -> {tr['to']}")
             else:
-                ks = changed_keys(ow["transitions"][tn], tr, ("from", "to", "by", "when", "guard", "comment", "at", "emits", "label"))
+                ks = changed_keys(ow["transitions"][tn], tr, ("from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "notify", "template"))
+                if "notify" not in ks and not same(ow["transitions"][tn].get("notify_when"), tr.get("notify_when"), "when"):
+                    ks.append("notify")          # the condition of the notification changed
                 if ks:
                     out.append(f"~ transition {cn}.{tn}: {', '.join(ks)}")
         out += [f"- transition {cn}.{tn}" for tn in ow["transitions"] if tn not in w["transitions"]]
@@ -280,7 +292,8 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     for cn, evs in a["events"].items():
         out += [f"- event {cn}.{en}" for en in evs if en not in b["events"].get(cn, {})]
     by_name = lambda lst: {str(r.get("name") or i): r for i, r in enumerate(lst)}  # noqa: E731
-    ar, br = by_name(a["reactions"]), by_name(b["reactions"])
+    explicit = lambda lst: [r for r in lst if not r.get("_transition")]   # noqa: E731  (a transition's notification is diffed with it)
+    ar, br = by_name(explicit(a["reactions"])), by_name(explicit(b["reactions"]))
     for name, r in br.items():
         if name not in ar:
             out.append(f"+ reaction {name} on {r.get('event')}")
@@ -333,6 +346,7 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
         out["view_as"] = {**copy.deepcopy(v), "users_by": [str(x) for x in _list(v.get("users_by"))]}
     for cn, dspec in _mapping(raw.get("derivations")).items():
         out["derivations"][str(cn)] = {str(an): ex for an, ex in _mapping(dspec).items()}
+    synthetic: list[dict[str, Any]] = []        # the notification of a transition, as the reaction it stands for
     for cn, wspec in _mapping(raw.get("workflows")).items():
         w = _mapping(wspec)
         states: dict[str, Any] = {}
@@ -348,11 +362,23 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
         transitions: dict[str, Any] = {}
         for tn, tspec in _mapping(w.get("transitions")).items():
             t = _mapping(tspec) if tspec is not None else {}
+            # `notify: [principals]` + `template: key`, or `notify: {to, template, when}` for a condition of its own
+            n = t.get("notify")
+            if isinstance(n, dict):
+                to, template, nwhen = [str(x) for x in _list(n.get("to"))], n.get("template", t.get("template")), n.get("when")
+                extra_n = sorted(str(k) for k in set(n) - NOTIFY_KEYS)
+            else:
+                to, template, nwhen, extra_n = [str(x) for x in _list(n)], t.get("template"), None, []
             transitions[str(tn)] = {**copy.deepcopy(t), "from": [str(x) for x in _list(t.get("from"))],
                                     "to": str(t["to"]) if t.get("to") is not None else None,
                                     "by": [str(x) for x in _list(t.get("by"))],
                                     "when": t.get("when"), "guard": t.get("guard"), "comment": t.get("comment"),
-                                    "at": t.get("at"), "emits": [str(x) for x in _list(t.get("emits"))]}
+                                    "at": t.get("at"), "emits": [str(x) for x in _list(t.get("emits"))],
+                                    "notify": to, "template": template, "notify_when": nwhen, "_notify_extra": extra_n}
+            if to:
+                cond = f"transition = {tn}" + (f" and ({' '.join(str(nwhen).split())})" if nwhen else "")
+                synthetic.append({"name": f"notify_{tn}", "event": f"{cn}.transitioned", "when": cond, "notify": list(to),
+                                  "template": template, "_transition": str(tn)})
         rev = w.get("revert")
         revert = None
         if rev:
@@ -370,6 +396,7 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
         r = _mapping(r)
         out["reactions"].append({**copy.deepcopy(r), "name": r.get("name"), "event": r.get("event"), "when": r.get("when"),
                                  "notify": [str(x) for x in _list(r.get("notify"))], "template": r.get("template")})
+    out["reactions"] += synthetic                # after the explicit ones: the first reaction wins a shared address
     for s in _list(raw.get("subscriptions")):
         s = _mapping(s)
         out["subscriptions"].append({**copy.deepcopy(s), "name": s.get("name"), "url_env": s.get("url_env"),
@@ -841,9 +868,18 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
         tw = f"{where}.transitions.{tn}"
         if not IDENT.match(tn):
             rep.error(tw, "transition keys are lowercase identifiers (letters, digits, _)")
-        extra = set(t) - TRANSITION_KEYS
+        extra = set(t) - TRANSITION_KEYS - INTERNAL_KEYS
         if extra:
             rep.error(tw, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(TRANSITION_KEYS))})")
+        if t.get("_notify_extra"):
+            rep.error(f"{tw}.notify", f"unknown keys: {', '.join(t['_notify_extra'])} (allowed: {', '.join(sorted(NOTIFY_KEYS))})")
+        if t.get("template") is not None and not t["notify"]:
+            rep.error(f"{tw}.template", "a template without notify: who is notified? (notify: [principals], or notify: {to, template, when})")
+        if t.get("notify_when") is not None:
+            if not t["notify"]:
+                rep.error(f"{tw}.notify", "when without to: who is notified?")
+            else:
+                _check_expr(e, context(e, b, cname, "transitioned"), t["notify_when"], f"{tw}.notify.when", rep)
         if not t["from"]:
             rep.error(tw, "from: one or more states")
         for s in t["from"]:
@@ -1050,16 +1086,24 @@ def _check_reactions(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> Non
     names: set[str] = set()
     for i, r in enumerate(b["reactions"]):
         name = r.get("name")
-        where = f"reactions[{i}]" + (f" {name}" if name else "")
-        if not isinstance(name, str) or not IDENT.match(name):
-            rep.error(where, "name: a lowercase identifier")
-        elif name in names:
-            rep.error(where, f"reaction '{name}' declared twice")
-        else:
+        tn = r.get("_transition")
+        if tn:                                   # the notification declared on a transition (notify/template)
+            where = f"workflows.{str(r.get('event')).split('.')[0]}.transitions.{tn}.notify"
+            if name in names:
+                rep.error(where, f"the notification of transition `{tn}` is the reaction `{name}`: rename the reaction "
+                                 "declared with that name")
             names.add(name)
-        extra = set(r) - REACTION_KEYS
-        if extra:
-            rep.error(where, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(REACTION_KEYS))})")
+        else:
+            where = f"reactions[{i}]" + (f" {name}" if name else "")
+            if not isinstance(name, str) or not IDENT.match(name):
+                rep.error(where, "name: a lowercase identifier")
+            elif name in names:
+                rep.error(where, f"reaction '{name}' declared twice")
+            else:
+                names.add(name)
+            extra = set(r) - REACTION_KEYS
+            if extra:
+                rep.error(where, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(REACTION_KEYS))})")
         on = r.get("event")
         if not isinstance(on, str) or on.count(".") != 1:
             rep.error(where, "event: <Class>.<event>, e.g. Invitation.transitioned")
@@ -1073,7 +1117,7 @@ def _check_reactions(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> Non
             rep.error(where, f"event: {cname} has no event '{event}' ({', '.join(known)})")
             continue
         ctx = context(e, b, cname, event)
-        if r.get("when") is not None:
+        if r.get("when") is not None and not tn:          # a transition's own condition is checked with the transition
             _check_expr(e, ctx, r["when"], f"{where}.when", rep)
         if not r["notify"]:
             rep.error(where, "notify: who is notified (principals; a reaction does one thing: notify)")
@@ -1132,7 +1176,8 @@ def template_uses(b: dict[str, Any]) -> dict[str, list[tuple[str, str, str]]]:
         on = str(r.get("event") or "")
         if r.get("template") and on.count(".") == 1:
             cname, event = on.split(".")
-            out.setdefault(str(r["template"]), []).append((cname, event, f"reaction {r.get('name')}"))
+            used_by = f"transition {cname}.{r['_transition']}" if r.get("_transition") else f"reaction {r.get('name')}"
+            out.setdefault(str(r["template"]), []).append((cname, event, used_by))
     for cname, w in b["workflows"].items():
         for sn, s in w["states"].items():
             rem = s.get("reminder")
@@ -1442,9 +1487,10 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
     rows = [[cname, _code(en), str(ev.get("doc") or "")] for cname, evs in b["events"].items() for en, ev in evs.items()]
     if rows:
         out += E._table(["Class" if lang == "en" else "Classe", t["event"], t["description"]], rows) + [""]
-    if b["reactions"]:
+    explicit = [r for r in b["reactions"] if not r.get("_transition")]   # a transition's notification is in its row above
+    if explicit:
         rows = [[_code(r["name"]), _code(r["event"]), _code(r.get("when")), ", ".join(_code(p) for p in r["notify"]), _code(r.get("template"))]
-                for r in b["reactions"]]
+                for r in explicit]
         out += [f"## {t['reactions']}", ""] + E._table([t["name"], t["event"], t["when"], t["recipients"], t["template"]], rows) + [""]
     if b["subscriptions"]:
         rows = [[_code(s["name"]), _code(f"${s['url_env']}" if s.get("url_env") else s.get("url")), ", ".join(_code(p) for p in s["events"])]
@@ -1577,7 +1623,7 @@ def uses(b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
         if "." not in ev:
             continue
         cname, event = ev.split(".", 1)
-        name = str(r.get("name") or ev)
+        name = f"{cname}.{r['_transition']}" if r.get("_transition") else str(r.get("name") or ev)
         if r.get("when") is not None and cname in e["classes"]:
             expr(r["when"], context(e, b, cname, event), "when", name, X.BOOL)
         for p in r.get("notify") or []:
@@ -1602,9 +1648,16 @@ def runtime_json(raw: dict[str, Any], metamodel: dict[str, Any]) -> dict[str, An
                                    for an, text in ders.items()}
     for cname, w in b["workflows"].items():
         ctx, sql_ctx = X.Context(e, cname), X.SqlContext(e, cname)
-        for tr in w["transitions"].values():
+        named = transition_reactions(b, e, cname)          # who is notified when each transition fires (both forms)
+        by_name = {r.get("name"): r for r in b["reactions"]}
+        tctx = context(e, b, cname, "transitioned")
+        tsql = X.SqlContext(e, cname, variables={"transition": "(p_extra -> 'transition' ->> 'key')"})
+        for tn, tr in w["transitions"].items():
             for key in ("when", "guard"):
                 tr[key] = _typed(tr.get(key), ctx, sql_ctx, X.BOOL)
+            tr["notify_when"] = _typed(tr.get("notify_when"), tctx, tsql, X.BOOL)
+            tr["notifies"] = [{"name": n, "notify": list(by_name[n]["notify"]), "template": by_name[n].get("template"),
+                               "own": bool(by_name[n].get("_transition"))} for n in named.get(tn, []) if n in by_name]
     for r in b["reactions"]:
         cname, event = str(r["event"]).split(".")
         ctx = context(e, b, cname, event)
@@ -1768,6 +1821,11 @@ def _transition_keys(node: dict[str, Any]) -> list[str] | None:
             return [str(lit["v"])]
     if node["k"] == "in" and node["x"]["k"] == "path" and (node["x"].get("ref") or [""])[0] == "@transition":
         return [str(i["v"]) for i in node["items"] if i["k"] == "lit"]
+    if node["k"] == "and":                       # `transition = x and <a condition of its own>`
+        for item in node["items"]:
+            keys = _transition_keys(item)
+            if keys is not None:
+                return keys
     return None
 
 

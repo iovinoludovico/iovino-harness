@@ -1,5 +1,5 @@
 # Behaviour of the guest-invitations domain (invitations.ecore.yaml): roles, derivations, the Invitation
-# workflow, events, reactions and the n8n subscription.
+# workflow, events, reactions (two of them written on their transition: notify/template) and the n8n subscription.
 doc: Inviti dei visiting researcher, dalla richiesta dell'emittente al pagamento
 
 roles:
@@ -67,9 +67,9 @@ workflows:
       start_management:  {from: bookings_confirmed, to: in_management, by: [office], guard: dataComplete and accommodationBookingComplete and travelBookingComplete, label: {it: Avvia gestione, en: Start management}}
       rebook:            {from: bookings_confirmed, to: bookings, by: [office], comment: required, label: {it: Modifica prenotazioni, en: Change bookings}}
       visit_ended:       {from: in_management, to: awaiting_confirmation, at: endDate + 1d, emits: visit_ended, label: {it: Fine visita, en: Visit ended}}
-      confirm:           {from: awaiting_confirmation, to: director_confirmation, by: [self.issuer], guard: dataComplete, label: {it: Conferma visita e attività, en: Confirm visit and activities}}
+      confirm:           {from: awaiting_confirmation, to: director_confirmation, by: [self.issuer], guard: dataComplete, label: {it: Conferma visita e attività, en: Confirm visit and activities}, notify: {to: [director], template: director_confirmation_requested}}
       director_confirm:  {from: director_confirmation, to: payment, by: [director], guard: dataComplete, label: {it: Conferma visita, en: Confirm visit}}
-      director_return:   {from: director_confirmation, to: awaiting_confirmation, by: [director], comment: required, label: {it: Rimanda all'emittente, en: Send back to issuer}}
+      director_return:   {from: director_confirmation, to: awaiting_confirmation, by: [director], comment: required, label: {it: Rimanda all'emittente, en: Send back to issuer}, notify: [self.issuer], template: visit_confirmation_returned}
       close:             {from: payment, to: closed, by: [office], guard: dataComplete, label: {it: Chiudi, en: Close}}
       withdraw:          {from: [draft, rejected], to: cancelled, by: [self.issuer, office], label: {it: Annulla, en: Cancel}}
       cancel:
@@ -94,10 +94,8 @@ reactions:
   - {name: notify_bookings_issuer, event: Invitation.transitioned, when: transition = confirm_bookings, notify: [self.issuer], template: bookings_confirmed}
   - {name: notify_rebook, event: Invitation.transitioned, when: transition = rebook, notify: [self.issuer], template: bookings_changed}
   - {name: notify_visit_ended, event: Invitation.transitioned, when: transition = visit_ended, notify: [self.issuer], template: visit_confirmation_requested}
-  - {name: notify_director_confirmation, event: Invitation.transitioned, when: transition = confirm, notify: [director], template: director_confirmation_requested}
   - {name: notify_visit_confirmed, event: Invitation.transitioned, when: transition = director_confirm, notify: [office], template: visit_confirmed}
   - {name: notify_visit_confirmed_issuer, event: Invitation.transitioned, when: transition = director_confirm, notify: [self.issuer], template: visit_confirmed_by_director}
-  - {name: notify_returned, event: Invitation.transitioned, when: transition = director_return, notify: [self.issuer], template: visit_confirmation_returned}
   - {name: notify_closed, event: Invitation.transitioned, when: transition = close, notify: [self.issuer], template: invitation_closed}
   - {name: notify_reverted, event: Invitation.reverted, notify: [self.issuer], template: invitation_reverted}
 

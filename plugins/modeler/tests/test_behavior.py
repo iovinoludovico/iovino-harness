@@ -199,6 +199,76 @@ class BehaviorTests(unittest.TestCase):
         self.assertIn("notifies on Invitation.reverted but no subscription receives it", w[0])
         self.assertEqual(B.transition_reactions(B.expand(behavior()), E.expand(meta()), "Invitation")["submit"], ["notify_submitted"])
 
+    def test_notification_declared_on_the_transition(self):
+        # the fixture: `confirm` and `director_return` notify from the transition (short form); the same reaction stands behind
+        b = B.expand(behavior())
+        e = E.expand(meta())
+        syn = {r["name"]: r for r in b["reactions"] if r.get("_transition")}
+        self.assertEqual(sorted(syn), ["notify_confirm", "notify_director_return"])
+        self.assertEqual((syn["notify_director_return"]["when"], syn["notify_director_return"]["notify"], syn["notify_director_return"]["template"]),
+                         ("transition = director_return", ["self.issuer"], "visit_confirmation_returned"))
+        self.assertEqual(b["workflows"]["Invitation"]["transitions"]["confirm"]["notify"], ["director"])
+        self.assertEqual(B.transition_reactions(b, e, "Invitation")["confirm"], ["notify_confirm"])
+        self.assertEqual(B.template_uses(b)["director_confirmation_requested"], [("Invitation", "transitioned", "transition Invitation.confirm")])
+        self.assertIn({"kind": "notify", "of": "Invitation.confirm"}, B.uses(b, e)["Invitation"]["references"]["department"])   # director: per Department
+        # behavior.json: `notifies` on every transition, both forms
+        rt = B.runtime_json(behavior(), meta())
+        tr = rt["workflows"]["Invitation"]["transitions"]
+        self.assertEqual(tr["confirm"]["notifies"], [{"name": "notify_confirm", "notify": ["director"], "template": "director_confirmation_requested", "own": True}])
+        self.assertEqual([n["name"] for n in tr["approve"]["notifies"]], ["notify_to_manage", "notify_approved"])
+        self.assertFalse(tr["submit"]["notifies"][0]["own"])
+        self.assertEqual(tr["reject"]["notify"], [])
+        # the long form with a condition of its own
+        b = behavior()
+        t = b["workflows"]["Invitation"]["transitions"]["close"]
+        t["notify"] = {"to": ["office", "self.guest.email"], "template": "invitation_closed", "when": "hours > 0"}
+        b["reactions"] = [r for r in b["reactions"] if r["name"] != "notify_closed"]
+        rep = B.validate(b, meta())
+        self.assertEqual((rep.errors, rep.warnings), ([], []))
+        eb = B.expand(b)
+        self.assertEqual([r for r in eb["reactions"] if r["name"] == "notify_close"][0]["when"], "transition = close and (hours > 0)")
+        self.assertEqual(B.transition_reactions(eb, e, "Invitation")["close"], ["notify_close"])
+        self.assertEqual(B.diff(behavior(), b), ["~ transition Invitation.close: notify, template", "- reaction notify_closed"])
+        rt = B.runtime_json(b, meta())
+        self.assertEqual(rt["workflows"]["Invitation"]["transitions"]["close"]["notify_when"]["text"], "hours > 0")
+        fe = B.from_editor(rt)                                       # the proposal of the web modeler keeps the short form
+        self.assertEqual(fe["workflows"]["Invitation"]["transitions"]["close"]["notify"],
+                         {"to": ["office", "self.guest.email"], "template": "invitation_closed", "when": "hours > 0"})
+        self.assertNotIn("notify_close", [r["name"] for r in fe["reactions"]])
+        self.assertNotIn("notifies", fe["workflows"]["Invitation"]["transitions"]["close"])
+        self.assertEqual(B.diff(b, fe), [])
+        text = B.dumps(b)                                            # the file keeps the short form
+        self.assertIn("notify: {to: [office, self.guest.email], template: invitation_closed, when: hours > 0}", text)
+        self.assertNotIn("notify_close", text)
+        self.assertEqual(B.expand(B.loads(text))["reactions"], eb["reactions"])
+        # the engine: the synthetic reaction carries the recipients on the state change, like a written one
+        from metamodel import engine as G
+        sql, _ = G.engine_sql(b, meta())
+        self.assertIn("-- notify_close\n  if p_type = 'invitation.transitioned' and coalesce(((p_extra -> 'transition' ->> 'key') = 'close' and r.hours > 0), false) then", sql)
+        self.assertIn("-- notify_director_return", sql)
+        # BEHAVIOR.md: the transition row says who is notified; the reactions table lists the explicit ones only
+        md = B.to_markdown(behavior(), meta())
+        row = next(l for l in md.splitlines() if l.startswith("| `director_return` |"))
+        self.assertIn("`self.issuer` (`visit_confirmation_returned`)", row)
+        self.assertNotIn("notify_director_return", md)
+        self.assertIn("| `notify_closed` |", md)
+        # what validate refuses
+        b = behavior()
+        trs = b["workflows"]["Invitation"]["transitions"]
+        trs["close"]["template"] = "invitation_closed"                                                       # template alone
+        trs["reject"]["notify"] = {"to": ["self.issuer"], "template": "invitation_rejected", "when": "nope > 1", "extra": 1}
+        trs["approve"]["notify"] = ["office"]                                                                  # no template
+        trs["withdraw"]["notify"] = {"when": "hours > 0"}                                                      # when alone
+        b["reactions"].append({"name": "notify_approve", "event": "Invitation.transitioned", "when": "transition = approve",
+                               "notify": [self_issuer := "self.issuer"], "template": "invitation_approved"})
+        errs = errors(b)
+        for frag in ["transitions.close.template: a template without notify", "transitions.reject.notify: unknown keys: extra",
+                     "transitions.reject.notify.when: 'nope' is not a feature of Invitation", "transitions.approve.notify: template: the key",
+                     "transitions.withdraw.notify: when without to",
+                     "transitions.approve.notify: the notification of transition `approve` is the reaction `notify_approve`"]:
+            self.assertTrue(any(frag in x for x in errs), (frag, errs))
+        self.assertEqual(self_issuer, "self.issuer")
+
     def test_notification_templates_are_checked_against_the_model(self):
         # the fixture: texts for every template, placeholders on the record and the event
         rep = B.validate(behavior(), meta())
@@ -1076,7 +1146,7 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(tr["approve"]["guard"]["type"], "bool")
         self.assertIsNone(tr["reject"]["guard"])
         self.assertEqual(rj["reactions"][0]["when"]["sql"], "(p_extra -> 'transition' ->> 'key') in ('submit', 'resubmit')")
-        self.assertIsNone(rj["reactions"][-1]["when"])
+        self.assertIsNone(next(r for r in rj["reactions"] if r["name"] == "notify_reverted")["when"])
         json.dumps(rj)                                                                  # serializable
 
     def test_clauses_and_engine_version(self):
