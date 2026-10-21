@@ -63,32 +63,72 @@
     lane: 8, laneInset: 12, channel: 26, sinkSources: 3, pad: 6, arrow: 8, lOffset: 3.5, color: "#64748b", charW: 0.56 };
 
   const Layout = (() => {
-    const rowItems = (c, allAttrs = false, more = "more", state = null, uses = null) => {
+    // the class as seen from a state: `model` of the state merged with `requires` (its shorthand for lower: 1),
+    // per feature {lower, readonly, hidden, in} (behavior.json keeps `model` as written, with requires apart)
+    const stateView = (st) => {
+      const out = {};
+      for (const f of [].concat(st?.requires || [])) out[f] = { ...(out[f] || {}), lower: 1 };
+      for (const [f, o] of Object.entries(st?.model || {})) {
+        const cur = out[f] || {};
+        out[f] = { lower: o?.lower ?? cur.lower ?? null, readonly: !!(cur.readonly || o?.readonly || o?.hidden), hidden: !!(cur.hidden || o?.hidden), in: o?.in ?? cur.in ?? null };
+      }
+      for (const o of Object.values(out)) { o.lower ??= null; o.readonly = !!o.readonly; o.hidden = !!o.hidden; o.in ??= null; }
+      return out;
+    };
+    // what the states of a workflow say of each feature: {feature: [{state, label, lower, readonly, hidden, in}]}
+    const stateOverlay = (w, lang = "it") => {
+      const out = {};
+      for (const [sn, st] of Object.entries(w?.states || {})) {
+        for (const [f, o] of Object.entries(stateView(st))) (out[f] ||= []).push({ state: sn, label: wfLabel(st, sn, lang), ...o });
+      }
+      return out;
+    };
+    // the mark of one feature in one state, as BEHAVIOR.md prints it: ● required, 🔒 read only, ○ hidden, {a, b}
+    const viewMark = (o) => (o ? [o.lower === 1 ? "●" : "", o.hidden ? "○" : o.readonly ? "🔒" : "", o.in ? `{${o.in.join(", ")}}` : ""].filter(Boolean).join(" ") : "");
+    // the multiplicity of a feature with what the states add: `[1 da Bozza]`, `[0..* · 1 da Bozza]`; `from` = "da"/"from"
+    const multWithStates = (f, entries, from) => {
+      const base = f.lower === 0 && f.upper === 1 ? "" : multText(f.lower, f.upper);
+      const req = (entries || []).filter((x) => x.lower === 1).map((x) => x.label);
+      if (!req.length) return base ? ` [${base}]` : "";
+      return ` [${base ? base + " · " : ""}1 ${from} ${req.join(", ")}]`;
+    };
+    const rowItems = (c, allAttrs = false, more = "more", state = null, uses = null, opts = {}) => {
       // attribute lines of a class box: all of them, or the first ones plus "+N more". `🔑` marks the id,
       // `/name` a derived attribute (UML), `⟳` the state attribute of the workflow (`state` of behavior.yaml),
-      // ` ·ƒ` a feature the behaviour uses (`uses` of behavior.json for this class: formulas, guards, principals…)
+      // ` ·ƒ` a feature the behaviour uses (`uses` of behavior.json for this class: formulas, guards, principals…).
+      // `opts.overlay` (stateOverlay) adds «1 da <stato>» to the multiplicity; `opts.view` (stateView of one state)
+      // draws the class as seen from that state: `[1]`, 🔒 read only, hidden rows flagged, `∈ {a, b}`.
+      const { overlay = null, view = null, from = "from" } = opts;
+      const seen = (f, spec) => {
+        const v = view?.[f];
+        if (!v) return { m: multWithStates(spec, overlay?.[f], from), pre: "", post: "", hidden: false };
+        const lower = v.lower ?? spec.lower;
+        const m = lower === 0 && spec.upper === 1 ? "" : ` [${multText(lower, spec.upper)}]`;
+        return { m, pre: v.readonly && !v.hidden ? "🔒 " : "", post: v.in ? ` ∈ {${v.in.join(", ")}}` : "", hidden: v.hidden };
+      };
       const items = Object.entries(c.attributes).map(([an, a]) => {
-        const m = a.lower === 0 && a.upper === 1 ? "" : ` [${multText(a.lower, a.upper)}]`;
+        const v = seen(an, a);
         const mark = a.id ? "🔑 " : an === state ? "⟳ " : "";
         const used = uses?.attributes?.[an] || null;
-        return { text: `${mark}${a.derived ? "/" : ""}${an}: ${a.type}${m}${used ? " ·ƒ" : ""}`, attr: an, derived: !!a.derived, state: an === state, used };
+        return { text: `${v.pre}${mark}${a.derived ? "/" : ""}${an}: ${a.type}${v.m}${v.post}${used ? " ·ƒ" : ""}`, attr: an, derived: !!a.derived, state: an === state, used, hidden: v.hidden };
       });
       // references to the application users have no box to point to: listed in the class, dimmed
       for (const [rn, r] of Object.entries(c.references)) {
         if (r.type !== "User") continue;
+        const v = seen(rn, r);
         const used = uses?.references?.[rn] || null;
-        items.push({ text: `↗ ${rn}: User${r.lower === 0 && r.upper === 1 ? "" : ` [${multText(r.lower, r.upper)}]`}${used ? " ·ƒ" : ""}`, ref: rn, muted: true, used });
+        items.push({ text: `${v.pre}↗ ${rn}: User${v.m}${used ? " ·ƒ" : ""}`, ref: rn, muted: true, used, hidden: v.hidden });
       }
       if (allAttrs || items.length <= MAX_ROWS) return items;
       return [...items.slice(0, MAX_ROWS - 1), { text: `… +${items.length - MAX_ROWS + 1} ${more}`, muted: true }];
     };
-    const rowsOf = (c, allAttrs, more, state, uses) => rowItems(c, allAttrs, more, state, uses).map((r) => r.text);
+    const rowsOf = (c, allAttrs, more, state, uses, opts) => rowItems(c, allAttrs, more, state, uses, opts).map((r) => r.text);
 
     const boxSize = (mm, name, opts = {}) => {
       const c = mm.classes[name];
       const width = (texts, min) => Math.round(Math.max(min, Math.min(380, Math.max(...texts.map((x) => x.length)) * CHAR_W + 24)));
       if (c) {
-        const rows = rowsOf(c, opts.allAttrs, opts.more, opts.state, opts.uses);
+        const rows = rowsOf(c, opts.allAttrs, opts.more, opts.state, opts.uses, opts);
         // a class with a workflow has a «workflow» stereotype line in its head, like an enum has «enumeration»
         return { w: width([name, ...rows], 160), h: HEAD_H + (opts.workflow ? STEREO_H : 0) + Math.max(1, rows.length) * ROW_H + PAD };
       }
@@ -126,7 +166,7 @@
       const classes = Object.keys(mm.classes);
       const enums = Object.keys(mm.enums);
       // the gap between columns holds the connectors and their labels: at least the widest reference label
-      const labelW = Math.max(0, ...edgesOf({ ...mm, diagram: Object.fromEntries([...classes, ...enums].map((n) => [n, { x: 0, y: 0 }])) })
+      const labelW = Math.max(0, ...edgesOf({ ...mm, diagram: Object.fromEntries([...classes, ...enums].map((n) => [n, { x: 0, y: 0 }])) }, null, opts.overlay, opts.from)
         .flatMap((e) => [e.labelA, e.labelB]).filter(Boolean).map((t) => t.length * LABEL_CHAR_W + 4));
       const gapX = Math.max(GAP_X, Math.ceil(labelW) + 30);
       const missing = [...classes, ...enums].filter((n) => force || !mm.diagram[n]);
@@ -654,11 +694,16 @@
       return wfSimplify([pa, ...pts, pb]);
     };
 
-    const edgesOf = (mm, uses = null) => {
+    const edgesOf = (mm, uses = null, overlay = null, from = "from") => {
       // EMF / Ecore Tools notation: reference = open arrow at the target; containment = filled diamond at the
       // container; a pair of opposite references = one connector with both ends; inheritance = hollow triangle
-      // at the supertype. A reference the behaviour uses gets ` ·ƒ` after its label.
+      // at the supertype. A reference the behaviour uses gets ` ·ƒ` after its label; `overlay` ({class: stateOverlay})
+      // adds «1 da <stato>» when a state requires it.
       const used = (cn, rn) => (uses?.[cn]?.references?.[rn] ? " ·ƒ" : "");
+      const mult = (cn, rn, r) => {
+        const req = (overlay?.[cn]?.[rn] || []).filter((x) => x.lower === 1).map((x) => x.label);
+        return multText(r.lower, r.upper) + (req.length ? ` · 1 ${from} ${req.join(", ")}` : "");
+      };
       const list = [];
       const drawn = new Set();
       for (const [cn, c] of Object.entries(mm.classes)) {
@@ -675,8 +720,8 @@
             key: `${cn}.${rn}`, a: cn, b: r.type, cls: "edge",
             start: r.containment ? "url(#diamond)" : (o ? "url(#arrow)" : null),
             end: o?.containment ? "url(#diamond)" : "url(#arrow)",
-            labelB: `${rn} ${multText(r.lower, r.upper)}${used(cn, rn)}`,
-            labelA: o ? `${r.opposite} ${multText(o.lower, o.upper)}${used(r.type, r.opposite)}` : null,
+            labelB: `${rn} ${mult(cn, rn, r)}${used(cn, rn)}`,
+            labelA: o ? `${r.opposite} ${mult(r.type, r.opposite, o)}${used(r.type, r.opposite)}` : null,
           });
         }
       }
@@ -705,7 +750,7 @@
         return n;
       };
       const length = (pts) => segments(pts).reduce((a, [p, q]) => a + Math.abs(q.x - p.x) + Math.abs(q.y - p.y), 0);
-      const list = edgesOf(mm, opts.uses);
+      const list = edgesOf(mm, opts.uses, opts.overlay, opts.from);
       for (const e of list) {   // the sides the connector leaves and enters
         const A = rects[e.a], B = rects[e.b];
         e.A = A; e.B = B;
@@ -924,7 +969,8 @@
       const k = Math.min(kMax, Math.max(kMin, view.k * factor));
       return { k, x: at.x - ((at.x - view.x) * k) / view.k, y: at.y - ((at.y - view.y) * k) / view.k };
     };
-    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, fitView, zoomView, workflowModel, workflowLayout, workflowFocus, WF, STEREO_H };
+    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, fitView, zoomView, workflowModel, workflowLayout, workflowFocus,
+             stateView, stateOverlay, viewMark, wfLabel, WF, STEREO_H };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -1002,7 +1048,20 @@
     const b = JSON.parse(JSON.stringify(bh));   // (clone is defined after this module's early return for Node)
     delete b.entities; delete b.uses;
     for (const ders of Object.values(b.derivations || {})) for (const an of Object.keys(ders)) ders[an] = exprText(ders[an]);
-    for (const w of Object.values(b.workflows || {})) for (const t of Object.values(w.transitions || {})) { t.when = exprText(t.when); t.guard = exprText(t.guard); }
+    for (const w of Object.values(b.workflows || {})) {
+      for (const t of Object.values(w.transitions || {})) { t.when = exprText(t.when); t.guard = exprText(t.guard); }
+      for (const st of Object.values(w.states || {})) {
+        for (const [f, o] of Object.entries(st.model || {})) {
+          const c = {};
+          if (o?.lower != null) c.lower = o.lower;
+          if (o?.readonly && !o?.hidden) c.readonly = true;
+          if (o?.hidden) c.hidden = true;
+          if (o?.in) c.in = o.in;
+          if (Object.keys(c).length) st.model[f] = c; else delete st.model[f];
+        }
+        if (st.model && !Object.keys(st.model).length) delete st.model;
+      }
+    }
     for (const r of b.reactions || []) r.when = exprText(r.when);
     return b;
   };
@@ -1031,7 +1090,7 @@
       if (ow.state !== w.state) out.push(`~ workflow ${cn}: state attribute ${ow.state} -> ${w.state}`);
       for (const [sn, st] of Object.entries(w.states || {})) {
         if (!ow.states?.[sn]) out.push(`+ state ${cn}.${sn}`);
-        else { const ks = keysChanged(ow.states[sn], st, ["initial", "final", "label", "color", "owner", "editable_by", "reminder", "requires"]); if (ks.length) out.push(`~ state ${cn}.${sn}: ${ks.join(", ")}`); }
+        else { const ks = keysChanged(ow.states[sn], st, ["initial", "final", "label", "color", "owner", "editable_by", "reminder", "requires", "model"]); if (ks.length) out.push(`~ state ${cn}.${sn}: ${ks.join(", ")}`); }
       }
       for (const sn of Object.keys(ow.states || {})) if (!w.states?.[sn]) out.push(`- state ${cn}.${sn}`);
       for (const [tn, tr] of Object.entries(w.transitions || {})) {
@@ -1086,7 +1145,10 @@
       derived: "calcolato", inCode: "calcolato nel codice", formula: "formula",
       legendWf: "classe con workflow", legendInvolved: "coinvolta nel comportamento", legendStruct: "solo struttura",
       usedBy: "usato da", derivation: "derivazione", guard: "requisito", when: "condizione", at: "scadenza", by: "chi",
-      owner: "in attesa di", editable_by: "modificabile da", requires: "richiede", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo",
+      owner: "in attesa di", editable_by: "modificabile da", requires: "richiede", allowed: "valori ammessi nello stato", readonly: "sola lettura nello stato",
+      hidden: "assente nello stato", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo", fromState: "da", model: "Modello",
+      modelHint: "la classe come appare nello stato (model in behavior.yaml): ● richiesto, 🔒 sola lettura, ○ assente, {a, b} valori ammessi",
+      stateViewHint: "passa il mouse su uno stato: il riquadro della classe mostra come appare in quello stato",
       addWorkflow: "Workflow", removeWorkflow: "Rimuovi workflow", stateAttr: "attributo di stato", stateAttrHint: "serve un attributo EString o enum",
       state: "Stato", kind: "Tipo", initial: "iniziale", final: "finale", color: "Colore", reminder: "Sollecito",
       transition: "Transizione", from: "Da", to: "A", who: "Chi", comment: "Commento", required: "obbligatorio", optional: "facoltativo",
@@ -1117,7 +1179,10 @@
       derived: "derived", inCode: "computed in code", formula: "formula",
       legendWf: "class with a workflow", legendInvolved: "involved in the behaviour", legendStruct: "structure only",
       usedBy: "used by", derivation: "derivation", guard: "requirement", when: "condition", at: "due", by: "who",
-      owner: "waiting for", editable_by: "editable by", requires: "requires", notify: "recipient", revert: "revert", scope: "role scope",
+      owner: "waiting for", editable_by: "editable by", requires: "requires", allowed: "allowed in state", readonly: "read only in state",
+      hidden: "hidden in state", notify: "recipient", revert: "revert", scope: "role scope", fromState: "from", model: "Model",
+      modelHint: "the class as seen from the state (model in behavior.yaml): ● required, 🔒 read only, ○ hidden, {a, b} the allowed literals",
+      stateViewHint: "hover a state: the class box shows how the class looks in that state",
       addWorkflow: "Workflow", removeWorkflow: "Remove workflow", stateAttr: "state attribute", stateAttrHint: "needs an EString or enum attribute",
       state: "State", kind: "Kind", initial: "initial", final: "final", color: "Colour", reminder: "Reminder",
       transition: "Transition", from: "From", to: "To", who: "Who", comment: "Comment", required: "required", optional: "optional",
@@ -1204,6 +1269,8 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .box text.state { fill:var(--accent); }
 .box.workflow rect.head { fill:var(--wf); }
 .box text.inv { fill:var(--inv); }
+.box text.hidden { fill:var(--muted); text-decoration:line-through; opacity:.55; }
+.box.viewed rect.head { stroke:var(--accent); stroke-width:1.5; }
 .box text.mark { fill:var(--inv); font-weight:700; font-size:12px; }
 .wfpanel { display:none; border-top:1px solid var(--line); background:var(--panel); grid-template-rows:auto 1fr; min-height:0; }
 .wfpanel.on { display:grid; }
@@ -1329,7 +1396,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       // of an app marks its current step; the other boxes dim. The class rule .wfs sets the fill: inline style wins.
       const cur = current !== null && b.key === current, bm = cur ? " cur" : current !== null ? " far" : "";
       if (cur) inner.append(svg("rect", { x: b.x - 4, y: b.y - 4, width: b.w + 8, height: b.h + 8, rx: 11, class: "wfring", stroke: b.color }));
-      inner.append(svg("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 7, class: `wfs${bm}`, stroke: b.color,
+      inner.append(svg("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 7, class: `wfs${bm}`, stroke: b.color, "data-state": b.key,
         "stroke-width": cur || b.kind === "final" ? 3 : 1.5, style: cur ? `fill:${b.color}` : null }));
       const text = svg("text", { x: b.x + b.w / 2, y: b.y + 9 + WF.font, "text-anchor": "middle", class: `wfst${bm}`, fill: cur ? "#fff" : b.color });
       b.lines.forEach((line, i) => text.append(svg("tspan", { x: b.x + b.w / 2, dy: i ? WF.font + 3 : 0 }, line)));
@@ -1628,7 +1695,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         if (initial.length > 1) out.push(`${cn}: ${t.wfManyInitial}`);
         if (!states.some((sn) => w.states[sn].final)) out.push(`${cn}: ${t.wfNoFinal}`);
         for (const sn of states) if (!KEY.test(sn)) out.push(`${cn}.${sn}: ${t.wfBadKey}`);
-        for (const sn of states) for (const f of [].concat(w.states[sn].requires || [])) if (!c.attributes[f] && !c.references[f]) out.push(`${cn}.${sn}: ${t.wfBadRequires} ${f}`);
+        for (const sn of states) for (const f of [...[].concat(w.states[sn].requires || []), ...Object.keys(w.states[sn].model || {})]) if (!c.attributes[f] && !c.references[f]) out.push(`${cn}.${sn}: ${t.wfBadRequires} ${f}`);
         for (const [tn, tr] of Object.entries(w.transitions || {})) {
           if (!KEY.test(tn)) out.push(`${cn}.${tn}: ${t.wfBadKey}`);
           for (const f of [].concat(tr.from || [])) if (!w.states?.[f]) out.push(`${cn}.${tn}: ${t.wfBadState} ${f}`);
@@ -1644,8 +1711,13 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     }
 
     /* ------------------------------------------------------------------ layout */
-    _sizeOpts(cn) { return { allAttrs: this._allAttrs, more: this.t.more, state: this._workflow(cn)?.state || null, uses: this._uses(cn), workflow: !!this._workflow(cn) }; }
-    _rows(cn) { return Layout.rowItems(this._mm.classes[cn], this._allAttrs, this.t.more, this._workflow(cn)?.state || null, this._uses(cn)); }
+    // what the states of the class's workflow say of its features, and the state whose view is shown (hover in the panel)
+    _overlay(cn) { const w = this._workflow(cn); return w ? Layout.stateOverlay(w, this._lang()) : null; }
+    _overlays() { const out = {}; for (const cn of Object.keys(this._bh?.workflows || {})) if (this._mm.classes[cn]) out[cn] = this._overlay(cn); return out; }
+    _stateViewOf(cn) { return this._wfView?.cn === cn ? Layout.stateView(this._workflow(cn)?.states?.[this._wfView.state]) : null; }
+    _rowOpts(cn) { return { overlay: this._overlay(cn), view: this._stateViewOf(cn), from: this.t.fromState }; }
+    _sizeOpts(cn) { return { allAttrs: this._allAttrs, more: this.t.more, state: this._workflow(cn)?.state || null, uses: this._uses(cn), workflow: !!this._workflow(cn), ...this._rowOpts(cn) }; }
+    _rows(cn) { return Layout.rowItems(this._mm.classes[cn], this._allAttrs, this.t.more, this._workflow(cn)?.state || null, this._uses(cn), this._rowOpts(cn)); }
     _boxSize(name) { return Layout.boxSize(this._mm, name, this._sizeOpts(name)); }
     _workflowText(cn) {
       const w = this._workflow(cn), t = this.t;
@@ -1654,7 +1726,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     _autoLayout(force) {
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
       const pos = Layout.autoLayout(this._mm, (n) => this._boxSize(n),
-        { force, width: r ? r.width - 2 * MARGIN : 0, height: r ? r.height - 2 * MARGIN : 0 });
+        { force, width: r ? r.width - 2 * MARGIN : 0, height: r ? r.height - 2 * MARGIN : 0, overlay: this._overlays(), from: this.t.fromState });
       Object.assign(this._mm.diagram, pos);
     }
     _fit() {
@@ -1910,7 +1982,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         const last = pts[pts.length - 1];
         return d + ` L${last.x},${last.y}`;
       };
-      const routed = Layout.routeEdges(mm, (n) => this._boxSize(n), { uses: this._bh?.uses || null });
+      const routed = Layout.routeEdges(mm, (n) => this._boxSize(n), { uses: this._bh?.uses || null, overlay: this._overlays(), from: this.t.fromState });
       for (const e of routed.edges) {
         // a bus: the stub with the arrow, the trunk and a branch per source, with a dot where each joins the trunk
         const runs = [{ pts: e.pts, start: e.start, end: e.end }];
@@ -1941,10 +2013,11 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         // «workflow» stereotype in the head of a class with a workflow; ƒ in the corner of a class the behaviour uses
         const wf = this._workflow(cn), involved = !wf && this._uses(cn);
         const hh = HEAD_H + (wf ? STEREO_H : 0);
-        const b = svg("g", { class: `box${sel ? " sel" : ""}${wf ? " workflow" : ""}`, "data-name": cn, transform: `translate(${p.x},${p.y})` },
+        const viewed = this._wfView?.cn === cn && wf?.states?.[this._wfView.state] ? Layout.wfLabel(wf.states[this._wfView.state], this._wfView.state, this._lang()) : null;
+        const b = svg("g", { class: `box${sel ? " sel" : ""}${wf ? " workflow" : ""}${viewed ? " viewed" : ""}`, "data-name": cn, transform: `translate(${p.x},${p.y})` },
           svg("rect", { class: "body", width: s.w, height: s.h, rx: 6 }),
           svg("rect", { class: "head", width: s.w - 2, x: 1, y: 1, height: hh - 2, rx: 5 }),
-          wf ? svg("text", { x: s.w / 2, y: 14, "text-anchor": "middle", class: "stereo" }, "«workflow»") : null,
+          wf ? svg("text", { x: s.w / 2, y: 14, "text-anchor": "middle", class: "stereo" }, viewed ? `«workflow · ${viewed}»` : "«workflow»") : null,
           svg("text", { x: s.w / 2, y: wf ? 30 : 21, "text-anchor": "middle", class: `title${c.abstract ? " abstract" : ""}` }, cn),
           involved ? svg("text", { x: s.w - 6, y: 13, "text-anchor": "end", class: "stereo mark" }, "ƒ", svg("title", {}, this._usesText(cn))) : null);
         let y = hh + 14;
@@ -1955,7 +2028,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           if (r.derived) tips.push(`/${r.attr} = ${this._formula(cn, r.attr) ?? this.t.inCode}`);
           if (r.state) tips.push(this._workflowText(cn));
           if (r.used) tips.push(this._usedText(r.used));
-          const cls = r.muted ? "muted" : r.state ? "state" : r.used ? "inv" : null;
+          const cls = [r.muted ? "muted" : r.state ? "state" : r.used ? "inv" : null, r.hidden ? "hidden" : null].filter(Boolean).join(" ") || null;
           b.append(svg("text", { x: 8, y, class: cls }, r.text, tips.length ? svg("title", {}, tips.join("\n")) : null));
           y += ROW_H;
         }
@@ -2005,10 +2078,17 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       }
       const t = this.t;
       const head = el("div", { class: "wfhead" }, el("strong", {}, cn),
-        el("span", {}, `«workflow» ⟳ ${wf.state} · ${L.boxes.length} ${t.states}, ${Object.keys(wf.transitions || {}).length} ${t.transitions}`));
+        el("span", {}, `«workflow» ⟳ ${wf.state} · ${L.boxes.length} ${t.states}, ${Object.keys(wf.transitions || {}).length} ${t.transitions}`),
+        Object.values(wf.states || {}).some((st) => Object.keys(Layout.stateView(st)).length) ? el("span", { class: "hint" }, t.stateViewHint) : null);
       const edit = this.readonly ? null : this._workflowEditor(cn, wf);
       const scroll = { top: body.scrollTop, left: body.scrollLeft };   // an edit re-renders the panel: keep where the user was
-      body.replaceChildren(head, workflowSvg(cn, L), ...(edit ? [edit] : []));
+      const diagram = workflowSvg(cn, L);
+      // hovering a state redraws the class box as seen from that state (the diagram only: the panel stays put)
+      for (const node of diagram.querySelectorAll("[data-state]")) {
+        node.addEventListener("mouseenter", () => { this._wfView = { cn, state: node.dataset.state }; this._renderDiagram(); });
+        node.addEventListener("mouseleave", () => { if (this._wfView?.state === node.dataset.state) { this._wfView = null; this._renderDiagram(); } });
+      }
+      body.replaceChildren(head, diagram, ...(edit ? [edit] : []));
       body.scrollTop = scroll.top; body.scrollLeft = scroll.left;
       // the height the user dragged, else what the diagram (and the editing tables) need, up to half of the editor
       const wrapH = this.shadowRoot.querySelector(".wrap")?.clientHeight || 600;
@@ -2032,6 +2112,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         el("td", {}, el("input", { class: "w", value: (st.owner || []).join(", "), title: t.listHint, onchange: (ev) => { st.owner = this._list(ev.target.value); this._bhChanged(); } })),
         el("td", {}, el("input", { class: "w", value: (st.editable_by || []).join(", "), title: t.listHint, onchange: (ev) => { st.editable_by = this._list(ev.target.value); this._bhChanged(); } })),
         el("td", {}, el("input", { class: "w", value: (st.requires || []).join(", "), title: t.requiresHint, onchange: (ev) => { const v = this._list(ev.target.value); if (v.length) st.requires = v; else delete st.requires; this._bhChanged(); } })),
+        el("td", { class: "hint", title: t.modelHint }, Object.entries(st.model || {}).map(([f, o]) => `${f}: ${Layout.viewMark(Layout.stateView({ model: { [f]: o } })[f])}`).join(" · ")),
         el("td", {}, el("input", { class: "n", value: st.reminder?.after || "", placeholder: "7d", onchange: (ev) => { const v = ev.target.value.trim(); st.reminder = v ? { ...(st.reminder || {}), after: v } : null; this._bhChanged(); } })),
         el("td", {}, el("button", { class: "x", title: t.del, onclick: () => { delete states[sn]; this._bhChanged(); } }, "×"))));
       const stateOptions = (cur) => Object.keys(states).map((sn) => el("option", { value: sn, selected: sn === cur }, sn));
@@ -2052,7 +2133,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       return el("div", { class: "wfedit" },
         el("div", {},
           el("h4", {}, `${t.states} · ⟳ ${w.state}`),
-          el("table", {}, el("tr", {}, ...[t.name, t.label, t.color, t.kind, t.owner, t.editable_by, t.requires, t.reminder, ""].map((h) => el("th", {}, h))), ...stateRows),
+          el("table", {}, el("tr", {}, ...[t.name, t.label, t.color, t.kind, t.owner, t.editable_by, t.requires, t.model, t.reminder, ""].map((h) => el("th", {}, h))), ...stateRows),
           el("button", { onclick: () => { states[this._uniqueName("state", Object.keys(states))] = {}; this._bhChanged(); } }, `+ ${t.state}`)),
         el("div", {},
           el("h4", {}, t.transitions),
