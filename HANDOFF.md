@@ -1,177 +1,79 @@
-# Handoff — modellatore: dal modellatore web in produzione fino al rilascio (PR, db push, merge, deploy)
-_Aggiornato: 2026-10-20 · branch `feat/modeler-release-from-web` (2 commit sopra `main` `98c3c53`, non pushati)_
+# Handoff — harness review del 2026-10-21 unita in main: `requires` per stato, immagini del worker, zoom a pulsanti
+_Aggiornato: 2026-10-21 · branch `main` (`0a9b9a9`, PR #29), albero pulito_
 
 ## Obiettivo
-Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: nelle app model-based la pagina di
-dettaglio di un record di un'entità con workflow mostra un div con il diagramma degli stati e lo stato corrente
-evidenziato, come pezzo riusabile del kit del modeler (provato nella sandbox).
+Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: revisione delle 4 note aperte
+di `NOTES.md` con `/core:harness-review` (tutte chiuse), più la richiesta sull'editor web (zoom solo con pulsanti,
+diagramma che riempie l'editor). Tutto rilasciato: **core 0.19.0, modeler 0.30.0** su `origin/main`.
 
 ## Stato
-- `origin/main` è alla PR #27 (`98c3c53`): **core 0.17.0, modeler 0.28.1** (skill `behavior`, proposte dal prompt,
-  applicazione dal web). Branch locale `feat/modeler-release-from-web` (da unire con `/core:ship`): «Rivedi» e
-  «Conferma e rilascia» sulla riga con la PR in `/admin/model` (`proposalPullRequest`, `requestProposalRelease` in
-  `metamodel-actions.ts`; pannello con titolo, unibilità, file, corpo della PR), workflow
-  `kit/github/modeler-release.yml` (environment `modeler-release`: PR aperta/aggiornata/unibile, `supabase db reset`
-  + test + drift, stop su DDL distruttivo non commentato salvo `allow_destructive`, `migration list`/`db push
-  --db-url` con stop su migrazioni remote sconosciute o fuori ordine, `gh pr merge --squash` con `MODELER_GH_TOKEN`
-  perché un merge con `GITHUB_TOKEN` non avvia il deploy, attesa del run di deploy dello SHA del merge, `model:done
-  --write`, `model:track --merged/--deployed/--release-error`). Colonne `release_requested_at`, `release_error`,
-  `merged_at`, `deployed_at` nella stessa migrazione `_apply` (idempotente; non ancora installata in nessuna app).
-  Skill `install` §7, `apply`, `ship`, `db-push`, `deploy`, convenzioni, README, help. Provato nella sandbox in
-  modalità `db`: i quattro stati del rilascio e «Rivedi» fino a GitHub (401 con token finto). **Non provato**: un
-  rilascio vero (serve order-management con i secrets e una proposta di prova con migrazione innocua).
-- Branch `feat/modeler-apply-from-web` (il terzo in pila; da unire con `/core:ship`): in `/admin/model` di produzione
-  il bottone «Applica (apre una PR)» (`requestProposalApply` in `metamodel-actions.ts`) manda un `repository_dispatch`
-  (`MODELER_APPLY_REPO`/`MODELER_APPLY_TOKEN` nel pannello dell'app) al workflow `.github/workflows/modeler-apply.yml`
-  (template `kit/github/`, installato una volta): Supabase locale, `model:pull --id`, Claude Code headless con il
-  plugin (`--permission-mode dontAsk`, `--max-budget-usd`, regole in `.github/modeler-apply-rules.md`), push del
-  branch `model/<id8>`, `gh pr create`, `model:track --pr` (o `--error` su fallimento). Colonne nuove
-  (`kit/model_change_requests_apply.sql`): `apply_requested_at`, `apply_finished_at`, `pr_url`, `apply_error`; il
-  banner mostra «PR aperta» (link), «in corso dalle…», «applicazione fallita» + «Riprova». CLI: `pull --id <uuid>`
-  (`pull_sql`, `_uuid`), `track`, script `model:track`. Skill `install` §7 (segreti, costi, cosa resta manuale),
-  `apply`, `deploy` (variabili del pannello), convenzioni, README, help. Test: `test_pull_one_proposal_and_track_the_outcome`,
-  install/reinstall (workflow parsato, migrazione una volta). Provato nella sandbox in modalità `db` (stub `access.ts`
-  ora su `pg`): quattro stati del banner e dispatch vero verso GitHub (401 con token finto, messaggio mostrato).
-  **Non provato**: un run reale del workflow (serve un repository con i segreti; la skill dice come provarlo con
-  `workflow_dispatch`) e il costo reale per run (`total_cost_usd`): la stima in `install` §7 va confermata al primo run.
-- Branch `feat/modeler-propose-from-prompt` (sopra `feat/modeler-behavior-skill`; da unire con `/core:ship`, in un'unica
-  PR o due): comando CLI `propose` (`cli.cmd_propose`): una bozza in `.modeler/drafts/domain.ecore.yaml` (e
-  `behavior.yaml`) diventa `.modeler/proposals/<data>-prompt.json`, lo stesso JSON del modellatore web (`author:
-  claude`, `source: prompt`, `metamodel` = `runtime_json`, `behavior` = `behavior.json`), validata, con il diff
-  stampato; senza differenze o con bozza non valida non salva. `model:propose` tra gli script, `.modeler/drafts/`
-  in `.gitignore`, `proposals` segna «from the prompt», hook di sessione «or by /modeler:metamodel». Skill
-  `metamodel`: con il modellatore installato la modifica si fa sulla bozza e diventa proposta (§3.3), §4
-  «Applicare» chiede se applicare subito (passi di `apply`) o lasciarla in attesa; `behavior` §2, `apply`, `install`,
-  convenzioni, README, help aggiornati. Test: 3 nuovi (`test_propose_*`). Provato nella sandbox: la proposta compare
-  nel banner di `/admin/model` con diff e «Apri nell'editor» la mostra nel diagramma (poi scartata: la sandbox
-  resta com'era, a parte l'aggiornamento del modellatore).
-- Branch locale `feat/modeler-behavior-skill` (da unire con `/core:ship`): nuova skill
-  `plugins/modeler/skills/behavior/SKILL.md` (dove; `show`; dalle parole al modello con le regole che stavano in
-  `metamodel` §3b: derivazioni, guardie, destinatari sull'evento di stato, cardinalità, `templates:`, ambiguità in
-  un giro; struttura nella stessa modifica via `metamodel`; allineamento: validate, sync, motore generato o a mano,
-  codice, test, proposte via `apply`). `metamodel` resta per la struttura con un §3b di rimando; puntatori
-  aggiornati: `cli.workflow_hint`, nota di `reverse` (`dbschema`), intestazione di `behavior.yaml` (`behavior.dumps`),
-  hook di sessione, `behavior-view.tsx`, skill `install` (frase per il `CLAUDE.md` dell'app), `apply` (motore
-  generato o a mano), `notation`, convenzioni e `project-init` di core, README, `help/harness-process.html`.
-  Test: `workflow_hint` atteso con `/modeler:behavior`. Non provato: la skill su un'app vera (dopo `/reload-plugins`,
-  nella sandbox `/modeler:behavior show Task` e una reazione di prova).
-- PR #26 (`60932ed`, modeler 0.25.0): testi delle notifiche nel modello (`templates:`), resi dal motore, override
-  dalla pagina admin del kit. In order-management i testi sono già nell'app (PR #14 di quel repository: classe
-  `NotificationTemplate`, tabella `notification_templates` con colonna `template`, rendering in `render.ts`,
-  `/admin/templates`; n8n spedisce soltanto): l'allineamento al kit è facoltativo (vedi «Prossimi passi»).
-- `origin/main` è alla PR #20 (`2e6d80c`): **core 0.12.0, modeler 0.21.0**. Storia di oggi: PR #18 `<workflow-view>`
-  (modeler 0.19.0); PR #19 `cli.workflow_hint` in `install`/hook/`reverse`, «Motore a mano» in `metamodel` §3b,
-  `help/harness-process.html` (core 0.11.0, modeler 0.20.0); PR #20 vista esistente e `<WorkflowView>` in due schede
-  (skill `install` §4 con snippet `WorkflowTabs`, rimando in `metamodel` §4, riga nelle convenzioni; core 0.12.0,
-  modeler 0.21.0). Nessuna nota aperta in `NOTES.md`.
-- PR #21 (`1aba74a`, modeler 0.21.1): lo stato corrente di `<workflow-view>` è pieno del suo colore con testo bianco
-  e anello, gli altri stati attenuati, `data-state-missing` per un valore non tra gli stati; sandbox a 0.21.1.
-- PR #22 (`d9f433c`, core 0.13.0, modeler 0.21.2): convenzione sui link costruiti dal database, appforge rimosso ovunque.
-- PR #23 (`35ef643`, modeler 0.22.0): cardinalità delle collezioni (notazione, warning di `validate`, skill).
-- PR #24 (`bcb7da4`, modeler 0.23.0): destinatari sull'evento del cambio di stato (notazione, warning, colonna «Avvisa»).
-- PR #25 (`d4dae36`, core 0.14.0, modeler 0.24.0): ciclo di release automatizzato (install con controllo versione e
-  aggiornamento automatico, ship con db-push e attesa del deploy, fallback `supabase db query`, guard).
-- Branch locale `feat/modeler-notification-templates` (settima revisione delle note, da unire con `/core:ship`):
-  `d0224ba feat(modeler): notification texts in the model, rendered by the engine, overridable from the admin page` +
-  `90d9979 chore(release): modeler 0.25.0`. `templates:` in `behavior.yaml` (per lingua, segnaposto sul record e
-  sull'evento), `validate` (`_check_templates`), `BEHAVIOR.md`, `behavior.json`; motore: `render_template`,
-  `<entità>_template_vars`, `<entità>_recipients` con `subject`/`body` resi e override da `notification_templates`;
-  kit: `notification_templates.sql`, `notification-templates.tsx` (matrice), `notification-actions.ts`,
-  `templates-page.tsx`, `install` (`has_templates`, `templates_page_hint`); skill `metamodel` e `install`.
-  Provato sulla sandbox (database reale): override, testi del modello, sollecito; sandbox a 0.25.0 con i testi di Task.
-- Storia (PR #25, già in `main`): branch `feat/release-cycle-automation`:
-  `92e59f2 feat: automate the plugin release cycle …` + `62d9ca5 chore(release): core 0.14.0, modeler 0.24.0`.
-  Skill `install`: «0. Versione del plugin» (cache contro `origin/main` dell'harness, comando di aggiornamento e
-  stop) e «6. Aggiornamento di un'app già installata» (branch, install, validate, sync, controlli, commit con i titoli
-  delle PR, `/core:ship`); hook di sessione con il comando di aggiornamento. Skill `ship`: migrazioni non in cloud →
-  passi di `db-push` con una sola conferma; dopo il merge polling del run di deploy sullo SHA del merge, proposta di
-  `model:done` e di `core:handoff`. CLI: `dbschema.cli_query` (`supabase db query -o json`, `--linked` via Management
-  API senza password, busta agent-mode aperta e HTML unescaped) usata senza `psql` da `pull`/`done`
-  (`_prod_target`) e da `drift`/`reverse`; `.modeler/backups/` in `.gitignore`. Guard di `core`: `supabase db query`
-  che scrive chiede, una select passa. **Non provato qui**: la CLI Supabase non è installata su questo Mac; il formato
-  dell'output viene dal sorgente della CLI (`SIDE_EFFECTS.md` di `db query`), da verificare al primo `model:pull` reale.
-- Storia (PR #24, già in `main`): branch `feat/modeler-transition-recipients`:
-  `c2622dd feat(modeler): recipients of a transition travel on the state-change event` + `dab0d50 chore(release):
-  modeler 0.23.0`: regola ed esempio in `behavior-notation.md`; `validate` avvisa per destinatari su un evento
-  secondario (`emits`), per doppi destinatari e per reazioni che nessuna `subscription` riceve
-  (`_check_recipients_event`, `transition_reactions`); colonna «Avvisa» in `BEHAVIOR.md`; test sul `recipients`
-  sempre presente nel motore generato. Nessuna nota «da valutare» in `NOTES.md` (restano i due residui a condizione).
-- Storia (PR #23, già in `main`): branch `feat/modeler-collection-multiplicities`:
-  `feat(modeler): minimum and maximum of a collection, enforced by a guard or reported` + release (modeler 0.22.0):
-  notazione, `_check_multiplicities`/`_guarded` in `behavior.validate` (minimo senza guardia), warning di
-  `ecore.validate` per `upper` finito (normalizzato a many), skill `metamodel` §3b e `apply`, fixture con
-  `invitationFunds.notEmpty()`. Rinviati: trigger del massimo generato e annotazione in `DOMAIN.md`.
-- Storia (PR #22, già in `main`): branch `feat/core-record-url-convention`:
-  `749732b feat(core): record links built in the database follow the replaced views too` (convenzione «pagina che
-  sostituisce la vista generica» estesa al database: `<e>_json` con `app_base_url`, `grep -n "/e/"` nelle migrazioni,
-  unica `record_url(entity, id)` SQL, test sull'`url`), `fa34fe7 docs: record harness note decisions` (nota «link
-  negli eventi» in parte applicata: la `record_url` generata dal motore è rinviata finché `engine.py` non costruisce URL
-  nei payload; nota «due schede» chiusa come applicata), `25bd14e chore(release): core 0.13.0`; poi `92cbfeb refactor:
-  drop appforge everywhere` (skill, README, docstring, avviso in `install.sh`, import `.ecore` senza le annotazioni
-  `source="appforge"`; `NOTES.md` intatto come storico) + `1772123 chore(release): modeler 0.21.2`.
-- Cosa c'è nel kit (`plugins/modeler/kit/metamodel-editor.js`): secondo custom element **`<workflow-view>`** nello
-  stesso file (proprietà `workflow` = `behavior.workflows[Classe]`, attributi `lang`, `name`, `state`; `state` anche come
-  proprietà riflessa): `Layout.workflowLayout` alla larghezza del contenitore (`contain:inline-size` sull'host, così una
-  cella di griglia non si allarga sull'SVG; `ResizeObserver`; scroll orizzontale sotto il minimo), box dello stato
-  corrente riempito del suo colore (`style` inline: la regola `.wfs` vince su un attributo `fill`) con bordo 3.5,
-  transizioni in uscita a piena forza (classe `out`), le altre attenuate (`far`, opacità .3), hover come nell'editor.
-  Condivisi tra editor e viewer: `workflowSvg(cn, L, {current, focus})`, `textMeasure()`, `applyHover(roots, key)`,
-  `hostCss` + `wfCss`. Nel layout puro ogni edge porta `from` (sorgenti; il bus tutte) e `Layout.workflowFocus(edges, state)`
-  dà gli id degli edge in uscita (test in `layout.test.mjs`).
-- Wrapper React `kit/next/workflow-view.tsx` (`<WorkflowView behavior entity state lang className style>`, `null` se la
-  classe non ha workflow; `next/script` dedup per `src`), installato da `install` in `src/components/modeler/workflow-view.tsx`
-  (test in `test_modeler.py`); skill `install` §3/§4/§5 e README aggiornati.
-- Sandbox (`~/Documents/GitHub/modeler-sandbox`, commit `chore: modeler 0.19.0 (workflow view on the record detail)`):
-  `src/app/e/[entity]/[id]/page.tsx` importa `behavior.json` e mette `<WorkflowView>` nella colonna destra sopra
-  «Transizioni». Provato nel browser: record `done`/`cancelled` (nessuna uscita), record `todo` (Avvia, Annulla, Scaduta
-  a piena forza), contenitore stretto (host 207 px, diagramma 452 px con scroll), `/admin/model` invariato (pannello,
-  hover, tabelle). Screenshot in `/var/folders/.../claude-chrome-screenshots-*` (temporanei).
-- Verificato (2026-10-19): `node --test` 180 pass; `unittest` modeler 94 OK (8 skip), core 23 OK; `claude plugin validate .`;
-  sandbox `tsc --noEmit` e `eslint` puliti (è anche il typecheck dei TSX del kit, installati lì).
-- Non committato nell'harness: la cartella `help/` (estranea a questo lavoro; decidere se versionarla o ignorarla).
+- Fatto (PR #29, squash di 6 commit):
+  - `core:deploy` «2b. Immagini» (worker con stage proprio: `src/` intero o test import ↔ `COPY`, `docker build
+    --target` prima del merge), flag di Watchtower `--include-restarting` (§4), Redeploy/Restart (§7), «Un solo
+    container resta indietro» (§8); `core:ship` §2 e §5 (attesa che il worker riparta); riga Web di
+    `conventions.md`; voce «Immagini» nel `code-reviewer`; riga in `modeler:install`.
+  - Modeler `states.<key>.requires` (`behavior.py`: `STATE_KEYS`, `_check_requires`, `requires_tests`, `uses` kind
+    `requires`, `diff`, colonna «Richiede» in `BEHAVIOR.md`, `engine_version`, `sql_view`; `engine.py`:
+    `_requires`, `v_missing` in `perform_transition`, `missing`/`guard_ok` in `_available_transitions`, controllo
+    nel trigger `<k>_workflow_guard` con errcode `23514`; kit: pannello degli stati, diff e lint JS,
+    `behavior-view.tsx`; skill `behavior`, `metamodel`, `apply`, notazione, README).
+  - `model:drift` segnala `RECORD_URL …` quando i testi usano `{{url}}` e il database non ha
+    `public.record_url(text, uuid)` (`B.uses_url`, `D.has_record_url`, `cli.cmd_drift`).
+  - Editor web: niente zoom con la rotella (scorre la pagina), pulsanti «+»/«−» accanto ad «Adatta», fit
+    all'apertura e al ridimensionamento finché l'utente non zooma; `Layout.fitView`/`zoomView` pure; regola in
+    `core:diagrams`.
+  - `NOTES.md`: 2026-10-20 worker applicata; 2026-10-21 requires applicata (rinviati: rilevamento in `reverse`,
+    annotazione «1 da <stato>» nel diagramma e in `<WorkflowView>`); 2026-10-19 link negli eventi chiusa (motore
+    scartato); 2026-10-19 collezioni rinviata (primo progetto con `upper` finito). Nessuna nota aperta.
+- Verificato: `python3 -m unittest discover -s tests` → 23 OK; `python3 -m unittest discover -s plugins/modeler/tests`
+  → 104 OK (anche con `MODELER_PG` su Postgres 16 in Docker: `requires` fine a fine in `test_workflow_end_to_end`);
+  `node --test` dei 4 file `.mjs` → 181 OK; `claude plugin validate .` OK; editor provato in Chrome (headless e
+  reale, pagina di prova con il kit e la fixture `invitations`): fit all'apertura (k 0,683, margine 24), rotella
+  senza effetto sulla vista e pagina che scorre, «+» ×1,25 attorno al centro, «−», «Adatta», refit a 900 px.
+- Non committato: nulla (la cartella `help/` non è tracciata: decidere se versionarla o ignorarla).
+- Plugin ricaricati in questa sessione (`/reload-plugins`: core 0.19.0, modeler 0.30.0).
 
 ## Decisioni
-- Un solo algoritmo di layout: il viewer riusa `Layout.workflowLayout` dallo stesso file del kit (niente porting in TSX);
-  per questo il wrapper carica `public/modeler/metamodel-editor.js` anche sulle pagine di dettaglio (cache del browser).
-- Evidenziazione: stato corrente riempito + transizioni in uscita; gli stati già attraversati (storia) non sono mostrati.
-- Il componente prende `behavior` intero + `entity` (semplice per le app); se un `behavior.json` diventa grande, aggiungere
-  una prop `workflow` alternativa.
-- Posizione nella sandbox: colonna destra (accanto a badge e azioni); con workflow lunghi (10+ stati) le app lo mettono a
-  tutta larghezza (detto nella skill `install`).
+- `requires` è una chiave dello stato, non una guardia ripetuta né `lower: 1`: il metamodello resta `[0..1]`
+  (`lower: 1` = dalla creazione); l'invariante nello stato vale solo per i campi singoli (una parte cancellata non
+  è intercettabile dal trigger del container); nessuna ereditarietà fra stati (modello leggibile).
+- `missing` compare in `_available_transitions` solo per le transizioni verso stati con `requires`, così i frammenti
+  SQL del motore già testati restano uguali.
+- `record_url` non viene generata dal motore: la mappa delle viste sostituite è dell'app (convenzione sui link ai
+  record); il promemoria sta in `drift`, non in `validate` (un warning permanente sulla fixture avrebbe rotto
+  7 test e disturbato ogni app con la funzione già definita).
+- Zoom solo con pulsanti: la rotella sulla tela faceva zoom accidentale mentre si scorreva la pagina.
 
 ## Problemi aperti
-- Il ridimensionamento della finestra di Chrome via estensione non ha effetto su questo Mac: la larghezza stretta è stata
-  simulata restringendo `main` via JS (il comportamento a viewport telefono reale non è stato visto).
-- Ereditati: motore generato non provato su un'app vera (la sandbox sì); `psql` assente sul Mac (shim in «Per riprendere»);
-  `model:pull`/`model:done` mai riusciti su un progetto cloud; `guard_harness_edit` solo Edit/Write.
+- Un rilascio vero dal web (`modeler-release`, PR #28) e un run vero di `modeler-apply` restano non provati
+  (servono order-management con i secrets e una proposta innocua); il costo per run (`total_cost_usd`) tara
+  `MODELER_APPLY_BUDGET` (skill `install` §7).
+- Ereditati: `psql` assente sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto
+  cloud (formato di `supabase db query` da verificare al primo uso); `guard_harness_edit` solo Edit/Write.
+- La prova in Chrome con la scheda in secondo piano dà la vista non adattata: i `requestAnimationFrame` sono sospesi
+  finché la scheda non è visibile. Non è un difetto dell'editor, ma va ricordato quando si prova con l'estensione.
 
 ## Prossimi passi
-0. Misura del costo nella sandbox, dall'utente in un suo terminale (chiave API mai in chat né nel repository):
-   `cd ~/Documents/GitHub/modeler-sandbox && ANTHROPIC_API_KEY=… claude -p "/modeler:apply <file> --write" --output-format json
-   --permission-mode dontAsk --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run *),Bash(git *)" --max-turns 40 --max-budget-usd 5`
-   su una proposta di prova (`model:propose`); `total_cost_usd` tara `MODELER_APPLY_BUDGET` e la tabella in `install` §7.
-1. `/core:ship` di `feat/modeler-release-from-web` (push, PR, merge su conferma); poi `/reload-plugins` e sugli
-   altri computer `claude plugin update core@iovino-harness modeler@iovino-harness`. Prova nella sandbox:
-   `/modeler:behavior show Task` e una reazione di prova («avvisa l'assegnatario quando il task torna in todo»):
-   reazione, template, `sync`, `engine --write` senza passare da `model:migrate`.
-2. In order-management (modeler installato 0.23.0): `/modeler:install` segue da solo il punto 6 della skill e porta nel
-   `CLAUDE.md` dell'app la riga su `/modeler:behavior`; rifiutare la migrazione `notification_templates` del kit
-   (colonna `key`; la tabella dell'app ha `template` e la sua pagina). Facoltativo: `templates:` in `behavior.yaml`
-   con i testi del seed riscritti con i segnaposto della notazione (`{{self.code}}`, `{{actor.name}}`, `{{url}}`) e
-   `render.ts` che li risolve. Al primo `npm run model:pull` senza `psql` verificare la busta di `supabase db query`
-   (se il formato differisce, adattare `dbschema.cli_query`).
-4. In order-management, per la convenzione sui link costruiti dal database: migrazione `create or replace` delle
-   `<e>_json` con una `record_url(entity, id)` SQL, redirect `/e/<entità>/<id>` → pagina nuova e test sull'`url`.
-3. In invitations-af e order-management: `/modeler:install` (0.19.0) e `<WorkflowView>` nelle pagine di dettaglio delle
-   entità con workflow (Invitation a 11 stati: a tutta larghezza).
-4. Eventuale: stati già attraversati (da `workflow_history`) con un riempimento più leggero, prop `workflow` alternativa.
+1. Sugli altri computer: `claude plugin marketplace update iovino-harness && claude plugin update
+   core@iovino-harness modeler@iovino-harness`.
+2. In order-management: `/modeler:install` (0.30.0, segue da solo il punto 6 della skill), poi `/modeler:behavior`
+   per portare in `behavior.yaml` i campi obbligatori per stato come `requires` (`supplier`, `cig`, `orderNumber`,
+   `orderDate` da `ordered`; `rupAssistants` da `procurement`; `deliveryDate` da `delivered`): motore a mano, quindi
+   `npm run model:behavior -- --format sql` dà i frammenti da riportare nelle clausole `unmet` e nel trigger, la mappa
+   `STATE_REQUIRES` in TypeScript legge `behavior.json`; ridurre `CUSTOM(order-workflow)` in `docs/customizations.md`.
+   Con questo si riprendono i rinvii della nota 2026-10-21 (annotazione «1 da <stato>» nel diagramma e in
+   `<WorkflowView>`).
+3. In order-management: `npm run model:drift` dopo l'aggiornamento: se segnala `RECORD_URL`, migrazione con
+   `record_url(entity, id)` e le `<e>_json` che la usano (convenzione sui link, nota 2026-10-19).
+4. Prova nella sandbox (`~/Documents/GitHub/modeler-sandbox`): reinstallare il kit (0.30.0), `requires: [assignee]`
+   su uno stato di `Task`, `npm run model:validate`, `model:sync`, `model:engine -- --write`, migrazione locale,
+   transizione bloccata e `update` rifiutato; in `/admin/model` la colonna «Richiede» e i pulsanti di zoom.
+5. Facoltativo: typecheck dei TSX del kit (`behavior-view.tsx` con `requires`) come descritto sotto.
 
 ## Per riprendere
 `cd <clone> && claude` — i plugin si caricano da questa cartella: dopo una modifica usa `/reload-plugins`.
-Test senza database: `python3 -m unittest discover -s tests && python3 -m unittest discover -s plugins/modeler/tests && node --test plugins/modeler/tests/layout.test.mjs plugins/modeler/tests/diff.test.mjs plugins/modeler/tests/lint.test.mjs && claude plugin validate .`
-Sandbox: `cd ~/Documents/GitHub/modeler-sandbox && npm run db:start && PORT=3077 npm run dev` (se il DB è nuovo: `npm run db:reset`);
-reinstallare il modellatore dal clone: `python3 plugins/modeler/scripts/modeler.py install ~/Documents/GitHub/modeler-sandbox --no-migration`.
-Test con database (anche il motore end-to-end):
+Test senza database: `python3 -m unittest discover -s tests && python3 -m unittest discover -s plugins/modeler/tests && node --test plugins/modeler/tests/layout.test.mjs plugins/modeler/tests/diff.test.mjs plugins/modeler/tests/lint.test.mjs plugins/modeler/tests/behavior.test.mjs && claude plugin validate .`
+Test con database (anche il motore end-to-end; Docker Desktop acceso):
 ```bash
 docker run -d --rm --name modeler-pg-test -e POSTGRES_PASSWORD=pg -p 55499:5432 postgres:16
 mkdir -p /tmp/pgbin && cat > /tmp/pgbin/psql <<'PY'
@@ -184,9 +86,13 @@ chmod +x /tmp/pgbin/psql
 PATH=/tmp/pgbin:$PATH MODELER_PG=postgresql://postgres:pg@localhost:55499/postgres python3 -m unittest discover -s plugins/modeler/tests
 docker stop modeler-pg-test
 ```
+Prova dell'editor in Chrome senza app: una pagina HTML con `<metamodel-editor lang="it">` in un `div` di 1200×700,
+il kit inlineato e `ed.metamodel = <runtime_json del metamodello>` (`E.runtime_json(E.load(fixture))`), servita con
+`python3 -m http.server`; da JS si leggono `ed._view`, `ed._autoFit` e i pulsanti in `ed.shadowRoot.querySelectorAll(".bar button")`.
+Sandbox: `cd ~/Documents/GitHub/modeler-sandbox && npm run db:start && PORT=3077 npm run dev` (se il DB è nuovo: `npm run db:reset`);
+reinstallare il modellatore dal clone: `python3 plugins/modeler/scripts/modeler.py install ~/Documents/GitHub/modeler-sandbox --no-migration`.
 Typecheck dei TSX del kit: cartella fuori dal repository con `npm i --legacy-peer-deps typescript @types/react react react-dom next`,
 copia di `kit/next/*.tsx` in `src/`, stub di `@/lib/modeler/metamodel-actions` via `paths`, `tsc --noEmit`.
-File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultime tre note), `plugins/modeler/kit/metamodel-editor.js`
-(`workflowLayout`, `satelliteOf`, `routeEdges`, `_drawSatellite`, `_satellite`), `plugins/modeler/scripts/metamodel/behavior.py`
-(`uses`), `expr.py` (`_navigate`, `hops_used`), `plugins/modeler/tests/layout.test.mjs`, e nella sandbox `README.md`,
-`src/lib/db/with-user.ts`, `src/lib/model/model.ts`, `src/app/e/[entity]/[id]/page.tsx`, `scripts/db.sh`.
+File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultime due note), `plugins/modeler/scripts/metamodel/behavior.py`
+(`_check_requires`, `requires_tests`, `sql_view`), `plugins/modeler/scripts/metamodel/engine.py` (`_requires`, `_workflow`),
+`plugins/modeler/kit/metamodel-editor.js` (`fitView`, `zoomView`, `_zoom`, pannello degli stati), `plugins/core/skills/deploy/SKILL.md` (2b, §8).
