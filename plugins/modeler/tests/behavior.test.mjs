@@ -52,6 +52,10 @@ test("behaviorDiff: the lines a reviewer reads, as the CLI prints them", () => {
   // the proposal writes `model` as the notation does: only what the state changes
   assert.deepEqual(Layout.behaviorSource(b).workflows.Invitation.states.rejected.model, { flatAmount: { readonly: true }, notes: { hidden: true } });
   assert.ok(!("model" in Layout.behaviorSource(b).workflows.Invitation.states.draft));
+  const va = structuredClone(a); va.view_as = { users_by: ["admin", "office"] };
+  assert.deepEqual(Layout.behaviorDiff(a, va), ["+ view_as (users_by: admin, office)"]);
+  assert.deepEqual(Layout.behaviorDiff(va, { ...va, view_as: { users_by: ["admin"] } }), ["~ view_as: users_by admin"]);
+  assert.deepEqual(Layout.behaviorDiff(va, a), ["- view_as"]);
   assert.deepEqual(Layout.behaviorDiff(a, a), []);
   assert.deepEqual(Layout.behaviorDiff(a, structuredClone(a)), []);
   assert.ok(Layout.behaviorDiff(null, b).includes("+ workflow Invitation on state: 12 states, 16 transitions"));

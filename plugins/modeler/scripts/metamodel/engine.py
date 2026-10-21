@@ -16,7 +16,13 @@ exists`) that runs the behaviour inside the database, as the modelled applicatio
 
 The engine relies on a small contract the application provides (fallbacks are created when missing):
 `current_profile_id()`, `is_admin()`, `has_role(role, scope)`, `role_members(role, scope)`,
-`emit_entity_event(entity, id, type, extra)`. Messages are in the language of the metamodel.
+`emit_entity_event(entity, id, type, extra)`, `impersonator_id()` (null unless «view as» is on). Messages are in
+the language of the metamodel.
+
+«View as» (`view_as: {users_by: [admin, …]}` in behavior.yaml): anyone restricts the session to one of their roles
+(header `x-view-as`, honoured by `has_role`); who is listed uses the application as another user (header
+`x-view-as-user`): `current_profile_id()` becomes that user, `impersonator_id()` the real one, written as
+`impersonated_by` in `workflow_history` and in the events; `view_as_audit`/`view_as_log` keep the register.
 """
 
 from __future__ import annotations
@@ -199,6 +205,11 @@ begin
         'begin raise exception ''role_members() is not defined: the application provides the roles''; end';
     end if;
   end if;
+  if to_regprocedure('public.impersonator_id()') is null then
+    -- who really acts when «view as» is on (view_as in behavior.yaml replaces it); null otherwise
+    create function public.impersonator_id() returns uuid language sql stable security definer set search_path = '' as
+      'select null::uuid';
+  end if;
   if to_regprocedure('public.emit_entity_event(text,uuid,text,jsonb)') is null then
     -- the engine's own outbox when the application has none
     if to_regclass('{schema}.events') is null then
@@ -227,6 +238,8 @@ create table if not exists {schema}.{HISTORY} (
   comment    text,
   created_at timestamptz not null default now()
 );
+alter table {schema}.{HISTORY} add column if not exists impersonated_by uuid;
+alter table {schema}.{HISTORY} alter column impersonated_by set default public.impersonator_id();
 create index if not exists {HISTORY}_entity_idx on {schema}.{HISTORY} (entity, entity_id, created_at desc);
 alter table {schema}.{HISTORY} enable row level security;
 drop policy if exists {HISTORY}_read on {schema}.{HISTORY};
@@ -476,7 +489,8 @@ end;"""
     out += _fn(f"{cls.key}_notifications", f"p_type text, r {cls.table}, p_extra jsonb", "jsonb", "\n".join(lines))
     out += _fn(f"{cls.key}_emit", f"p_type text, r {cls.table}, p_extra jsonb default '{{}}'::jsonb", "uuid",
                f"  select public.emit_entity_event({_lit(cls.key)}, r.id, p_type,\n"
-               f"    coalesce(p_extra, '{{}}'::jsonb) || jsonb_build_object('recipients', public.{cls.key}_notifications(p_type, r, coalesce(p_extra, '{{}}'::jsonb))));",
+               f"    coalesce(p_extra, '{{}}'::jsonb) || jsonb_build_object('recipients', public.{cls.key}_notifications(p_type, r, coalesce(p_extra, '{{}}'::jsonb)))\n"
+               "    || jsonb_strip_nulls(jsonb_build_object('impersonated_by', public.impersonator_id())));",
                "sql")
     lines = ["begin",
              f"  if tg_op = 'INSERT' then perform public.{cls.key}_emit({_lit(cls.key + '.created')}, new); return new; end if;",
@@ -740,6 +754,136 @@ end;""")
     return out
 
 
+VIEW_AS_LOG = "view_as_log"
+UUID_RE = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
+
+def _view_as(b: dict[str, Any], schema: str, msgs: dict[str, str]) -> str:
+    """«View as»: the functions that read the headers `x-view-as` (one of the user's roles) and `x-view-as-user`
+    (who `users_by` may act as), the register and its audit. The application's `current_profile_id` becomes
+    `real_profile_id`, its `has_role` becomes `has_role_real`; `view_as_allowed(uuid)` (who can be acted as) is
+    created only when missing so the application can restrict it. While a check resolves the real user's roles the
+    setting `app.view_as_resolving` keeps the headers out of `current_profile_id`."""
+    who = b["view_as"]["users_by"]
+    tests = " or ".join(f"public.has_role_real({_lit(p)}, null)" for p in who) or "false"
+    header = (f"-- ===================== View as =====================\n"
+              f"-- Anyone restricts the session to one of their roles (header x-view-as); {', '.join(who) or 'nobody'} may use the\n"
+              f"-- application as another user (header x-view-as-user): current_profile_id() is that user, impersonator_id() the real one.\n")
+    rename = f"""do $do$
+begin
+  if to_regprocedure('public.real_profile_id()') is null then
+    alter function public.current_profile_id() rename to real_profile_id;
+  end if;
+  if to_regprocedure('public.has_role_real(text,uuid)') is null and to_regprocedure('public.has_role_real(public.app_role,uuid)') is null then
+    if to_regprocedure('public.has_role(text,uuid)') is not null then
+      alter function public.has_role(text, uuid) rename to has_role_real;
+    elsif to_regprocedure('public.has_role(public.app_role,uuid)') is not null then
+      alter function public.has_role(public.app_role, uuid) rename to has_role_real;
+    else
+      raise exception 'view_as: has_role(role, scope) not found';
+    end if;
+  end if;
+  if to_regprocedure('public.view_as_allowed(uuid)') is null then
+    -- {TODO}: who can be acted as (every known profile): replace it in the application to keep out inactive or unapproved users
+    create function public.view_as_allowed(p_target uuid) returns boolean language sql stable security definer set search_path = '' as
+      'select exists (select 1 from public.profiles p where p.id = p_target)';
+  end if;
+end
+$do$;
+"""
+    can = _fn("view_as_can_impersonate", "", "boolean", f"""declare
+  v_ok boolean := false;
+begin
+  if public.real_profile_id() is null then return false; end if;
+  perform set_config('app.view_as_resolving', 'on', true);
+  begin
+    v_ok := {tests};
+  exception when others then
+    v_ok := false;
+  end;
+  perform set_config('app.view_as_resolving', 'off', true);
+  return coalesce(v_ok, false);
+end;""", stable=True)
+    profile = _fn("view_as_profile_id", "", "uuid", f"""declare
+  v_raw text;
+  v_target uuid;
+  v_real uuid;
+begin
+  if coalesce(current_setting('app.view_as_resolving', true), '') = 'on' then return null; end if;
+  v_raw := nullif(current_setting('request.headers', true), '')::json ->> 'x-view-as-user';
+  if v_raw is null or v_raw !~ {_lit(UUID_RE)} then return null; end if;
+  v_target := v_raw::uuid;
+  v_real := public.real_profile_id();
+  if v_real is null or v_target = v_real then return null; end if;
+  if public.view_as_can_impersonate() and public.view_as_allowed(v_target) then return v_target; end if;
+  return null;
+exception when others then
+  return null;
+end;""", stable=True)
+    current = _fn("current_profile_id", "", "uuid", "  select coalesce(public.view_as_profile_id(), public.real_profile_id());", "sql", stable=True)
+    impersonator = _fn("impersonator_id", "", "uuid", "  select case when public.view_as_profile_id() is not null then public.real_profile_id() end;", "sql", stable=True)
+    wrap = """do $do$
+declare
+  v_arg text;
+begin
+  select pg_catalog.format_type(p.proargtypes[0], null) into v_arg
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'has_role_real' and p.pronargs = 2;
+  -- x-view-as keeps one of the user's own roles: it removes privileges, never adds any
+  execute format($f$create or replace function public.view_as_role() returns text language plpgsql stable security definer set search_path = '' as $b$
+declare
+  v text;
+begin
+  if coalesce(current_setting('app.view_as_resolving', true), '') = 'on' then return null; end if;
+  v := nullif(current_setting('request.headers', true), '')::json ->> 'x-view-as';
+  if v is null or v !~ '^[a-z][a-z0-9_]*$' then return null; end if;
+  perform set_config('app.view_as_resolving', 'on', true);
+  begin
+    if not public.has_role_real(v::%1$s, null) then v := null; end if;
+  exception when others then
+    v := null;
+  end;
+  perform set_config('app.view_as_resolving', 'off', true);
+  return v;
+exception when others then
+  return null;
+end;
+$b$$f$, v_arg);
+  execute format($f$create or replace function public.has_role(p_role %1$s, p_scope uuid default null) returns boolean language sql stable security definer set search_path = '' as
+    'select (public.view_as_role() is null or public.view_as_role() = p_role::text) and public.has_role_real(p_role, p_scope)'$f$, v_arg);
+end
+$do$;
+"""
+    log_table = f"""create table if not exists {schema}.{VIEW_AS_LOG} (
+  id          uuid primary key default gen_random_uuid(),
+  actor_id    uuid not null,
+  profile_id  uuid not null,
+  started     boolean not null,
+  occurred_at timestamptz not null default now()
+);
+alter table {schema}.{VIEW_AS_LOG} enable row level security;
+"""
+    audit = _fn("view_as_audit", "p_profile uuid, p_start boolean", "void", f"""declare
+  v_real uuid := public.real_profile_id();
+begin
+  if not public.view_as_can_impersonate() then raise exception {_lit(msgs['forbidden'])} using errcode = '42501'; end if;
+  if p_start and (p_profile = v_real or not public.view_as_allowed(p_profile)) then
+    raise exception {_lit(msgs['forbidden'])} using errcode = '42501';
+  end if;
+  insert into {schema}.{VIEW_AS_LOG} (actor_id, profile_id, started) values (v_real, p_profile, p_start);
+  perform public.emit_entity_event('profile', p_profile, case when p_start then 'user.view_as_started' else 'user.view_as_ended' end,
+    jsonb_build_object('profile_id', p_profile, 'actor_id', v_real));
+end;""")
+    log = _fn("view_as_log", "p_limit int default 20", "table (occurred_at timestamptz, started boolean, actor_email text, user_email text)", f"""  select l.occurred_at, l.started, a.email, u.email
+    from {schema}.{VIEW_AS_LOG} l
+    left join public.profiles a on a.id = l.actor_id
+    left join public.profiles u on u.id = l.profile_id
+   where public.view_as_can_impersonate()
+   order by l.occurred_at desc
+   limit greatest(1, least(p_limit, 200));""", "sql", stable=True)
+    return header + rename + can + profile + current + impersonator + wrap + log_table + audit + log
+
+
 def engine_sql(raw: dict[str, Any], metamodel: dict[str, Any], schema: str = "public") -> tuple[str, list[str]]:
     """The SQL of the behaviour (one idempotent migration) and the notes to review. Assumes a valid model."""
     e = E.expand(metamodel)
@@ -758,9 +902,13 @@ def engine_sql(raw: dict[str, Any], metamodel: dict[str, Any], schema: str = "pu
             "-- Functions: <entity>_perform_transition, _available_transitions, _revert, _run_timed_transitions, _run_reminders,\n"
             "-- _principals, _can_edit, _field_policy (what the forms show in the record's state), _template_vars,\n"
             "-- _recipients (subject and body of the notification texts rendered), _emit;\n"
-            "-- triggers: state and derived attributes before insert/update, lifecycle events after.\n\n")
+            "-- triggers: state and derived attributes before insert/update, lifecycle events after.\n"
+            + ("-- view as: view_as_role, view_as_profile_id, current_profile_id (over the app's real_profile_id), impersonator_id,\n"
+               "-- has_role (over the app's has_role_real), view_as_audit, view_as_log.\n" if b["view_as"] is not None else "") + "\n")
     parts = [head, _contract(schema), RENDER_TEMPLATE]
-    events: list[str] = []
+    if b["view_as"] is not None:
+        parts.append(_view_as(b, schema, msgs))
+    events: list[str] = ["user.view_as_started", "user.view_as_ended"] if b["view_as"] is not None else []
     for cls in classes:
         parts.append(f"\n-- ===================== {cls.cname} ({cls.table}) =====================\n")
         parts.append(_principals(cls, notes))
@@ -775,6 +923,9 @@ def engine_sql(raw: dict[str, Any], metamodel: dict[str, Any], schema: str = "pu
                 "are not modelled")
     tail.append(f"-- {TODO}: forms: <entity>_field_policy(r) says which fields are required, read only, hidden or limited to some values "
                 "in the record's state (the state's `requires`/`model`): read it instead of keeping the lists by hand")
+    if b["view_as"] is not None:
+        tail.append(f"-- {TODO}: view as: the Supabase server client sends the headers x-view-as / x-view-as-user (src/lib/modeler/view-as.ts); "
+                    "has_role now wraps the app's has_role_real (edit that one); view_as_allowed(uuid) is the app's to restrict")
     for cls in classes:
         if cls.w:
             tail.append(f"-- {TODO}: scheduling (pg_cron):")

@@ -1077,6 +1077,10 @@
       else { const ks = keysChanged(ar[rn], br[rn], ["scope", "label"]); if (ks.length) out.push(`~ role ${rn}: ${ks.join(", ")}`); }
     }
     for (const rn of Object.keys(ar)) if (!br[rn]) out.push(`- role ${rn}`);
+    const av = a.view_as ?? null, bv = b.view_as ?? null, who = (v) => (v?.users_by || []).join(", ") || "nobody";
+    if (bv && !av) out.push(`+ view_as (users_by: ${who(bv)})`);
+    else if (bv && av && !same(av.users_by || [], bv.users_by || [])) out.push(`~ view_as: users_by ${who(bv)}`);
+    else if (!bv && av) out.push("- view_as");
     const ad = a.derivations || {}, bd = b.derivations || {};
     for (const [cn, ders] of Object.entries(bd)) for (const [an, ex] of Object.entries(ders)) {
       if (ad[cn]?.[an] === undefined) out.push(`+ derivation ${cn}.${an} = ${ex}`);

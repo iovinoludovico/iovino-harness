@@ -1163,6 +1163,11 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
     copy(KIT_DIR / "next" / "notification-actions.ts", "src/lib/modeler/notification-actions.ts")
     copy(KIT_DIR / "next" / "metamodel-actions.ts", "src/lib/modeler/metamodel-actions.ts")
     copy(KIT_DIR / "next" / "access.ts", "src/lib/modeler/access.ts", overwrite=False)
+    if has_view_as(target):
+        # «view as» (behavior.yaml `view_as`): cookies and headers, the server actions, the switcher, the banners, the log
+        copy(KIT_DIR / "next" / "view-as.ts", "src/lib/modeler/view-as.ts")
+        copy(KIT_DIR / "next" / "view-as-actions.ts", "src/lib/modeler/view-as-actions.ts")
+        copy(KIT_DIR / "next" / "view-as.tsx", "src/components/modeler/view-as.tsx")
     # the CLI travels with the app: model:* scripts work without the plugin
     tools = target / TOOLS_DIR
     if tools.exists():
@@ -1207,6 +1212,35 @@ GITIGNORE_ENTRIES = (
     ({".modeler/drafts/", ".modeler/drafts", "**/.modeler/drafts/", ".modeler/"},
      "# drafts that `model:propose` turns into proposals (the proposal is what gets reviewed and committed)\n.modeler/drafts/\n"),
 )
+
+
+def has_view_as(root: Path) -> bool:
+    """behavior.yaml declares «view as» (`view_as:`): the app gets the cookies, actions and components of the kit."""
+    bpath = root / B.BEHAVIOR_FILE
+    if not bpath.exists():
+        return False
+    try:
+        return B.expand(B.load(bpath))["view_as"] is not None
+    except Exception:
+        return False
+
+
+def view_as_hint(root: Path) -> str | None:
+    """behavior.yaml has `view_as` but nothing in the app sends the headers of src/lib/modeler/view-as.ts yet."""
+    if not has_view_as(root):
+        return None
+    src = root / "src"
+    for f in (sorted(src.rglob("*.ts")) + sorted(src.rglob("*.tsx")) if src.exists() else []):
+        if "lib/modeler/view-as" in f.as_posix() or "components/modeler/view-as" in f.as_posix() or "node_modules" in f.parts:
+            continue
+        try:
+            if "viewAsHeaders" in f.read_text(encoding="utf-8"):
+                return None
+        except (OSError, UnicodeDecodeError):
+            continue
+    return ("view_as found in behavior.yaml: send viewAsHeaders() (src/lib/modeler/view-as.ts) from the Supabase server client, "
+            "mount <ViewAsSwitcher> and <ImpersonationBanner> in the layout and <ViewAsLog> in the admin users page "
+            "(src/components/modeler/view-as.tsx), then apply the engine (model:engine -- --write): install skill, section 4")
 
 
 def has_templates(root: Path) -> bool:
@@ -1348,7 +1382,7 @@ def cmd_install(a) -> int:
         print(f"no {E.METAMODEL_FILE} yet: derive it with `reverse --db <DSN> -o {E.METAMODEL_FILE}`, then `sync`")
     elif docs_status(target)["state"] in ("edited", "clash"):
         print(docs_report(docs_status(target), diff=False))
-    for hint in (behavior_page_hint(target), workflow_hint(target), templates_page_hint(target)):
+    for hint in (behavior_page_hint(target), workflow_hint(target), templates_page_hint(target), view_as_hint(target)):
         if hint:
             print(hint)
     print("next: adapt src/lib/modeler/access.ts to the app's admin check, add the admin page and the link "
