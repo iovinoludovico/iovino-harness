@@ -129,6 +129,9 @@ rivedilo **con l'utente**:
   `notification_templates` (in locale, poi `/core:db-push`). Il motore generato (`npm run model:engine -- --write`)
   rende `subject` e `body` in `recipients`; con un motore a mano il dispatcher legge i testi da `behavior.json`
   (`templates`) e gli override dalla tabella, con lo stesso `render_template` del motore (skill `behavior`, punto 4).
+  Il dispatcher ora importa `behavior.json` e la cartella dei template: se ha uno stage proprio nel `Dockerfile` con
+  una lista di `COPY`, aggiungili (o copia `src/` intero), altrimenti muore all'avvio in produzione con build e
+  deploy verdi (skill `core:deploy`, sezione «Immagini»).
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
 - `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`), `.modeler/backups/` e
   `.modeler/drafts/` (le bozze che `model:propose` trasforma in proposte); non ignorare `.modeler/proposals/` (le

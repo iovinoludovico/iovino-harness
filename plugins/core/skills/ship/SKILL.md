@@ -22,6 +22,8 @@ e `gh pr merge`: è voluto).
 
 ## 2. Controlli del progetto
 - Test, lint e typecheck che il `CLAUDE.md` del progetto prevede. Se falliscono, non pubblicare: riporta l'errore.
+- Se il branch tocca un worker (dispatcher, cron) o il suo stage del `Dockerfile`: prova l'immagine in locale
+  (`docker build --target <stage>` e un avvio contro il database locale, skill `core:deploy` sezione 2b).
 - Se il repository ha `scripts/release.py` (repository harness): `python3 scripts/release.py`, poi `--write`, che crea
   il commit `chore(release): …`. Senza, il pre-push blocca.
 - App con Supabase cloud collegato (`supabase/.temp/project-ref`): `supabase migration list --linked`. Se il branch
@@ -62,6 +64,11 @@ e `gh pr merge`: è voluto).
   precedente, o un run ancora in coda, inganna `gh run watch`): `sha=$(git rev-parse origin/main)`, poi in polling
   ogni 30 s per al massimo 15 min `gh run list --commit "$sha" --json databaseId,name,status,conclusion,url` finché
   ogni run è `completed`; riporta esito e link; un run `failure` → `gh run view <id> --log-failed`, niente altro.
+- App con un worker (servizio `dispatcher`/`worker` nel compose): il run verde dice solo che l'immagine è
+  pubblicata. Prima di dichiarare concluso il rilascio verifica che sia ripartito: il badge della build per `web`
+  (`core:deploy` 7b) e, per il worker, una sessione del suo ruolo in `pg_stat_activity` o una consegna riuscita
+  dopo il merge (`supabase db query --linked`); se dopo ~5 minuti le righe restano `pending`, segui «Un solo
+  container resta indietro» in `core:deploy` sezione 8.
 - App con il modellatore: se `.modeler/proposals/applied/` contiene proposte arrivate da produzione (file con `id`)
   non ancora chiuse (senza `closed`), proponi `npm run model:done` (prova a vuoto, poi `--write`), come dice la
   skill `modeler:apply` punto 6.
