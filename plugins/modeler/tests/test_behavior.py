@@ -465,10 +465,26 @@ class BehaviorTests(unittest.TestCase):
         rep = B.validate(b, meta())
         self.assertEqual(rep.errors, [])
         pw = "workflows.Invitation.states.bookings_confirmed.model"
-        self.assertIn(f"{pw}.flatAmount: 'flatAmount' cannot be set in bookings but bookings_confirmed requires it (`confirm_bookings`): require it before bookings or set it in the transition", rep.warnings)
+        self.assertIn(f"{pw}.flatAmount: 'flatAmount' cannot be set in bookings but bookings_confirmed requires it (`confirm_bookings`): require it before bookings or let bookings change it", rep.warnings)
         self.assertIn(f"{pw}.travelMethod: 'travelMethod' cannot be changed in bookings but bookings_confirmed allows only agency (`confirm_bookings`)", rep.warnings)
         st["bookings"]["model"] = {"flatAmount": {"lower": 1, "readonly": True}, "travelMethod": {"readonly": True, "in": ["agency"]}}   # settled before: fine
         self.assertEqual([w for w in B.validate(b, meta()).warnings if "bookings_confirmed" in w], [])
+        # a dead transition: the source only allows values the target refuses, whether or not the source is read only
+        st["bookings"]["model"] = {"travelMethod": {"in": ["receipts", "flat"]}}
+        st["bookings_confirmed"]["model"] = {"travelMethod": {"in": ["agency"]}}
+        rep = B.validate(b, meta())
+        self.assertEqual(sorted(rep.errors), [   # both ways: `rebook` goes back to bookings
+            "workflows.Invitation.states.bookings.model.travelMethod: 'travelMethod' is agency in bookings_confirmed but bookings allows only receipts, flat: `rebook` can never fire",
+            f"{pw}.travelMethod: 'travelMethod' is receipts, flat in bookings but bookings_confirmed allows only agency: `confirm_bookings` can never fire"])
+        self.assertEqual([w for w in rep.warnings if "confirm_bookings" in w], [])
+        st["bookings"]["model"] = {"travelMethod": {"in": ["receipts", "agency"]}}   # a value in common: the record sets it in bookings, fine
+        self.assertEqual([x for x in B.validate(b, meta()).errors + B.validate(b, meta()).warnings if "confirm_bookings" in x], [])
+        m = meta()                                                         # optional in both states: null is a value in common
+        m["classes"]["Invitation"]["attributes"]["travelMethod"] = {"type": "TravelMethod"}
+        st["bookings"]["model"] = {"travelMethod": {"in": ["receipts"]}}
+        self.assertEqual([x for x in B.validate(b, m).errors if "confirm_bookings" in x], [])
+        st["bookings_confirmed"]["model"] = {"travelMethod": {"lower": 1, "in": ["agency"]}}
+        self.assertEqual(len([x for x in B.validate(b, m).errors if "can never fire" in x]), 2)   # confirm_bookings and rebook
 
     def test_domain_md_follows_the_state_model(self):
         import argparse

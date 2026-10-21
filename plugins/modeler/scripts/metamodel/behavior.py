@@ -868,8 +868,11 @@ def _check_state_model(e: dict[str, Any], cname: str, sa: Any, sn: str, s: dict[
     (`requires`, `lower: 1`) must be set to enter the state and while the record stays there: not derived (computed
     after the check), not the state attribute, not already required by the metamodel, not repeated by a guard of
     an entering transition. `readonly`/`hidden` (enforced on single-valued features), `in` (a single-valued enum
-    attribute, a subset of its literals). Along the path: a feature that cannot be set in a source state but is
-    required (or narrowed) in the target is reported."""
+    attribute, a subset of its literals). Along the path (docs/research/state-indexed-refinement.md, P3): what the
+    target asks must be reachable from the source. A record in a state can only hold the values the state allows
+    (`in`, null when not required): when the source's and the target's sets are disjoint the transition can never
+    fire (error, whatever readonly says); when the source is read only and allows more than the target, the
+    records that entered it with another value are stuck (warning)."""
     attrs, refs = E.features(e, cname)
     seen: set[str] = set()
     for f in s["requires"]:
@@ -944,7 +947,7 @@ def _check_state_model(e: dict[str, Any], cname: str, sa: Any, sn: str, s: dict[
                                and n["segs"][0] in required})
             if repeated:
                 rep.warn(f"{where}.requires", f"the guard of `{tn}` repeats {', '.join(repeated)}: `requires` already checks them on entering {sn}")
-    # along the path: what the target asks must be settable in the source
+    # along the path: what the target asks must be reachable from the source (P3)
     for tn, t in transitions.items():
         if t.get("to") != sn:
             continue
@@ -953,14 +956,24 @@ def _check_state_model(e: dict[str, Any], cname: str, sa: Any, sn: str, s: dict[
                 continue
             before = state_overlay(states[src])
             for f, o in overlay.items():
+                spec = attrs.get(f) or refs.get(f)
+                if spec is None or spec.get("derived"):
+                    continue
                 prev = before.get(f)
+                fw = f"{where}.model.{f}"
+                static_required = int(spec.get("lower") or 0) >= 1
+                null_src = not static_required and (prev is None or prev["lower"] != 1)
+                null_tgt = not static_required and o["lower"] != 1
+                if (o["in"] is not None and prev is not None and prev["in"] is not None
+                        and not (set(prev["in"]) & set(o["in"])) and not (null_src and null_tgt)):
+                    rep.error(fw, f"'{f}' is {', '.join(prev['in'])} in {src} but {sn} allows only {', '.join(o['in'])}: `{tn}` can never fire")
+                    continue
                 if not prev or not prev["readonly"]:
                     continue
-                if o["lower"] == 1 and prev["lower"] != 1:
-                    rep.warn(f"{where}.model.{f}", f"'{f}' cannot be set in {src} but {sn} requires it (`{tn}`): require it before {src} or set it in the transition")
+                if o["lower"] == 1 and null_src:
+                    rep.warn(fw, f"'{f}' cannot be set in {src} but {sn} requires it (`{tn}`): require it before {src} or let {src} change it")
                 if o["in"] is not None and (prev["in"] is None or not set(prev["in"]) <= set(o["in"])):
-                    rep.warn(f"{where}.model.{f}", f"'{f}' cannot be changed in {src} but {sn} allows only {', '.join(o['in'])} (`{tn}`)")
-
+                    rep.warn(fw, f"'{f}' cannot be changed in {src} but {sn} allows only {', '.join(o['in'])} (`{tn}`)")
 
 def _walk(node: Any):
     """Every dict of an expression tree, depth first."""

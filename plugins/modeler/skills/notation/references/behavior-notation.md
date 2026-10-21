@@ -124,7 +124,9 @@ A principal path always starts with `self.`: this tells the reference `issuer` a
   allowed), a `lower` that would relax the metamodel, `hidden` with `lower: 1`, `in` on anything but a single-valued
   enum attribute or with unknown literals; it warns about what the metamodel already says (`lower: 1`,
   `changeable: false`, all the literals) and, **along the path**, about a feature read only or hidden in a source
-  state but required or narrowed in the target of a transition (set it before, or in the transition). The views:
+  state but required or narrowed in the target of a transition (require it before, or let the source change it);
+  a transition whose source allows only values its target refuses (`in` disjoint, and the attribute required in
+  one of the two) can never fire and is an error. The views:
   `npm run model:show -- --state <Class>.<state>` prints the metamodel as seen from the state (Emfatic: `[1]`,
   `readonly`, hidden features gone, `// in: a, b`); `BEHAVIOR.md`, `<BehaviorView>` and the web modeler show the
   feature × state table (● required, 🔒 read only, ○ hidden, `{a, b}`); `DOMAIN.md` adds «1 from <state>» to the
@@ -183,8 +185,9 @@ not end on a User or an Email; a transition without `by`/`at`, with an unknown `
 a date, an `emits` not declared; unreachable states, several initial states, no final state; a derivation on an
 attribute that is not `derived`, with the wrong type, or in a cycle; derived attributes without a derivation
 (warning); a state's `requires`/`model` naming a feature the class does not have, relaxing the metamodel or
-contradicting itself (`hidden` and required), and along the path what a target state asks of a feature its source
-state locks (warning). The same check runs when `domain.ecore.yaml` changes: the message then says the domain change
+contradicting itself (`hidden` and required), a transition its source state can never satisfy (`in` disjoint from
+the target's), and along the path what a target state asks of a feature its source state locks (warning). The same
+check runs when `domain.ecore.yaml` changes: the message then says the domain change
 breaks the behaviour and where.
 
 ## What is generated
