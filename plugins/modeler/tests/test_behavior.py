@@ -1369,6 +1369,29 @@ class EngineTests(unittest.TestCase):
         self.assertIn("v_missing := '{}'::text[];", sql)                                   # transitions to states without requires
         self.assertIn("raise exception 'Campi richiesti nello stato %: %'", N.engine_sql(b, m)[0])
         self.assertTrue(any("schedule public.invitation_run_timed_transitions()" in n for n in notes))
+        # the state's model: read only and allowed literals as invariants of the trigger, `in` among the missing ones on
+        # entering, and <entity>_field_policy(r) for the forms
+        b = behavior()
+        b["workflows"]["Invitation"]["states"]["pending_director"]["model"] = {
+            "flatAmount": {"lower": 1, "readonly": True}, "notes": {"hidden": True}, "travelMethod": {"in": ["agency", "receipts"]}}
+        sql, _ = N.engine_sql(b, meta())
+        for frag in ["  if tg_op = 'UPDATE' and new.state = 'pending_director' and old.state = 'pending_director' and new.flat_amount is distinct from old.flat_amount then\n"
+                     "    raise exception 'Read only in state %: %', 'pending_director', 'flatAmount' using errcode = '23514';\n  end if;",
+                     "and new.notes is distinct from old.notes then\n    raise exception 'Read only in state %: %', 'pending_director', 'notes'",
+                     "  if new.state = 'pending_director' and new.travel_method is not null and new.travel_method not in ('agency', 'receipts') then\n"
+                     "    raise exception 'Not allowed in state %: %', 'pending_director', 'travelMethod' using errcode = '23514';\n  end if;",
+                     "case when not coalesce((r.travel_method is null or r.travel_method in ('agency', 'receipts')), false) then 'travelMethod' end]::text[], null);",
+                     "create or replace function public.invitation_field_policy(r public.invitations)",
+                     "    when 'pending_director' then jsonb_build_object('flatAmount', jsonb_build_object('required', true, 'readonly', true, 'hidden', false), "
+                     "'notes', jsonb_build_object('required', false, 'readonly', true, 'hidden', true), "
+                     "'travelMethod', jsonb_build_object('required', false, 'readonly', false, 'hidden', false, 'in', array['agency', 'receipts']::text[]))",
+                     "    else '{}'::jsonb end;",
+                     "_field_policy(r) says which fields are required, read only, hidden or limited"]:
+            self.assertIn(frag, sql, frag)
+        self.assertNotIn("new.notes is not null", sql)                                          # hidden is not required
+        self.assertIn("raise exception 'Sola lettura nello stato %: %'", N.engine_sql(b, m)[0])
+        self.assertIn("raise exception 'Valore non ammesso nello stato %: %'", N.engine_sql(b, m)[0])
+        self.assertIn("  select '{}'::jsonb;", N.engine_sql(behavior(), meta())[0])             # no overlay: an empty policy
         # a class with derivations but no workflow still gets its derive trigger, nothing else of the workflow
         b = behavior()
         b["derivations"]["Guest"] = {"fullName": "coalesce(lastName, '') + ' ' + coalesce(firstName, '')"}
@@ -1492,7 +1515,9 @@ class EngineDatabaseTests(WorkflowDatabaseTests):
         # a field required from pending_director: submit names it among the missing ones; once there it cannot be cleared
         req = behavior()
         req["workflows"]["Invitation"]["states"]["pending_director"]["requires"] = ["flatAmount"]   # not read by dataComplete (hourly)
+        req["workflows"]["Invitation"]["states"]["pending_director"]["model"] = {"flatAmount": {"readonly": True}, "travelMethod": {"in": ["none", "agency"]}}
         self.psql(self.dsn, N.engine_sql(req, meta())[0])
+        self.assertEqual(self.ok(self.ISSUER, "select public.invitation_field_policy(i) from public.invitations i;"), "{}")   # draft: as the metamodel
         self.assertIn('"missing": ["flatAmount"]', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
         self.fails(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');", "Required in state pending_director: flatAmount")
         self.ok(self.ISSUER, "update public.invitations set flat_amount = 10;")
@@ -1502,6 +1527,12 @@ class EngineDatabaseTests(WorkflowDatabaseTests):
         self.ok(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');")
         self.assertEqual(self.ok(self.ISSUER, "select state from public.invitations;"), "pending_director")
         self.fails(self.ISSUER, "update public.invitations set flat_amount = null;", "Required in state pending_director: flatAmount")
+        self.fails(self.ISSUER, "update public.invitations set flat_amount = 20;", "Read only in state pending_director: flatAmount")
+        self.fails(self.ISSUER, "update public.invitations set travel_method = 'receipts';", "Not allowed in state pending_director: travelMethod")
+        self.ok(self.ISSUER, "update public.invitations set notes = 'ok';")                   # not in the model: free
+        policy = self.ok(self.ISSUER, "select public.invitation_field_policy(i) from public.invitations i;")
+        self.assertIn('"flatAmount": {"hidden": false, "readonly": true, "required": true}', policy)
+        self.assertIn('"travelMethod": {"in": ["none", "agency"], "hidden": false, "readonly": false, "required": false}', policy)
         self.psql(self.dsn, engine)                                                      # back to the fixture's engine
         self.assertEqual(self.ok(self.ISSUER, "select transition || '|' || from_state || '|' || to_state || '|' || actor_id from public.workflow_history;"),
                          f"submit|draft|pending_director|{self.ISSUER}")

@@ -132,6 +132,11 @@ rivedilo **con l'utente**:
   Il dispatcher ora importa `behavior.json` e la cartella dei template: se ha uno stage proprio nel `Dockerfile` con
   una lista di `COPY`, aggiungili (o copia `src/` intero), altrimenti muore all'avvio in produzione con build e
   deploy verdi (skill `core:deploy`, sezione «Immagini»).
+- Se uno stato di `behavior.yaml` ha `requires` o `model` (campi richiesti, in sola lettura, nascosti o limitati per
+  stato): i form dell'entità leggono `<entità>_field_policy(record)` del motore (`{campo: {required, readonly,
+  hidden, in}}`, `{}` quando lo stato non cambia nulla) e lo riflettono (obbligatorio, disabilitato, non mostrato,
+  opzioni ridotte); liste come `STATE_REQUIRES`/`STATE_EDITORS` scritte a mano si tolgono o restano solo come
+  `CUSTOM(...)` motivata. Con un motore a mano i frammenti vengono da `npm run model:behavior -- --format sql`.
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
 - `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`), `.modeler/backups/` e
   `.modeler/drafts/` (le bozze che `model:propose` trasforma in proposte); non ignorare `.modeler/proposals/` (le

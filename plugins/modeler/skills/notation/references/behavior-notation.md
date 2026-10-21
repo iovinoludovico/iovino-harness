@@ -215,7 +215,9 @@ behaviour and applied like any other, that runs the behaviour inside the databas
 workflow, derivations or reactions (`<entity>` = the snake_case of the class, `invitation`):
 - `<entity>_principals(r)`: who the current user is for the record (`all`, `admin`, `creator`, the roles held in
   the record's scope, `field:<path>` for the users it points to); `<entity>_can_edit(r)`: may they edit it in
-  its state (`editable_by`), for the application's update policies.
+  its state (`editable_by`), for the application's update policies; `<entity>_field_policy(r)`: what the forms
+  show in the record's state, `{feature: {required, readonly, hidden, in}}` from the state's `requires`/`model`
+  (`{}` when the state changes nothing), so the application keeps no lists of fields per state by hand.
 - Derived attributes: `<entity>_derive()` computes them before insert and update, in dependency order; a change
   of a referenced row (the funds of an invitation, its reason) refreshes them through a trigger on that table
   (one hop: a deeper navigation, a many-to-many reference or a user profile does not refresh them, noted in the
@@ -223,8 +225,10 @@ workflow, derivations or reactions (`<entity>` = the snake_case of the class, `i
 - Workflow: the state is set to the initial one on insert and **changes only through
   `<entity>_perform_transition(id, key, comment)`**, which checks the current state, who performs it, the `when`
   (hidden: "not available"), the `guard` (blocked: "requirements not met: <guard>"), the fields the target state
-  `requires` (blocked: "required in state <state>: <fields>"; the before-update trigger keeps them set while the
-  record stays there), the comment, writes
+  `requires` and the literals its `model` allows (blocked: "required in state <state>: <fields>", `in` violations
+  listed with them; the before-update trigger keeps them while the record stays there and refuses an update that
+  changes a `readonly`/`hidden` feature: "read only in state <state>: <field>", "not allowed in state <state>:
+  <field>", SQLSTATE `23514`), the comment, writes
   `workflow_history`, emits `<entity>.transitioned` (`.completed` in a final state, plus the transition's
   `emits`). `<entity>_available_transitions(id)` lists what the current user may do now, each with `guard_ok`.
   `<entity>_revert(id, state, comment)` goes back to a state in the record's history (`revert.by`,
