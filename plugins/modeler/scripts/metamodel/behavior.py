@@ -44,7 +44,9 @@ VIEW_AS_KEYS = {"users_by", "doc"}   # «view as»: who may use the application 
 WORKFLOW_KEYS = {"state", "states", "transitions", "revert", "doc"}
 STATE_KEYS = {"initial", "final", "label", "doc", "owner", "editable_by", "reminder", "color", "requires", "model"}
 MODEL_KEYS = {"lower", "readonly", "hidden", "in"}   # the overlay of a state on a feature (`states.<key>.model`)
-TRANSITION_KEYS = {"from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "doc"}
+TRANSITION_KEYS = {"from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "doc", "notify", "template"}
+NOTIFY_KEYS = {"to", "template", "when"}            # `notify: {to, template, when}` on a transition (the long form of `notify: [...]`)
+INTERNAL_KEYS = {"notify_when", "notifies", "_notify_extra", "_transition"}   # canonical/runtime keys, never written in the file
 REVERT_KEYS = {"by", "final_by", "comment"}
 REMINDER_KEYS = {"after", "template"}
 EVENT_KEYS = {"doc", "label"}
@@ -105,6 +107,9 @@ def _tidy(raw: dict[str, Any]) -> dict[str, Any]:
             for k in ("when", "guard"):
                 if isinstance(_mapping(t).get(k), str):
                     t[k] = " ".join(t[k].split())
+            n = _mapping(t).get("notify")
+            if isinstance(n, dict) and isinstance(n.get("when"), str):
+                n["when"] = " ".join(n["when"].split())
     for rx in _list(r.get("reactions")):
         if isinstance(_mapping(rx).get("when"), str):
             rx["when"] = " ".join(rx["when"].split())
@@ -140,7 +145,10 @@ def from_editor(doc: dict[str, Any]) -> dict[str, Any]:
     for key in ("metamodel", "doc"):
         if doc.get(key):
             raw[key] = doc[key]
-    raw["roles"] = {rn: {k: v for k, v in (r or {}).items()} for rn, r in _mapping(doc.get("roles")).items()}
+    own = {rn: {k: v for k, v in (r or {}).items() if k != "source"} for rn, r in _mapping(doc.get("roles")).items()
+           if _mapping(r).get("source") != "metamodel"}               # the metamodel's roles live in domain.ecore.yaml
+    if own:
+        raw["roles"] = own
     if doc.get("view_as") is not None:
         raw["view_as"] = dict(_mapping(doc["view_as"]))
     raw["derivations"] = {cn: {an: text(ex) for an, ex in _mapping(ders).items()} for cn, ders in _mapping(doc.get("derivations")).items()}
@@ -150,13 +158,18 @@ def from_editor(doc: dict[str, Any]) -> dict[str, Any]:
         states = {sn: {k: v for k, v in _mapping(st).items()} for sn, st in _mapping(w.get("states")).items()}
         transitions = {}
         for tn, t in _mapping(w.get("transitions")).items():
-            t = {k: (text(v) if k in ("when", "guard") else v) for k, v in _mapping(t).items()}
+            t = {k: (text(v) if k in ("when", "guard", "notify_when") else v) for k, v in _mapping(t).items()
+                 if k not in ("notifies", "_notify_extra")}
             if isinstance(t.get("from"), list) and len(t["from"]) == 1:
                 t["from"] = t["from"][0]
+            nwhen = t.pop("notify_when", None)
+            if nwhen and t.get("notify"):          # a notification with its own condition: the long form
+                t["notify"] = {"to": t["notify"], "template": t.pop("template", None), "when": nwhen}
             transitions[tn] = t
         raw["workflows"][cn] = {**{k: v for k, v in w.items() if k not in ("states", "transitions")}, "states": states, "transitions": transitions}
     raw["events"] = {cn: {en: (ev or {}) for en, ev in _mapping(evs).items()} for cn, evs in _mapping(doc.get("events")).items()}
-    raw["reactions"] = [{k: (text(v) if k == "when" else v) for k, v in _mapping(r).items()} for r in _list(doc.get("reactions"))]
+    raw["reactions"] = [{k: (text(v) if k == "when" else v) for k, v in _mapping(r).items()} for r in _list(doc.get("reactions"))
+                        if not _mapping(r).get("_transition")]      # the notification of a transition is written on the transition
     raw["subscriptions"] = [dict(_mapping(sub)) for sub in _list(doc.get("subscriptions"))]
     raw["templates"] = {k: {lang: dict(_mapping(tx)) for lang, tx in _mapping(langs).items()} for k, langs in _mapping(doc.get("templates")).items()}
     return _clean(raw)
@@ -268,7 +281,9 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
             if tn not in ow["transitions"]:
                 out.append(f"+ transition {cn}.{tn}: {', '.join(tr['from'])} -> {tr['to']}")
             else:
-                ks = changed_keys(ow["transitions"][tn], tr, ("from", "to", "by", "when", "guard", "comment", "at", "emits", "label"))
+                ks = changed_keys(ow["transitions"][tn], tr, ("from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "notify", "template"))
+                if "notify" not in ks and not same(ow["transitions"][tn].get("notify_when"), tr.get("notify_when"), "when"):
+                    ks.append("notify")          # the condition of the notification changed
                 if ks:
                     out.append(f"~ transition {cn}.{tn}: {', '.join(ks)}")
         out += [f"- transition {cn}.{tn}" for tn in ow["transitions"] if tn not in w["transitions"]]
@@ -280,7 +295,8 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     for cn, evs in a["events"].items():
         out += [f"- event {cn}.{en}" for en in evs if en not in b["events"].get(cn, {})]
     by_name = lambda lst: {str(r.get("name") or i): r for i, r in enumerate(lst)}  # noqa: E731
-    ar, br = by_name(a["reactions"]), by_name(b["reactions"])
+    explicit = lambda lst: [r for r in lst if not r.get("_transition")]   # noqa: E731  (a transition's notification is diffed with it)
+    ar, br = by_name(explicit(a["reactions"])), by_name(explicit(b["reactions"]))
     for name, r in br.items():
         if name not in ar:
             out.append(f"+ reaction {name} on {r.get('event')}")
@@ -333,6 +349,7 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
         out["view_as"] = {**copy.deepcopy(v), "users_by": [str(x) for x in _list(v.get("users_by"))]}
     for cn, dspec in _mapping(raw.get("derivations")).items():
         out["derivations"][str(cn)] = {str(an): ex for an, ex in _mapping(dspec).items()}
+    synthetic: list[dict[str, Any]] = []        # the notification of a transition, as the reaction it stands for
     for cn, wspec in _mapping(raw.get("workflows")).items():
         w = _mapping(wspec)
         states: dict[str, Any] = {}
@@ -348,11 +365,23 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
         transitions: dict[str, Any] = {}
         for tn, tspec in _mapping(w.get("transitions")).items():
             t = _mapping(tspec) if tspec is not None else {}
+            # `notify: [principals]` + `template: key`, or `notify: {to, template, when}` for a condition of its own
+            n = t.get("notify")
+            if isinstance(n, dict):
+                to, template, nwhen = [str(x) for x in _list(n.get("to"))], n.get("template", t.get("template")), n.get("when")
+                extra_n = sorted(str(k) for k in set(n) - NOTIFY_KEYS)
+            else:
+                to, template, nwhen, extra_n = [str(x) for x in _list(n)], t.get("template"), None, []
             transitions[str(tn)] = {**copy.deepcopy(t), "from": [str(x) for x in _list(t.get("from"))],
                                     "to": str(t["to"]) if t.get("to") is not None else None,
                                     "by": [str(x) for x in _list(t.get("by"))],
                                     "when": t.get("when"), "guard": t.get("guard"), "comment": t.get("comment"),
-                                    "at": t.get("at"), "emits": [str(x) for x in _list(t.get("emits"))]}
+                                    "at": t.get("at"), "emits": [str(x) for x in _list(t.get("emits"))],
+                                    "notify": to, "template": template, "notify_when": nwhen, "_notify_extra": extra_n}
+            if to:
+                cond = f"transition = {tn}" + (f" and ({' '.join(str(nwhen).split())})" if nwhen else "")
+                synthetic.append({"name": f"notify_{tn}", "event": f"{cn}.transitioned", "when": cond, "notify": list(to),
+                                  "template": template, "_transition": str(tn)})
         rev = w.get("revert")
         revert = None
         if rev:
@@ -370,6 +399,7 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
         r = _mapping(r)
         out["reactions"].append({**copy.deepcopy(r), "name": r.get("name"), "event": r.get("event"), "when": r.get("when"),
                                  "notify": [str(x) for x in _list(r.get("notify"))], "template": r.get("template")})
+    out["reactions"] += synthetic                # after the explicit ones: the first reaction wins a shared address
     for s in _list(raw.get("subscriptions")):
         s = _mapping(s)
         out["subscriptions"].append({**copy.deepcopy(s), "name": s.get("name"), "url_env": s.get("url_env"),
@@ -383,6 +413,31 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
                                 "body": "" if tx.get("body") is None else str(tx["body"])}
         out["templates"][str(key)] = langs
     return out
+
+
+def bind(raw: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
+    """The canonical behaviour with the roles resolved: `roles:` of the metamodel (expanded) first, `roles:` of
+    behavior.yaml adds label, doc or scope where the metamodel has none and declares the roles the metamodel lacks
+    (the form before the roles moved to the metamodel). Every role carries `source`: metamodel, behavior or both;
+    `behavior_roles` keeps what behavior.yaml declared, for validate() and the file writers."""
+    b = expand(raw)
+    merged: dict[str, Any] = {}
+    for rn, r in (e.get("roles") or {}).items():
+        merged[rn] = {"scope": r.get("scope"), "label": r.get("label"), "doc": r.get("doc") or "", "source": "metamodel"}
+    for rn, r in b["roles"].items():
+        if rn in merged:
+            m = merged[rn]
+            for k in ("scope", "label"):
+                if m.get(k) is None and r.get(k) is not None:
+                    m[k] = r[k]
+            if not m["doc"]:
+                m["doc"] = r.get("doc") or ""
+            m["source"] = "both"
+        else:
+            merged[rn] = {**r, "source": "behavior"}
+    b["behavior_roles"] = b["roles"]
+    b["roles"] = merged
+    return b
 
 
 # --------------------------------------------------------------------------- #
@@ -511,7 +566,7 @@ def validate(raw: dict[str, Any], metamodel: dict[str, Any]) -> M.Report:
         rep.error("behavior", f"unknown top-level keys: {', '.join(sorted(map(str, unknown)))} "
                   f"(allowed: {', '.join(sorted(TOP_KEYS))})")
     e = E.expand(metamodel)
-    b = expand(raw)
+    b = bind(raw, e)
     _check_roles(b, e, rep)
     _check_view_as(b, rep)
     _check_derivations(b, e, rep)
@@ -577,8 +632,19 @@ def _guarded(u: dict[str, Any], cname: str, rn: str) -> bool:
 
 
 def _check_roles(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> None:
-    for rn, r in b["roles"].items():
+    """`roles:` of behavior.yaml: well formed, and consistent with the roles the metamodel declares (the two files
+    may both describe a role; they must agree)."""
+    for rn, r in b.get("behavior_roles", b["roles"]).items():
         where = f"roles.{rn}"
+        mr = (e.get("roles") or {}).get(rn)
+        if mr is not None:
+            if r.get("scope") is not None and r.get("scope") != mr.get("scope"):
+                rep.error(where, f"scope {r['scope']} here, {mr.get('scope') or 'none'} in the metamodel: one declaration (the metamodel's)")
+            for k in ("label", "doc"):
+                if r.get(k) not in (None, "") and mr.get(k) not in (None, "") and r.get(k) != mr.get(k):
+                    rep.warn(where, f"{k} differs from the metamodel's: the metamodel wins (drop it here)")
+        elif e.get("roles"):
+            rep.warn(where, f"the metamodel declares the roles ({', '.join(e['roles'])}) and lacks '{rn}': declare it there (roles:) too")
         if not IDENT.match(rn):
             rep.error(where, "role names are lowercase identifiers (letters, digits, _)")
         if rn in BUILTIN_PRINCIPALS:
@@ -722,6 +788,13 @@ def _check_principal(b: dict[str, Any], e: dict[str, Any], cname: str, p: str, w
         if not ok:
             want = "a User reference or an Email attribute" if notify else "a User reference"
             rep.error(where, f"'{p}' is {X.type_name(t)}: a principal path leads to {want}")
+            return
+        hop = p[len("self."):]
+        if "." not in hop and cname in e["classes"] and base == X.CLASS + "User":
+            _, refs = E.features(e, cname)
+            if hop in refs and not refs[hop].get("role"):
+                rep.warn(where, f"'{p}' acts as a role of the record: mark {cname}.{hop} with `role: true` in the metamodel "
+                                "(listed with the roles)")
         return
     m = ROLE_AT.match(p)
     if not m:
@@ -841,9 +914,18 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
         tw = f"{where}.transitions.{tn}"
         if not IDENT.match(tn):
             rep.error(tw, "transition keys are lowercase identifiers (letters, digits, _)")
-        extra = set(t) - TRANSITION_KEYS
+        extra = set(t) - TRANSITION_KEYS - INTERNAL_KEYS
         if extra:
             rep.error(tw, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(TRANSITION_KEYS))})")
+        if t.get("_notify_extra"):
+            rep.error(f"{tw}.notify", f"unknown keys: {', '.join(t['_notify_extra'])} (allowed: {', '.join(sorted(NOTIFY_KEYS))})")
+        if t.get("template") is not None and not t["notify"]:
+            rep.error(f"{tw}.template", "a template without notify: who is notified? (notify: [principals], or notify: {to, template, when})")
+        if t.get("notify_when") is not None:
+            if not t["notify"]:
+                rep.error(f"{tw}.notify", "when without to: who is notified?")
+            else:
+                _check_expr(e, context(e, b, cname, "transitioned"), t["notify_when"], f"{tw}.notify.when", rep)
         if not t["from"]:
             rep.error(tw, "from: one or more states")
         for s in t["from"]:
@@ -1050,16 +1132,24 @@ def _check_reactions(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> Non
     names: set[str] = set()
     for i, r in enumerate(b["reactions"]):
         name = r.get("name")
-        where = f"reactions[{i}]" + (f" {name}" if name else "")
-        if not isinstance(name, str) or not IDENT.match(name):
-            rep.error(where, "name: a lowercase identifier")
-        elif name in names:
-            rep.error(where, f"reaction '{name}' declared twice")
-        else:
+        tn = r.get("_transition")
+        if tn:                                   # the notification declared on a transition (notify/template)
+            where = f"workflows.{str(r.get('event')).split('.')[0]}.transitions.{tn}.notify"
+            if name in names:
+                rep.error(where, f"the notification of transition `{tn}` is the reaction `{name}`: rename the reaction "
+                                 "declared with that name")
             names.add(name)
-        extra = set(r) - REACTION_KEYS
-        if extra:
-            rep.error(where, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(REACTION_KEYS))})")
+        else:
+            where = f"reactions[{i}]" + (f" {name}" if name else "")
+            if not isinstance(name, str) or not IDENT.match(name):
+                rep.error(where, "name: a lowercase identifier")
+            elif name in names:
+                rep.error(where, f"reaction '{name}' declared twice")
+            else:
+                names.add(name)
+            extra = set(r) - REACTION_KEYS
+            if extra:
+                rep.error(where, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(REACTION_KEYS))})")
         on = r.get("event")
         if not isinstance(on, str) or on.count(".") != 1:
             rep.error(where, "event: <Class>.<event>, e.g. Invitation.transitioned")
@@ -1073,7 +1163,7 @@ def _check_reactions(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> Non
             rep.error(where, f"event: {cname} has no event '{event}' ({', '.join(known)})")
             continue
         ctx = context(e, b, cname, event)
-        if r.get("when") is not None:
+        if r.get("when") is not None and not tn:          # a transition's own condition is checked with the transition
             _check_expr(e, ctx, r["when"], f"{where}.when", rep)
         if not r["notify"]:
             rep.error(where, "notify: who is notified (principals; a reaction does one thing: notify)")
@@ -1132,7 +1222,8 @@ def template_uses(b: dict[str, Any]) -> dict[str, list[tuple[str, str, str]]]:
         on = str(r.get("event") or "")
         if r.get("template") and on.count(".") == 1:
             cname, event = on.split(".")
-            out.setdefault(str(r["template"]), []).append((cname, event, f"reaction {r.get('name')}"))
+            used_by = f"transition {cname}.{r['_transition']}" if r.get("_transition") else f"reaction {r.get('name')}"
+            out.setdefault(str(r["template"]), []).append((cname, event, used_by))
     for cname, w in b["workflows"].items():
         for sn, s in w["states"].items():
             rem = s.get("reminder")
@@ -1267,6 +1358,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "view_as": "**Vedi come**: chiunque può limitare la propria sessione a uno dei suoi ruoli; {who} possono usare l'app come un altro utente, con le azioni intestate all'utente reale (`impersonated_by`) e registrate (`view_as_log`).",
         "nobody": "nessuno",
         "scope_per": "per {cls}", "builtin_roles": "Oltre ai ruoli predefiniti `admin` (amministratori) e `creator` (chi ha creato il record).",
+        "record_role": "di record ({cls})", "roles_in_metamodel": "I ruoli sono dichiarati nel metamodello (`roles:` di `domain.ecore.yaml`).",
         "workflow": "Workflow di {cls}", "state_attr": "Lo stato è l'attributo `{attr}`.",
         "states": "Stati", "state": "Stato", "kind": "Tipo", "initial": "iniziale", "final": "finale",
         "owner": "In attesa di", "editable_by": "Modificabile da", "reminder": "Sollecito", "reminder_text": "dopo {after} (`{template}`)",
@@ -1294,6 +1386,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "view_as": "**View as**: anyone may restrict their session to one of their roles; {who} may use the application as another user, with what they do attributed to the real user (`impersonated_by`) and logged (`view_as_log`).",
         "nobody": "nobody",
         "scope_per": "per {cls}", "builtin_roles": "Besides the built-in roles `admin` (administrators) and `creator` (who created the record).",
+        "record_role": "record role ({cls})", "roles_in_metamodel": "The roles are declared in the metamodel (`roles:` of `domain.ecore.yaml`).",
         "workflow": "Workflow of {cls}", "state_attr": "The state is the attribute `{attr}`.",
         "states": "States", "state": "State", "kind": "Kind", "initial": "initial", "final": "final",
         "owner": "Waiting for", "editable_by": "Editable by", "reminder": "Reminder", "reminder_text": "after {after} (`{template}`)",
@@ -1367,17 +1460,20 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
     """The behaviour explained: roles, one section per workflow (diagram, states, transitions), derivations, events,
     reactions, subscriptions. Deterministic. Assumes a valid behaviour model."""
     e = E.expand(metamodel)
-    b = expand(raw)
+    b = bind(raw, e)
     lang = lang or e["language"]
     t = DOC_TEXT.get(lang) or DOC_TEXT["en"]
     out = [f"# {t['title'].format(package=e['package'])}", ""]
     if b["doc"]:
         out += [str(b["doc"]), ""]
     out += [f"> {t['note']}", ""]
-    if b["roles"]:
+    record_roles = [(cn, rn, r) for cn, c in e["classes"].items() for rn, r in c["references"].items() if r.get("role")]
+    if b["roles"] or record_roles:
         rows = [[rn, E._label(r.get("label"), lang), t["scope_per"].format(cls=r["scope"]) if r.get("scope") else t["scope_global"]]
                 for rn, r in b["roles"].items()]
-        out += [f"## {t['roles']}", ""] + E._table([t["role"], t["label"], t["scope"]], rows) + ["", t["builtin_roles"], ""]
+        rows += [[f"self.{rn}", E._label(r.get("label"), lang) or rn, t["record_role"].format(cls=cn)] for cn, rn, r in record_roles]
+        note = t["builtin_roles"] + (" " + t["roles_in_metamodel"] if e.get("roles") else "")
+        out += [f"## {t['roles']}", ""] + E._table([t["role"], t["label"], t["scope"]], rows) + ["", note, ""]
     if b["view_as"] is not None:
         who = ", ".join(_code(p) for p in b["view_as"]["users_by"]) or t["nobody"]
         out += [t["view_as"].format(who=who), ""]
@@ -1442,9 +1538,10 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
     rows = [[cname, _code(en), str(ev.get("doc") or "")] for cname, evs in b["events"].items() for en, ev in evs.items()]
     if rows:
         out += E._table(["Class" if lang == "en" else "Classe", t["event"], t["description"]], rows) + [""]
-    if b["reactions"]:
+    explicit = [r for r in b["reactions"] if not r.get("_transition")]   # a transition's notification is in its row above
+    if explicit:
         rows = [[_code(r["name"]), _code(r["event"]), _code(r.get("when")), ", ".join(_code(p) for p in r["notify"]), _code(r.get("template"))]
-                for r in b["reactions"]]
+                for r in explicit]
         out += [f"## {t['reactions']}", ""] + E._table([t["name"], t["event"], t["when"], t["recipients"], t["template"]], rows) + [""]
     if b["subscriptions"]:
         rows = [[_code(s["name"]), _code(f"${s['url_env']}" if s.get("url_env") else s.get("url")), ", ".join(_code(p) for p in s["events"])]
@@ -1577,7 +1674,7 @@ def uses(b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
         if "." not in ev:
             continue
         cname, event = ev.split(".", 1)
-        name = str(r.get("name") or ev)
+        name = f"{cname}.{r['_transition']}" if r.get("_transition") else str(r.get("name") or ev)
         if r.get("when") is not None and cname in e["classes"]:
             expr(r["when"], context(e, b, cname, event), "when", name, X.BOOL)
         for p in r.get("notify") or []:
@@ -1592,7 +1689,8 @@ def runtime_json(raw: dict[str, Any], metamodel: dict[str, Any]) -> dict[str, An
     """The behaviour as the application reads it: canonical form, every expression typed (text, type, tree, SQL),
     the entity key of each class (snake_case: event prefix, workflow entity). Assumes a valid behaviour model."""
     e = E.expand(metamodel)
-    b = expand(raw)
+    b = bind(raw, e)
+    b.pop("behavior_roles", None)
     b["entities"] = {cname: M.snake(cname) for cname in list(b["workflows"]) + list(b["derivations"]) + list(b["events"])}
     b["uses"] = uses(b, e)                 # on the texts, before they become typed dicts below
     for cname, ders in b["derivations"].items():
@@ -1602,9 +1700,16 @@ def runtime_json(raw: dict[str, Any], metamodel: dict[str, Any]) -> dict[str, An
                                    for an, text in ders.items()}
     for cname, w in b["workflows"].items():
         ctx, sql_ctx = X.Context(e, cname), X.SqlContext(e, cname)
-        for tr in w["transitions"].values():
+        named = transition_reactions(b, e, cname)          # who is notified when each transition fires (both forms)
+        by_name = {r.get("name"): r for r in b["reactions"]}
+        tctx = context(e, b, cname, "transitioned")
+        tsql = X.SqlContext(e, cname, variables={"transition": "(p_extra -> 'transition' ->> 'key')"})
+        for tn, tr in w["transitions"].items():
             for key in ("when", "guard"):
                 tr[key] = _typed(tr.get(key), ctx, sql_ctx, X.BOOL)
+            tr["notify_when"] = _typed(tr.get("notify_when"), tctx, tsql, X.BOOL)
+            tr["notifies"] = [{"name": n, "notify": list(by_name[n]["notify"]), "template": by_name[n].get("template"),
+                               "own": bool(by_name[n].get("_transition"))} for n in named.get(tn, []) if n in by_name]
     for r in b["reactions"]:
         cname, event = str(r["event"]).split(".")
         ctx = context(e, b, cname, event)
@@ -1712,7 +1817,7 @@ def engine_version(raw: dict[str, Any], metamodel: dict[str, Any], cname: str) -
     principals, clauses, trigger, offset and event names. Reactions on `<Class>.transitioned` naming one transition
     become its `notify`. Raises ExprError for a guard the engine cannot evaluate."""
     e = E.expand(metamodel)
-    b = expand(raw)
+    b = bind(raw, e)
     w = b["workflows"][cname]
     entity = M.snake(cname)
     ctx = X.Context(e, cname)
@@ -1768,6 +1873,11 @@ def _transition_keys(node: dict[str, Any]) -> list[str] | None:
             return [str(lit["v"])]
     if node["k"] == "in" and node["x"]["k"] == "path" and (node["x"].get("ref") or [""])[0] == "@transition":
         return [str(i["v"]) for i in node["items"] if i["k"] == "lit"]
+    if node["k"] == "and":                       # `transition = x and <a condition of its own>`
+        for item in node["items"]:
+            keys = _transition_keys(item)
+            if keys is not None:
+                return keys
     return None
 
 
@@ -1855,7 +1965,7 @@ def sql_view(raw: dict[str, Any], metamodel: dict[str, Any]) -> str:
     """Derivations, guards, conditions and reaction conditions as PostgreSQL on a row `r` of each class: a preview
     of what the engine evaluates (to paste into functions, triggers or generated columns)."""
     e = E.expand(metamodel)
-    b = expand(raw)
+    b = bind(raw, e)
     out: list[str] = []
     for cname, ders in b["derivations"].items():
         attrs, _ = E.features(e, cname)

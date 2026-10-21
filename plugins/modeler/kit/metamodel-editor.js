@@ -117,7 +117,7 @@
         if (r.type !== "User") continue;
         const v = seen(rn, r);
         const used = uses?.references?.[rn] || null;
-        items.push({ text: `${v.pre}↗ ${rn}: User${v.m}${used ? " ·ƒ" : ""}`, ref: rn, muted: true, used, hidden: v.hidden });
+        items.push({ text: `${v.pre}↗ ${rn}: User${v.m}${r.role ? " «role»" : ""}${used ? " ·ƒ" : ""}`, ref: rn, muted: true, used, hidden: v.hidden });
       }
       if (allAttrs || items.length <= MAX_ROWS) return items;
       return [...items.slice(0, MAX_ROWS - 1), { text: `… +${items.length - MAX_ROWS + 1} ${more}`, muted: true }];
@@ -140,6 +140,7 @@
       const m = JSON.parse(JSON.stringify(mm || {}));
       m.classes = m.classes || {};
       m.enums = m.enums || {};
+      m.roles = m.roles || {};
       m.diagram = m.diagram || {};
       for (const c of Object.values(m.classes)) {
         c.attributes = c.attributes || {};
@@ -349,8 +350,11 @@
     // a workflow of behavior.json as the layout reads it
     const workflowModel = (w, lang = "it") => ({
       states: Object.entries(w?.states || {}).map(([key, s]) => ({ key, label: wfLabel(s, key, lang), color: s.color || WF.color, kind: s.initial ? "initial" : s.final ? "final" : "state" })),
-      transitions: Object.entries(w?.transitions || {}).map(([key, t]) => ({ key, label: wfLabel(t, key, lang), from: t.from || [], to: t.to, timed: t.at != null })),
+      transitions: Object.entries(w?.transitions || {}).map(([key, t]) => ({ key, label: wfLabel(t, key, lang), from: t.from || [], to: t.to, timed: t.at != null, notifies: wfNotifies(t) })),
     });
+    // the notifications a transition fires: its own `notify`/`template` (edited here) and the reactions naming it (`notifies` of behavior.json)
+    const wfNotifies = (t) => [...((t.notify || []).length ? [{ notify: t.notify, template: t.template || null, own: true }] : []),
+                              ...(t.notifies || []).filter((n) => !n.own)];
     const wfArrowAt = (pts) => {
       const b = pts[pts.length - 1];
       let i = pts.length - 2;
@@ -598,7 +602,7 @@
         if (!e.l1) pts = [a, b];
         else if (!e.l2) pts = [a, { x: e.l1.x, y: a.y }, { x: e.l1.x, y: b.y }, b];
         else pts = [a, { x: e.l1.x, y: a.y }, { x: e.l1.x, y: e.h.y }, { x: e.l2.x, y: e.h.y }, { x: e.l2.x, y: b.y }, b];
-        edges.push({ id: `${e.tr.key}:${e.f}`, key: e.tr.key, from: [e.f], color: color(e.tr.to), timed: e.tr.timed, paths: [wfSimplify(pts)], arrow: wfArrowAt(pts), dots: [], label: wfEmptyLabel(e.tr, labelW, measure) });
+        edges.push({ id: `${e.tr.key}:${e.f}`, key: e.tr.key, from: [e.f], color: color(e.tr.to), timed: e.tr.timed, notifies: e.tr.notifies || [], paths: [wfSimplify(pts)], arrow: wfArrowAt(pts), dots: [], label: wfEmptyLabel(e.tr, labelW, measure) });
       }
       for (const b of buses) {
         const paths = [], dots = [];
@@ -614,7 +618,7 @@
         paths.push(drop);
         const keep = dots.filter((d) => d.y !== b.h.y || (d.x > b.h.x1 + 0.5 && d.x < b.h.x2 - 0.5));
         if (t.x > b.h.x1 + 0.5 && t.x < b.h.x2 - 0.5) keep.push({ x: t.x, y: b.h.y });
-        edges.push({ id: `${b.tr.key}:bus`, key: b.tr.key, from: b.srcs.map((s) => s.f), color: color(b.tr.to), timed: b.tr.timed, paths, arrow: wfArrowAt(drop), dots: keep, label: wfEmptyLabel(b.tr, labelW, measure) });
+        edges.push({ id: `${b.tr.key}:bus`, key: b.tr.key, from: b.srcs.map((s) => s.f), color: color(b.tr.to), timed: b.tr.timed, notifies: b.tr.notifies || [], paths, arrow: wfArrowAt(drop), dots: keep, label: wfEmptyLabel(b.tr, labelW, measure) });
       }
       for (const e of edges) {   // the arrow head replaces the last few pixels of each connector
         const last = e.paths[e.paths.length - 1];
@@ -993,6 +997,12 @@
   const diff = (oldMm, newMm) => {
     const a = Layout.normalize(oldMm), b = Layout.normalize(newMm);
     const out = [];
+    for (const [rn, r] of Object.entries(b.roles || {})) {
+      if (!a.roles?.[rn]) { out.push(`+ role ${rn}${r.scope ? ` (per ${r.scope})` : ""}`); continue; }
+      const ks = ["scope", "label", "doc"].filter((k) => JSON.stringify(a.roles[rn][k] ?? null) !== JSON.stringify(r[k] ?? null));
+      if (ks.length) out.push(`~ role ${rn}: ${ks.join(", ")}`);
+    }
+    for (const rn of Object.keys(a.roles || {})) if (!b.roles?.[rn]) out.push(`- role ${rn}`);
     const lits = (e) => e.literals.map((l) => l.name);
     for (const en of Object.keys(b.enums)) {
       if (!a.enums[en]) { out.push(`+ enum ${en}: ${lits(b.enums[en]).join(", ")}`); continue; }
@@ -1024,7 +1034,7 @@
           const of = oc[kind][fn] || (renamed ? oc[kind][renamed] : null);
           if (!of) { out.push(`+ ${cn}.${fn}: ${f.type}${multSuffix(f.lower, f.upper)}`); continue; }
           if (renamed && !oc[kind][fn]) out.push(`~ ${cn}.${renamed} renamed to ${fn}`);
-          for (const k of ["type", "lower", "upper", "containment", "opposite", "default", "id", "changeable", "derived"]) {
+          for (const k of ["type", "lower", "upper", "containment", "opposite", "default", "id", "changeable", "derived", "role"]) {
             if (JSON.stringify(of[k] ?? null) !== JSON.stringify(f[k] ?? null)) out.push(`~ ${cn}.${fn}: ${k} ${pyRepr(of[k])} -> ${pyRepr(f[k])}`);
           }
         }
@@ -1046,10 +1056,18 @@
   const behaviorSource = (bh) => {
     if (!bh || typeof bh !== "object") return null;
     const b = JSON.parse(JSON.stringify(bh));   // (clone is defined after this module's early return for Node)
-    delete b.entities; delete b.uses;
+    delete b.entities; delete b.uses; delete b.behavior_roles;
+    b.roles = Object.fromEntries(Object.entries(b.roles || {}).filter(([, r]) => r?.source !== "metamodel")
+      .map(([rn, r]) => { const { source, ...rest } = r || {}; return [rn, rest]; }));   // eslint-disable-line no-unused-vars
+    if (!Object.keys(b.roles).length) delete b.roles;
     for (const ders of Object.values(b.derivations || {})) for (const an of Object.keys(ders)) ders[an] = exprText(ders[an]);
     for (const w of Object.values(b.workflows || {})) {
-      for (const t of Object.values(w.transitions || {})) { t.when = exprText(t.when); t.guard = exprText(t.guard); }
+      for (const t of Object.values(w.transitions || {})) {
+        t.when = exprText(t.when); t.guard = exprText(t.guard);
+        const nwhen = exprText(t.notify_when);
+        delete t.notifies; delete t._notify_extra; delete t.notify_when;
+        if (nwhen && (t.notify || []).length) { t.notify = { to: t.notify, template: t.template ?? null, when: nwhen }; delete t.template; }
+      }
       for (const st of Object.values(w.states || {})) {
         for (const [f, o] of Object.entries(st.model || {})) {
           const c = {};
@@ -1062,7 +1080,8 @@
         if (st.model && !Object.keys(st.model).length) delete st.model;
       }
     }
-    for (const r of b.reactions || []) r.when = exprText(r.when);
+    b.reactions = (b.reactions || []).filter((r) => !r._transition);   // a transition's notification is written on it
+    for (const r of b.reactions) r.when = exprText(r.when);
     return b;
   };
   const behaviorDiff = (oldBh, newBh) => {
@@ -1099,7 +1118,7 @@
       for (const sn of Object.keys(ow.states || {})) if (!w.states?.[sn]) out.push(`- state ${cn}.${sn}`);
       for (const [tn, tr] of Object.entries(w.transitions || {})) {
         if (!ow.transitions?.[tn]) out.push(`+ transition ${cn}.${tn}: ${[].concat(tr.from || []).join(", ")} -> ${tr.to}`);
-        else { const ks = keysChanged(ow.transitions[tn], tr, ["from", "to", "by", "when", "guard", "comment", "at", "emits", "label"]); if (ks.length) out.push(`~ transition ${cn}.${tn}: ${ks.join(", ")}`); }
+        else { const ks = keysChanged(ow.transitions[tn], tr, ["from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "notify", "template"]); if (ks.length) out.push(`~ transition ${cn}.${tn}: ${ks.join(", ")}`); }
       }
       for (const tn of Object.keys(ow.transitions || {})) if (!w.transitions?.[tn]) out.push(`- transition ${cn}.${tn}`);
       if (!same(ow.revert, w.revert)) out.push(`~ workflow ${cn}: revert`);
@@ -1163,6 +1182,12 @@
       wfBadState: "stato sconosciuto", wfNoActor: "senza chi né scadenza", wfBadKey: "chiave non valida", wfStateAttr: "attributo di stato mancante",
       wfBadRequires: "richiede una feature che la classe non ha:", requiresHint: "attributi o riferimenti da valorizzare per entrare nello stato",
       wfEnumStates: "gli stati devono essere i letterali dell'enum", rxBadEvent: "evento Classe.evento",
+      notifies: "Avvisa", notifiesTo: "avvisa", notifiesHint: "chi viene avvisato quando la transizione scatta (destinatari, separati da virgola)",
+      rolesHint: "i ruoli degli utenti dell'applicazione, dichiarati nel metamodello (roles: di domain.ecore.yaml), oltre ad admin; chi li ha è in user_roles",
+      inBehavior: "in behavior.yaml", roleReserved: "ruolo predefinito", recordRole: "ruolo", recordRoles: "ruoli di record",
+      recordRoleHint: "ruolo di record (role: true): chi lo ricopre lo dice il record stesso (self.<riferimento> nel comportamento)",
+      roleOnlyUser: "role: true solo su un riferimento a User",
+      wfNotifyTemplate: "destinatari senza template", wfTemplateNotify: "template senza destinatari",
     },
     en: {
       addClass: "Class", addEnum: "Enum", layout: "Layout", fit: "Fit", zoomIn: "Zoom in", zoomOut: "Zoom out", save: "Save", note: "Change note",
@@ -1197,6 +1222,12 @@
       wfBadState: "unknown state", wfNoActor: "neither who nor due", wfBadKey: "invalid key", wfStateAttr: "state attribute missing",
       wfBadRequires: "requires a feature the class does not have:", requiresHint: "attributes or references that must be set to enter the state",
       wfEnumStates: "the states must be the literals of the enum", rxBadEvent: "event as Class.event",
+      notifies: "Notifies", notifiesTo: "notifies", notifiesHint: "who is told when the transition fires (principals, comma separated)",
+      rolesHint: "the roles of the application users, declared in the metamodel (roles: of domain.ecore.yaml), besides admin; who holds them is in user_roles",
+      inBehavior: "in behavior.yaml", roleReserved: "built-in role", recordRole: "role", recordRoles: "record roles",
+      recordRoleHint: "record role (role: true): the record itself says who holds it (self.<reference> in the behaviour)",
+      roleOnlyUser: "role: true only on a reference to User",
+      wfNotifyTemplate: "recipients without a template", wfTemplateNotify: "template without recipients",
     },
   };
 
@@ -1218,14 +1249,15 @@
 .wfkey { font-size:9px; fill:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
 .wfl-bg { fill:var(--bg); fill-opacity:.95; stroke-width:1; stroke-opacity:.55; }
 .wfl { font-size:10px; fill:var(--fg); }
+.wfn { font-size:11px; fill:var(--muted); cursor:help; }
 .wfa { stroke:none; }
-.wfe.far, .wfa.far, .wfdot.far, .wfl.far, .wfl-bg.far { opacity:.3; }
+.wfe.far, .wfa.far, .wfdot.far, .wfl.far, .wfl-bg.far, .wfn.far { opacity:.3; }
 .wfe.out { stroke-width:2.6; }
 .wfs.far, .wfst.far, .wfkey.far { opacity:.55; }
 .wfring { fill:none; stroke-width:6; stroke-opacity:.25; pointer-events:none; }
 .wfkey.cur { fill:#fff; fill-opacity:.85; }
 .ehit { stroke:transparent; stroke-width:10; fill:none; pointer-events:stroke; cursor:pointer; }
-svg.hover .wfe:not(.hi), svg.hover .wfa:not(.hi), svg.hover .wfdot:not(.hi), svg.hover .wfl:not(.hi), svg.hover .wfl-bg:not(.hi) { opacity:.15; }
+svg.hover .wfe:not(.hi), svg.hover .wfa:not(.hi), svg.hover .wfdot:not(.hi), svg.hover .wfl:not(.hi), svg.hover .wfl-bg:not(.hi), svg.hover .wfn:not(.hi) { opacity:.15; }
 .wfe.hi { stroke-width:2.6; }
 `;
   // contain:inline-size — the host takes the width of its container (a grid cell, a column) instead of the
@@ -1412,6 +1444,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       const text = svg("text", { x: l.x + l.w / 2, y: l.y + WF.labelFont + 3, "text-anchor": "middle", class: `wfl${m}`, "data-edge": key });
       l.lines.forEach((line, i) => text.append(svg("tspan", { x: l.x + l.w / 2, dy: i ? WF.labelFont + 3 : 0 }, line)));
       inner.append(text);
+      if (e.notifies?.length) {   // who is told when the transition fires (notify of the transition, reactions naming it)
+        const tip = e.notifies.map((n) => `${(n.notify || []).join(", ")}${n.template ? ` (${n.template})` : ""}`).join("; ");
+        const env = svg("text", { x: l.x + l.w + 3, y: l.y + WF.labelFont + 2, class: `wfn${m}`, "data-edge": key, "data-notifies": tip }, "✉");
+        env.append(svg("title", {}, `${opts.notifyText || "notifies"}: ${tip}`));
+        inner.append(env);
+      }
     }
     root.append(inner);
     return root;
@@ -1651,6 +1689,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         if (!CLASS_RE.test(n)) out.push(`${n}: ${t.badName}`);
         if (names.filter((x) => x === n).length > 1 || n === "User") out.push(`${n}: ${t.dupName}`);
       }
+      const ROLE_RE = /^[a-z][a-z0-9_]*$/;
+      for (const [rn, r] of Object.entries(mm.roles || {})) {
+        if (!ROLE_RE.test(rn)) out.push(`${rn}: ${t.badName}`);
+        if (rn === "admin" || rn === "creator") out.push(`${rn}: ${t.roleReserved}`);
+        if (r.scope && !mm.classes[r.scope]) out.push(`${rn}: ${t.noTarget}`);
+      }
       for (const [en, e] of Object.entries(mm.enums)) {
         if (!e.literals.length) out.push(`${en}: ${t.noLiterals}`);
         const ln = e.literals.map((l) => l.name);
@@ -1669,6 +1713,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         }
         for (const [rn, r] of Object.entries(c.references)) {
           if (r.type !== "User" && !mm.classes[r.type]) { out.push(`${cn}.${rn}: ${t.noTarget}`); continue; }
+          if (r.role && r.type !== "User") out.push(`${cn}.${rn}: ${t.roleOnlyUser}`);
           if (r.opposite) {
             const o = mm.classes[r.type]?.references?.[r.opposite];
             if (!o || o.opposite !== rn || (o.type !== cn && !this._ancestors(cn).includes(o.type))) out.push(`${cn}.${rn}: ${t.oppBroken}`);
@@ -1705,6 +1750,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           for (const f of [].concat(tr.from || [])) if (!w.states?.[f]) out.push(`${cn}.${tn}: ${t.wfBadState} ${f}`);
           if (!w.states?.[tr.to]) out.push(`${cn}.${tn}: ${t.wfBadState} ${tr.to ?? "—"}`);
           if (!(tr.by || []).length && (tr.at == null || tr.at === "")) out.push(`${cn}.${tn}: ${t.wfNoActor}`);
+          if ((tr.notify || []).length && !tr.template) out.push(`${cn}.${tn}: ${t.wfNotifyTemplate}`);
+          if (tr.template && !(tr.notify || []).length) out.push(`${cn}.${tn}: ${t.wfTemplateNotify}`);
         }
       }
       for (const r of bh.reactions || []) {
@@ -2086,7 +2133,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         Object.values(wf.states || {}).some((st) => Object.keys(Layout.stateView(st)).length) ? el("span", { class: "hint" }, t.stateViewHint) : null);
       const edit = this.readonly ? null : this._workflowEditor(cn, wf);
       const scroll = { top: body.scrollTop, left: body.scrollLeft };   // an edit re-renders the panel: keep where the user was
-      const diagram = workflowSvg(cn, L);
+      const diagram = workflowSvg(cn, L, { notifyText: t.notifiesTo });
       // hovering a state redraws the class box as seen from that state (the diagram only: the panel stays put)
       for (const node of diagram.querySelectorAll("[data-state]")) {
         node.addEventListener("mouseenter", () => { this._wfView = { cn, state: node.dataset.state }; this._renderDiagram(); });
@@ -2132,6 +2179,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           el("option", { value: "", selected: !tr.comment }, "—"), el("option", { value: "optional", selected: tr.comment === "optional" }, t.optional), el("option", { value: "required", selected: tr.comment === "required" }, t.required))),
         el("td", {}, el("input", { class: "w", value: tr.at ?? "", placeholder: "dueDate + 30d", onchange: (ev) => { tr.at = ev.target.value.trim() || null; this._bhChanged(); } })),
         el("td", {}, el("input", { class: "w", value: (tr.emits || []).join(", "), title: t.listHint, onchange: (ev) => { tr.emits = this._list(ev.target.value); this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "w", value: (tr.notify || []).join(", "), title: t.notifiesHint, placeholder: "creator, role, self.ref", onchange: (ev) => { tr.notify = this._list(ev.target.value); this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "k", value: tr.template || "", placeholder: "template", onchange: (ev) => { tr.template = ev.target.value.trim() || null; this._bhChanged(); } })),
         el("td", {}, el("button", { class: "x", title: t.del, onclick: () => { delete trs[tn]; this._bhChanged(); } }, "×"))));
       const rv = w.revert;
       return el("div", { class: "wfedit" },
@@ -2141,8 +2190,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           el("button", { onclick: () => { states[this._uniqueName("state", Object.keys(states))] = {}; this._bhChanged(); } }, `+ ${t.state}`)),
         el("div", {},
           el("h4", {}, t.transitions),
-          el("table", {}, el("tr", {}, ...[t.name, t.label, t.from, t.to, t.who, t.when, t.guard, t.comment, t.at, t.emits, ""].map((h) => el("th", {}, h))), ...trRows),
-          el("button", { onclick: () => { const keys = Object.keys(states); trs[this._uniqueName("transition", Object.keys(trs))] = { from: [keys[0]].filter(Boolean), to: keys[1] || keys[0] || "", by: [], when: null, guard: null, comment: null, at: null, emits: [] }; this._bhChanged(); } }, `+ ${t.transition}`)),
+          el("table", {}, el("tr", {}, ...[t.name, t.label, t.from, t.to, t.who, t.when, t.guard, t.comment, t.at, t.emits, t.notifies, t.template, ""].map((h) => el("th", {}, h))), ...trRows),
+          el("button", { onclick: () => { const keys = Object.keys(states); trs[this._uniqueName("transition", Object.keys(trs))] = { from: [keys[0]].filter(Boolean), to: keys[1] || keys[0] || "", by: [], when: null, guard: null, comment: null, at: null, emits: [], notify: [], template: null }; this._bhChanged(); } }, `+ ${t.transition}`)),
         el("div", { class: "wf" }, el("h4", {}, t.revert),
           el("label", { style: "display:inline-flex;gap:4px;align-items:center;margin-right:10px" }, t.who, el("input", { class: "w", value: (rv?.by || []).join(", "), title: t.listHint, onchange: (ev) => { const by = this._list(ev.target.value); w.revert = by.length || rv?.final_by?.length ? { ...(rv || {}), by, final_by: rv?.final_by || [], comment: rv?.comment || null } : null; this._bhChanged(); } })),
           el("label", { style: "display:inline-flex;gap:4px;align-items:center;margin-right:10px" }, `${t.final}:`, el("input", { class: "w", value: (rv?.final_by || []).join(", "), title: t.listHint, onchange: (ev) => { const fb = this._list(ev.target.value); w.revert = { ...(rv || { by: [] }), final_by: fb, comment: rv?.comment || null }; this._bhChanged(); } })),
@@ -2225,6 +2274,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
               this._multSelect(r, commit, ro)),
             el("div", { class: "row ref2" },
               el("label", { style: "display:inline-flex;gap:3px" }, el("input", { type: "checkbox", checked: r.containment, disabled: ro || r.type === "User", onchange: (ev) => { r.containment = ev.target.checked; if (r.containment && r.opposite) { const o = mm.classes[r.type]?.references?.[r.opposite]; if (o) o.containment = false; } commit(); } }), t.containment),
+              r.type === "User" ? el("label", { style: "display:inline-flex;gap:3px", title: t.recordRoleHint }, el("input", { type: "checkbox", checked: !!r.role, disabled: ro, onchange: (ev) => { if (ev.target.checked) r.role = true; else delete r.role; commit(); } }), t.recordRole) : null,
               el("label", { style: "display:inline-flex;gap:4px;align-items:center" }, t.opposite,
                 el("select", { disabled: ro || !candidates.length, onchange: (ev) => { this._setOpposite(cn, rn, ev.target.value || null); commit(); } },
                   el("option", { value: "" }, t.none), candidates.map((on) => el("option", { value: on, selected: on === r.opposite }, on)))),
@@ -2282,29 +2332,39 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     }
     // roles and reactions (global to the behaviour), when nothing is selected
     _globalBehaviorPanel() {
-      const bh = this._bh, t = this.t, ro = this.readonly;
-      if (!bh) return [];
+      const bh = this._bh, t = this.t, ro = this.readonly, mm = this._mm;
       const lang = this._lang();
-      const classes = Object.keys(this._mm.classes);
-      const roles = bh.roles || {};
-      const roleRows = Object.entries(roles).map(([rn, r]) => el("tr", {},
-        el("td", {}, el("input", { value: rn, disabled: ro, onchange: (ev) => { const n = ev.target.value.trim(); if (n && n !== rn) { const rebuilt = {}; for (const [k, v] of Object.entries(roles)) rebuilt[k === rn ? n : k] = v; bh.roles = rebuilt; this._bhChanged(); } } })),
-        el("td", {}, el("input", { value: typeof r.label === "string" ? r.label : (r.label?.[lang] || ""), disabled: ro, onchange: (ev) => { const v = ev.target.value.trim(); if (v) r.label = typeof r.label === "object" && r.label ? { ...r.label, [lang]: v } : v; else delete r.label; this._bhChanged(); } })),
-        el("td", {}, el("select", { disabled: ro, onchange: (ev) => { if (ev.target.value) r.scope = ev.target.value; else r.scope = null; this._bhChanged(); } },
+      const classes = Object.keys(mm.classes);
+      // the roles live in the metamodel (roles: of domain.ecore.yaml); a behavior.yaml may still declare its own (legacy)
+      const mmRoles = (mm.roles ||= {});
+      const bhRoles = Object.fromEntries(Object.entries(bh?.roles || {}).filter(([rn, r]) => r?.source === "behavior" && !mmRoles[rn]));
+      const roleRow = (roles, rn, r, changed, where) => el("tr", {},
+        el("td", {}, el("input", { value: rn, disabled: ro, onchange: (ev) => { const n = ev.target.value.trim(); if (n && n !== rn) { const rebuilt = {}; for (const [k, v] of Object.entries(roles)) rebuilt[k === rn ? n : k] = v; if (roles === mmRoles) mm.roles = rebuilt; else bh.roles = rebuilt; changed(); } } })),
+        el("td", {}, el("input", { value: typeof r.label === "string" ? r.label : (r.label?.[lang] || ""), disabled: ro, onchange: (ev) => { const v = ev.target.value.trim(); if (v) r.label = typeof r.label === "object" && r.label ? { ...r.label, [lang]: v } : { [lang]: v }; else delete r.label; changed(); } })),
+        el("td", {}, el("select", { disabled: ro, onchange: (ev) => { if (ev.target.value) r.scope = ev.target.value; else delete r.scope; changed(); } },
           el("option", { value: "" }, t.none), classes.map((cn) => el("option", { value: cn, selected: r.scope === cn }, cn)))),
-        el("td", {}, ro ? null : el("button", { class: "x", title: t.del, onclick: () => { delete roles[rn]; this._bhChanged(); } }, "×"))));
+        el("td", { class: "hint" }, where),
+        el("td", {}, ro ? null : el("button", { class: "x", title: t.del, onclick: () => { delete roles[rn]; changed(); } }, "×")));
+      const roleRows = [...Object.entries(mmRoles).map(([rn, r]) => roleRow(mmRoles, rn, r, () => this._changed(), "")),
+                        ...Object.entries(bhRoles).map(([rn, r]) => roleRow(bh.roles, rn, r, () => this._bhChanged(), t.inBehavior))];
+      const recordRoles = Object.entries(mm.classes).flatMap(([cn, c]) => Object.entries(c.references).filter(([, r]) => r.role).map(([rn]) => `${cn}.${rn}`));
+      const rolesPanel = [
+        el("h3", {}, t.roles),
+        el("table", { class: "beh" }, el("tr", {}, el("th", {}, t.name), el("th", {}, t.label), el("th", {}, t.scope), el("th"), el("th")), ...roleRows),
+        ro ? null : el("button", { onclick: () => { mmRoles[this._uniqueName("role", [...Object.keys(mmRoles), ...Object.keys(bh?.roles || {})])] = {}; this._changed(); } }, `+ ${t.add}`),
+        el("p", { class: "hint" }, t.rolesHint + (recordRoles.length ? ` · ${t.recordRoles}: ${recordRoles.join(", ")}` : "")),
+      ];
+      if (!bh) return rolesPanel;
       const reactions = bh.reactions || [];
-      const rxRows = reactions.map((r, i) => el("tr", {},
+      const rxRows = reactions.map((r, i) => r._transition ? null : el("tr", {},
         el("td", {}, el("input", { value: r.name || "", disabled: ro, onchange: (ev) => { r.name = ev.target.value.trim(); this._bhChanged(); } })),
         el("td", {}, el("input", { value: r.event || "", disabled: ro, placeholder: "Class.event", onchange: (ev) => { r.event = ev.target.value.trim(); this._bhChanged(); } })),
         el("td", {}, el("input", { value: exprText(r.when) || "", disabled: ro, onchange: (ev) => { const v = ev.target.value.trim(); r.when = v ? { text: v } : null; this._bhChanged(); } })),
         el("td", {}, el("input", { value: (r.notify || []).join(", "), disabled: ro, title: t.listHint, onchange: (ev) => { r.notify = this._list(ev.target.value); this._bhChanged(); } })),
         el("td", {}, el("input", { value: r.template || "", disabled: ro, onchange: (ev) => { r.template = ev.target.value.trim() || undefined; this._bhChanged(); } })),
-        el("td", {}, ro ? null : el("button", { class: "x", title: t.del, onclick: () => { reactions.splice(i, 1); this._bhChanged(); } }, "×"))));
+        el("td", {}, ro ? null : el("button", { class: "x", title: t.del, onclick: () => { reactions.splice(i, 1); this._bhChanged(); } }, "×")))).filter(Boolean);
       return [
-        el("h3", {}, t.roles),
-        el("table", { class: "beh" }, el("tr", {}, el("th", {}, t.name), el("th", {}, t.label), el("th", {}, t.scope), el("th")), ...roleRows),
-        ro ? null : el("button", { onclick: () => { (bh.roles ||= {})[this._uniqueName("role", Object.keys(bh.roles || {}))] = {}; this._bhChanged(); } }, `+ ${t.add}`),
+        ...rolesPanel,
         el("h3", {}, t.reactions),
         el("table", { class: "beh" }, el("tr", {}, el("th", {}, t.name), el("th", {}, t.event), el("th", {}, t.when), el("th", {}, t.notify), el("th", {}, t.template), el("th")), ...rxRows),
         ro ? null : el("button", { onclick: () => { const cn = Object.keys(bh.workflows || {})[0] || classes[0] || "Class"; (bh.reactions ||= []).push({ name: this._uniqueName("notify", reactions.map((r) => r.name)), event: `${cn}.transitioned`, when: null, notify: [], template: "" }); this._bhChanged(); } }, `+ ${t.add}`),
@@ -2380,7 +2440,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       }
       const known = state === null || L.boxes.some((b) => b.key === state);   // an unknown value: neutral diagram, flagged
       if (known) this.removeAttribute("data-state-missing"); else this.setAttribute("data-state-missing", state);
-      body.replaceChildren(workflowSvg(this.getAttribute("name") || "", L, known ? { current: state, focus: new Set(Layout.workflowFocus(L.edges, state)) } : {}));
+      const notifyText = lang === "en" ? "notifies" : "avvisa";
+      body.replaceChildren(workflowSvg(this.getAttribute("name") || "", L, { notifyText, ...(known ? { current: state, focus: new Set(Layout.workflowFocus(L.edges, state)) } : {}) }));
       this._last = drawn;
       this._applyHover();
     }

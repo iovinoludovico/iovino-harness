@@ -3,6 +3,11 @@
 package: invitations
 doc: Inviti dei visiting researcher GSSI, con trattamento economico e fondi
 
+roles:
+  office:   {label: {it: Uffici amministrativi, en: Administrative offices}}
+  issuer:   {scope: Department, label: {it: Emittente, en: Issuer}}
+  director: {scope: Department, label: {it: Direttore di dipartimento, en: Department director}}
+
 classes:
   Department:
     doc: "Dipartimento GSSI che emette l'invito"
@@ -105,7 +110,7 @@ classes:
       invitationFunds: {type: InvitationFund, lower: 1, upper: -1, containment: true, opposite: invitation}
       department: {type: Department, lower: 1}
       guest: {type: Guest, lower: 1}
-      issuer: User
+      issuer: {type: User, role: true}
       reason: {type: InvitationReason, lower: 1, on_delete: restrict}
       createdBy: {type: User, lower: 1}
   Position:

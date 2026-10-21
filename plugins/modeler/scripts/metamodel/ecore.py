@@ -28,6 +28,11 @@ CLASS_NAME = re.compile(r"^[A-Z][A-Za-z0-9]{1,39}$")
 FEATURE_NAME = re.compile(r"^[a-z][A-Za-z0-9_]{0,39}$")
 LITERAL_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
 BUILTIN_CLASSES = {"User"}          # application users (table `profiles`): referenced, never declared
+BUILTIN_ROLES = ("admin",)          # every application has the administrators (`creator` is a principal, not a role)
+ROLE_KEYS = {"label", "doc", "scope"}   # `roles:` of the metamodel: who the users can be (scope: held per instance of a class)
+ROLE_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+ROLES_ENUM = "app_role"             # how the roles are stored: a Postgres enum of the keys (admin first)…
+ROLES_TABLE = "user_roles"          # …and one row per user × role × scope (profile_id, role, scope_id)
 
 # Ecore data types and the storage type they map to.
 DATATYPES: dict[str, str] = {
@@ -49,11 +54,11 @@ CUSTOM_DATATYPES = {"Text": "java.lang.String", "Email": "java.lang.String", "UR
 CLASS_KEYS = {"abstract", "supertypes", "doc", "label", "plural", "table", "unique", "attributes", "references", "rules"}
 ATTRIBUTE_KEYS = {"type", "lower", "upper", "default", "id", "unique", "changeable", "derived", "doc", "label", "help",
                   "list", "min", "max", "max_length", "renamed_from", "column"}
-REFERENCE_KEYS = {"type", "lower", "upper", "containment", "opposite", "doc", "label", "help", "list",
+REFERENCE_KEYS = {"type", "lower", "upper", "containment", "opposite", "doc", "label", "help", "list", "role",
                   "on_delete", "unique", "renamed_from", "column", "join_table"}
 # columns every table may have that the metamodel does not describe (managed by the database)
 STANDARD_COLUMNS = {"id", "created_at", "updated_at"}
-TOP_KEYS = {"package", "nsURI", "nsPrefix", "doc", "language", "classes", "enums", "rules", "diagram"}
+TOP_KEYS = {"package", "nsURI", "nsPrefix", "doc", "language", "roles", "classes", "enums", "rules", "diagram"}
 LANGUAGES = {"en", "it"}
 # domain rules the structure cannot express: [{id, text}] on the package or on a class; shown in docs/DOMAIN.md
 RULE_ID = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -104,11 +109,16 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
         "nsPrefix": raw.get("nsPrefix") or "",
         "doc": raw.get("doc") or "",
         "language": raw.get("language") or "en",
+        "roles": {},
         "classes": {},
         "enums": {},
         "rules": copy.deepcopy(raw.get("rules") or []),
         "diagram": copy.deepcopy(raw.get("diagram") or {}),
     }
+    roles = raw.get("roles") if isinstance(raw.get("roles"), dict) else {}
+    for rn, rspec in roles.items():
+        r = dict(rspec) if isinstance(rspec, dict) else {}
+        out["roles"][str(rn)] = {**r, "scope": r.get("scope"), "label": r.get("label"), "doc": r.get("doc") or ""}
     for cname, cspec in (raw.get("classes") or {}).items():
         cspec = cspec if isinstance(cspec, dict) else {}
         cls: dict[str, Any] = {k: copy.deepcopy(v) for k, v in cspec.items() if k not in ("attributes", "references")}
@@ -169,6 +179,8 @@ def compact(raw: dict[str, Any]) -> dict[str, Any]:
             out[k] = e[k]
     if e["language"] != "en":
         out["language"] = e["language"]
+    if e["roles"]:
+        out["roles"] = {rn: {k: v for k, v in r.items() if v not in (None, "", False)} for rn, r in e["roles"].items()}
     classes: dict[str, Any] = {}
     for cname, c in e["classes"].items():
         cls: dict[str, Any] = {}
@@ -248,7 +260,7 @@ def dumps(raw: dict[str, Any]) -> str:
     body = compact(raw)
     text = ""
     for key, value in body.items():   # blank line between sections, classes separated too
-        if key in ("classes", "enums", "diagram") and isinstance(value, dict):
+        if key in ("roles", "classes", "enums", "diagram") and isinstance(value, dict):
             text += f"\n{key}:\n"
             for cname, c in value.items():
                 chunk = yaml.dump(_Block({cname: c}), Dumper=Dumper, sort_keys=False, allow_unicode=True, width=120)
@@ -392,6 +404,18 @@ def patch_text(text: str, new: dict[str, Any]) -> str | None:
         if added:
             last = max(e for _, e in blocks.values()) if blocks else ss + 1
             edits.append((last, last, [x for n in added for x in _yaml_lines({n: cb[section][n]}, 2)]))
+    if a["roles"] != b["roles"]:                     # the roles: their own top-level block, before the classes
+        block = ["roles:"] + [x for rn in cb.get("roles", {}) for x in _yaml_lines({rn: cb["roles"][rn]}, 2)] if b["roles"] else []
+        if "roles" in top:
+            rs, re_ = top["roles"]
+            end = re_
+            while block and end > rs + 1 and not lines[end - 1].strip():
+                end -= 1                             # the blank line before the next section stays
+            edits.append((rs, end, block))
+        elif block and "classes" in top:
+            edits.append((top["classes"][0], top["classes"][0], block + [""]))
+        elif block:
+            return None
     if a["diagram"] != b["diagram"]:
         if "diagram" not in top or not b["diagram"]:
             return None
@@ -477,9 +501,26 @@ def validate(raw: dict[str, Any]) -> M.Report:
     unknown = set(raw) - TOP_KEYS
     if unknown:
         rep.error("metamodel", f"unknown top-level keys: {', '.join(sorted(map(str, unknown)))} "
-                  "(the metamodel describes structure only: workflows, derivations, events and reactions live in "
+                  "(the metamodel describes structure and roles: workflows, derivations, events and reactions live in "
                   f"{BEHAVIOR_FILE})")
     e = expand(raw)
+    if raw.get("roles") is not None and not isinstance(raw.get("roles"), dict):
+        rep.error("roles", "a mapping of role keys to {label, doc, scope}")
+    for rn, r in e["roles"].items():
+        where = f"roles.{rn}"
+        if not ROLE_NAME.match(rn):
+            rep.error(where, "role keys are lowercase identifiers (letters, digits, _)")
+        if rn in BUILTIN_ROLES or rn == "creator":
+            rep.error(where, f"'{rn}' is built in (every application has it): do not declare it")
+        extra = set(r) - ROLE_KEYS
+        if extra:
+            rep.error(where, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(ROLE_KEYS))})")
+        scope = r.get("scope")
+        if scope is not None:
+            if scope in BUILTIN_CLASSES:
+                rep.error(where, f"scope {scope}: a role is held per instance of a domain class, not per user")
+            elif scope not in e["classes"]:
+                rep.error(where, f"scope: unknown class {scope}")
     _check_rules(e["rules"], "rules", rep)
     if e["language"] not in LANGUAGES:
         rep.error("language", f"must be one of {', '.join(sorted(LANGUAGES))} (names of tables and plurals)")
@@ -560,6 +601,10 @@ def validate(raw: dict[str, Any]) -> M.Report:
                               "reference a concrete class")
             if r["containment"] and t in BUILTIN_CLASSES:
                 rep.error(fw, f"{t} cannot be contained")
+            if r.get("role") is not None and not isinstance(r.get("role"), bool):
+                rep.error(fw, "role: true marks a reference to User as a role of the record")
+            elif r.get("role") and t not in BUILTIN_CLASSES:
+                rep.error(fw, f"role: true marks a reference to User (a record role: who holds it is a user); {t} is a class")
             raw_r = ((raw.get("classes") or {}).get(cname) or {}).get("references", {}).get(rn)
             raw_up = raw_r.get("upper") if isinstance(raw_r, dict) else None
             if isinstance(raw_up, int) and raw_up > 1 or (isinstance(raw_up, str) and raw_up.isdigit() and int(raw_up) > 1):
@@ -850,7 +895,11 @@ def storage(meta: dict[str, Any], rep: M.Report | None = None) -> dict[str, Any]
             "fields": fields,
             "unique": uniques,
         }
-    return {"enums": enums, "entities": entities}
+    roles = None
+    if e["roles"]:   # the roles: an enum of the keys (admin first) and one row per user × role × scope
+        roles = {"enum": ROLES_ENUM, "table": ROLES_TABLE, "values": [*BUILTIN_ROLES, *e["roles"]],
+                 "scoped": {rn: r["scope"] for rn, r in e["roles"].items() if r.get("scope")}}
+    return {"enums": enums, "entities": entities, "roles": roles}
 
 # --------------------------------------------------------------------------- #
 # Views: Emfatic-like text, Mermaid, runtime JSON, diff
@@ -871,6 +920,11 @@ def to_emfatic(raw: dict[str, Any]) -> str:
     e = expand(raw)
     out = [f"@namespace(uri=\"{e['nsURI'] or 'http://modeler/' + e['package']}\", prefix=\"{e['nsPrefix'] or e['package']}\")",
            f"package {e['package']};", ""]
+    if e["roles"]:
+        held = ", ".join(f"{rn} per {r['scope']}" for rn, r in e["roles"].items() if r.get("scope"))
+        out.append("// roles of the application users (User.roles, one row per user x role x scope)" + (f": {held}" if held else ""))
+        lits = "; ".join(f"{rn} = {i}" for i, rn in enumerate([*BUILTIN_ROLES, *e["roles"]]))
+        out += [f"enum Role {{ {lits}; }}", ""]
     for en, espec in e["enums"].items():
         lits = "; ".join(f"{lit['name']} = {i}" for i, lit in enumerate(espec["literals"]))
         out += [f"enum {en} {{ {lits}; }}", ""]
@@ -891,7 +945,7 @@ def to_emfatic(raw: dict[str, Any]) -> str:
         for rn, r in c["references"].items():
             kw = "val" if r["containment"] else "ref"
             opp = f"#{r['opposite']}" if r.get("opposite") else ""
-            out.append(f"  {kw} {r['type']}{_mult(r['lower'], r['upper'])}{opp} {rn};")
+            out.append(f"  {kw} {r['type']}{_mult(r['lower'], r['upper'])}{opp} {rn};" + ("  // role" if r.get("role") else ""))
         out += ["}", ""]
     return "\n".join(out).rstrip() + "\n"
 
@@ -903,6 +957,9 @@ def _mermaid_mult(lower: int, upper: int) -> str:
 def to_mermaid(raw: dict[str, Any]) -> str:
     e = expand(raw)
     lines = ["classDiagram"]
+    if e["roles"]:
+        lines += ["  class Role {", "    <<enumeration>>"] + [f"    {rn}" for rn in [*BUILTIN_ROLES, *e["roles"]]] + ["  }",
+                  "  class User {", "    <<built-in>>", "    email", "  }", '  User --> "0..*" Role : roles']
     for en, espec in e["enums"].items():
         lines.append(f"  class {en} {{")
         lines.append("    <<enumeration>>")
@@ -943,6 +1000,11 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "note1": "Generato da `domain.ecore.yaml` con `npm run model:sync`: la struttura si cambia nel metamodello, non qui.",
         "note2": "Dettagli, vincoli e regole scritti a mano in questo file sono letti da `/modeler:metamodel` "
                  "e portati nel metamodello.",
+        "roles": "Ruoli", "role": "Ruolo", "scope": "Ambito", "scope_global": "globale", "scope_per": "per {cls}",
+        "roles_note": "I ruoli sono degli utenti dell'applicazione (`User`): una riga di `user_roles` per utente, ruolo e ambito; "
+                      "oltre ad `admin`, predefinito. Chi fa cosa (transizioni, notifiche) è in `behavior.yaml`.",
+        "record_roles": "Ruoli di record", "record_roles_note": "Riferimenti a `User` marcati `role: true`: chi li ricopre lo dice il record stesso (`self.<riferimento>` nel comportamento).",
+        "record_role": "ruolo di record",
         "diagram": "Diagramma", "rules": "Regole generali", "class_rules": "Regole", "attributes": "Attributi",
         "references": "Riferimenti", "enums": "Enum", "abstract": "Astratta.", "extends": "Estende {names}.",
         "name": "Nome", "type": "Tipo", "mult": "Molteplicità", "constraints": "Vincoli", "description": "Descrizione",
@@ -957,6 +1019,11 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "note1": "Generated from `domain.ecore.yaml` by `npm run model:sync`: the structure changes in the metamodel, not here.",
         "note2": "Details, constraints and rules written by hand in this file are read by `/modeler:metamodel` "
                  "and moved into the metamodel.",
+        "roles": "Roles", "role": "Role", "scope": "Scope", "scope_global": "global", "scope_per": "per {cls}",
+        "roles_note": "The roles belong to the application users (`User`): one row of `user_roles` per user, role and scope; "
+                      "besides `admin`, built in. Who does what (transitions, notifications) is in `behavior.yaml`.",
+        "record_roles": "Record roles", "record_roles_note": "References to `User` marked `role: true`: the record itself says who holds them (`self.<reference>` in the behaviour).",
+        "record_role": "record role",
         "diagram": "Diagram", "rules": "General rules", "class_rules": "Rules", "attributes": "Attributes",
         "references": "References", "enums": "Enums", "abstract": "Abstract.", "extends": "Extends {names}.",
         "name": "Name", "type": "Type", "mult": "Multiplicity", "constraints": "Constraints", "description": "Description",
@@ -1077,6 +1144,16 @@ def to_markdown(raw: dict[str, Any], lang: str | None = None, states: dict[str, 
             to_mermaid(raw).rstrip("\n"), "```", ""]
     if e["rules"]:
         out += [f"## {t['rules']}", ""] + [f"- `{r['id']}`: {r['text']}" for r in e["rules"]] + [""]
+    record_roles = [(cn, rn, r) for cn, c in e["classes"].items() for rn, r in c["references"].items() if r.get("role")]
+    if e["roles"] or record_roles:
+        out += [f"## {t['roles']}", ""]
+        if e["roles"]:
+            rows = [[f"`{rn}`", _label(r.get("label"), lang), t["scope_per"].format(cls=display(r["scope"])) if r.get("scope") else t["scope_global"],
+                     str(r.get("doc") or "")] for rn, r in e["roles"].items()]
+            out += _table([t["role"], t["label"], t["scope"], t["description"]], rows) + ["", t["roles_note"], ""]
+        if record_roles:
+            rows = [[f"`{cn}.{rn}`", _label(r.get("label"), lang), display(cn), _description(r)] for cn, rn, r in record_roles]
+            out += [f"### {t['record_roles']}", "", t["record_roles_note"], ""] + _table([t["role"], t["label"], "Class" if lang == "en" else "Classe", t["description"]], rows) + [""]
     for cn, c in e["classes"].items():
         out += [f"## {heading(cn)}", ""]
         doc = str(c.get("doc") or "").strip()
@@ -1096,7 +1173,7 @@ def to_markdown(raw: dict[str, Any], lang: str | None = None, states: dict[str, 
         if c["references"]:
             rows = []
             for rn, r in c["references"].items():
-                suffix, notes = cells(cn, rn, _ref_notes(r, t))
+                suffix, notes = cells(cn, rn, ", ".join(x for x in (_ref_notes(r, t), t["record_role"] if r.get("role") else "") if x))
                 rows.append([rn, display(r["type"]) if r["type"] in e["classes"] else r["type"],
                              _mermaid_mult(r["lower"], r["upper"]) + suffix, notes, _description(r)])
             out += [f"### {t['references']}", ""] + _table([t["name"], t["to"], t["mult"], t["notes"], t["description"]], rows) + [""]
@@ -1186,6 +1263,7 @@ def runtime_json(raw: dict[str, Any]) -> dict[str, Any]:
     e = expand(raw)
     e["datatypes"] = list(DATATYPES)
     e["builtin"] = sorted(BUILTIN_CLASSES)
+    e["builtin_roles"] = list(BUILTIN_ROLES)
     return e
 
 
@@ -1204,6 +1282,14 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     """Human-readable changes between two metamodels (for reviews and proposals)."""
     a, b = expand(old), expand(new)
     out: list[str] = []
+    for rn, r in b["roles"].items():
+        if rn not in a["roles"]:
+            out.append(f"+ role {rn}" + (f" (per {r['scope']})" if r.get("scope") else ""))
+        else:
+            ks = [k for k in ("scope", "label", "doc") if a["roles"][rn].get(k) != r.get(k)]
+            if ks:
+                out.append(f"~ role {rn}: {', '.join(ks)}")
+    out += [f"- role {rn}" for rn in a["roles"] if rn not in b["roles"]]
     for en in b["enums"]:
         if en not in a["enums"]:
             out.append(f"+ enum {en}: {', '.join(lit['name'] for lit in b['enums'][en]['literals'])}")
@@ -1255,7 +1341,7 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
                     continue
                 if renamed and fn not in oc[kind]:
                     out.append(f"~ {cn}.{renamed} renamed to {fn}")
-                for k in ("type", "lower", "upper", "containment", "opposite", "default", "id", "changeable", "derived"):
+                for k in ("type", "lower", "upper", "containment", "opposite", "default", "id", "changeable", "derived", "role"):
                     if of.get(k) != f.get(k):
                         out.append(f"~ {cn}.{fn}: {k} {of.get(k)} -> {f.get(k)}")
             for fn in oc[kind]:
@@ -1351,7 +1437,14 @@ def export_ecore(raw: dict[str, Any]) -> str:
             if r.get("opposite"):
                 f.set("eOpposite", f"#//{r['type']}/{r['opposite']}")
             _annot(f, GENMODEL_SRC, {"documentation": r.get("doc")})
-            _annot(f, MODELER_SRC, {k: r.get(k) for k in ("label", "help", "list", "on_delete", "unique", "renamed_from")})
+            _annot(f, MODELER_SRC, {k: r.get(k) for k in ("label", "help", "list", "on_delete", "unique", "renamed_from", "role")})
+    if e["roles"]:
+        el = ET.SubElement(root, "eClassifiers", {xtype: "ecore:EEnum", "name": "Role"})
+        _annot(el, MODELER_SRC, {"roles": True})
+        for i, rn in enumerate([*BUILTIN_ROLES, *e["roles"]]):
+            le = ET.SubElement(el, "eLiterals", {"name": rn, "value": str(i)})
+            if rn in e["roles"]:
+                _annot(le, MODELER_SRC, {k: e["roles"][rn].get(k) for k in ("label", "doc", "scope")})
     for en, espec in e["enums"].items():
         el = ET.SubElement(root, "eClassifiers", {xtype: "ecore:EEnum", "name": en})
         _annot(el, MODELER_SRC, {"label": espec.get("label")})
@@ -1391,7 +1484,7 @@ def import_ecore(text: str) -> dict[str, Any]:
         raise M.ModelError("not an Ecore EPackage")
     xtype = f"{{{XSI_NS}}}type"
     raw: dict[str, Any] = {"package": root.get("name") or "domain", "nsURI": root.get("nsURI", ""),
-                           "nsPrefix": root.get("nsPrefix", ""), "classes": {}, "enums": {}}
+                           "nsPrefix": root.get("nsPrefix", ""), "roles": {}, "classes": {}, "enums": {}}
     doc = _details(root, GENMODEL_SRC).get("documentation")
     if doc:
         raw["doc"] = doc
@@ -1457,6 +1550,13 @@ def import_ecore(text: str) -> dict[str, Any]:
             if _rules_from(cl):
                 c["rules"] = _rules_from(cl)
             raw["classes"][name] = c
+        elif kind == "EEnum" and _details(cl, MODELER_SRC).get("roles"):
+            roles: dict[str, Any] = {}
+            for lit in cl.findall("eLiterals"):
+                if lit.get("name") in BUILTIN_ROLES:
+                    continue
+                roles[lit.get("name")] = {k: v for k, v in _details(lit, MODELER_SRC).items() if v not in (None, "")}
+            raw["roles"] = roles
         elif kind == "EEnum":
             lits = []
             for lit in cl.findall("eLiterals"):

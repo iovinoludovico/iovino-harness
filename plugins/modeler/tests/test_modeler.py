@@ -160,7 +160,8 @@ class NotationTests(unittest.TestCase):
             "opposite": ({"classes": {"A": {"references": {"b": {"type": "B", "opposite": "a"}}},
                                       "B": {"references": {"a": {"type": "A", "opposite": "x"}}}}}, "must declare opposite"),
             "behaviour in metamodel": ({"classes": {"A": {"workflow": {}}}}, "unknown keys: workflow"),
-            "top-level behaviour": ({"classes": {"A": {}}, "roles": []}, "structure only"),
+            "top-level behaviour": ({"classes": {"A": {}}, "workflows": {}}, "structure and roles"),
+            "roles shape": ({"classes": {"A": {}}, "roles": []}, "a mapping of role keys"),
             "reserved": ({"classes": {"A": {"attributes": {"createdAt": "EDate"}}}}, "standard column"),
             "user declared": ({"classes": {"User": {}}}, "built in"),
             "cycle": ({"classes": {"A": {"supertypes": ["B"]}, "B": {"supertypes": ["A"]}}}, "cycle"),
@@ -220,6 +221,122 @@ def _tariffs(unique=("voce", "motivo", "posizione")):
     if unique:
         meta["classes"]["Tariffa"]["unique"] = [list(unique)]
     return meta
+
+
+class RolesTests(unittest.TestCase):
+    """`roles:` of the metamodel: who the users can be, stored as app_role + user_roles, resolved by the behaviour."""
+
+    def meta(self):
+        return {"package": "orders", "language": "it",
+                "roles": {"rup": {"label": {"it": "RUP"}, "doc": "Responsabile unico"},
+                          "area_director": {"scope": "Department", "label": {"it": "Direttore d'area"}}},
+                "classes": {"Department": {"attributes": {"name": {"type": "EString", "lower": 1}}},
+                            "Order": {"attributes": {"code": {"type": "EString", "lower": 1, "id": True}},
+                                      "references": {"department": {"type": "Department", "lower": 1},
+                                                     "rupAssistants": {"type": "User", "upper": -1, "role": True}}}}}
+
+    def test_expand_validate_and_round_trips(self):
+        m = self.meta()
+        rep = E.validate(m)
+        self.assertTrue(rep.ok, rep.render())
+        e = E.expand(m)
+        self.assertEqual(e["roles"]["area_director"], {"scope": "Department", "label": {"it": "Direttore d'area"}, "doc": ""})
+        text = E.dumps(m)
+        self.assertIn("\nroles:\n  rup: {label: {it: RUP}, doc: Responsabile unico}\n  area_director: {scope: Department, label: {it: Direttore d'area}}\n", text)
+        self.assertEqual(E.expand(E.loads(text)), e)
+        back = E.expand(E.import_ecore(E.export_ecore(m)))
+        self.assertEqual(back["roles"], e["roles"])
+        self.assertTrue(back["classes"]["Order"]["references"]["rupAssistants"]["role"])
+        self.assertEqual(E.expand(E.from_editor(E.runtime_json(m)))["roles"], e["roles"])
+        self.assertEqual(E.runtime_json(m)["builtin_roles"], ["admin"])
+        bad = self.meta()
+        bad["roles"]["admin"] = {}
+        bad["roles"]["Boss"] = {"scope": "Nope", "colour": "red"}
+        bad["roles"]["clerk"] = {"scope": "User"}
+        bad["classes"]["Order"]["references"]["department"]["role"] = True
+        errs = E.validate(bad).errors
+        for frag in ["roles.admin: 'admin' is built in", "roles.Boss: role keys are lowercase", "roles.Boss: scope: unknown class Nope",
+                     "roles.Boss: unknown keys: colour", "roles.clerk: scope User: a role is held per instance of a domain class",
+                     "classes.Order.references.department: role: true marks a reference to User"]:
+            self.assertTrue(any(frag in x for x in errs), (frag, errs))
+
+    def test_views_storage_diff_and_patch(self):
+        m = self.meta()
+        self.assertIn("enum Role { admin = 0; rup = 1; area_director = 2; }", E.to_emfatic(m))
+        self.assertIn("// roles of the application users (User.roles, one row per user x role x scope): area_director per Department", E.to_emfatic(m))
+        self.assertIn("ref User[*] rupAssistants;  // role", E.to_emfatic(m))
+        self.assertIn('  User --> "0..*" Role : roles', E.to_mermaid(m))
+        md = E.to_markdown(m)
+        self.assertIn("## Ruoli", md)
+        self.assertIn("| `area_director` | Direttore d'area | per Department |  |", md)
+        self.assertIn("### Ruoli di record", md)
+        self.assertIn("| `Order.rupAssistants` |", md)
+        self.assertIn("| rupAssistants | User | 0..* | ruolo di record |  |", md)
+        st = E.storage(m)
+        self.assertEqual(st["roles"], {"enum": "app_role", "table": "user_roles", "values": ["admin", "rup", "area_director"],
+                                       "scoped": {"area_director": "Department"}})
+        self.assertIsNone(E.storage({"package": "x", "classes": {"A": {"attributes": {"n": "EString"}}}})["roles"])
+        new = copy.deepcopy(m)
+        new["roles"]["rup_assistant"] = {"label": {"it": "Assistente RUP"}}
+        new["roles"]["area_director"]["label"] = {"it": "Direttore"}
+        del new["roles"]["rup"]
+        del new["classes"]["Order"]["references"]["rupAssistants"]["role"]
+        self.assertEqual(E.diff(m, new)[:3], ["~ role area_director: label", "+ role rup_assistant", "- role rup"])
+        self.assertIn("~ Order.rupAssistants: role True -> None", E.diff(m, new))
+        # patch_text rewrites the roles block alone, and adds it before the classes when the file has none
+        out = E.patch_text(E.dumps(m), new)
+        self.assertIsNotNone(out)
+        self.assertEqual(E.expand(E.loads(out)), E.expand(new))
+        self.assertIn("\nroles:\n  area_director: {scope: Department, label: {it: Direttore}}\n  rup_assistant: {label: {it: Assistente RUP}}\n\nclasses:", out)
+        plain = copy.deepcopy(m)
+        del plain["roles"]
+        out = E.patch_text(E.dumps(plain), m)
+        self.assertIsNotNone(out)
+        self.assertEqual(E.expand(E.loads(out)), E.expand(m))
+
+    def test_migration_reverse_and_drift(self):
+        m = self.meta()
+        plain = copy.deepcopy(m)
+        del plain["roles"]
+        sql, notes = G.migration(plain, m)
+        self.assertIn("create type public.app_role as enum ('admin', 'rup', 'area_director');", sql)
+        self.assertIn("create table if not exists public.user_roles (", sql)
+        self.assertIn("constraint user_roles_unique unique nulls not distinct (profile_id, role, scope_id)", sql)
+        self.assertIn("alter type public.app_role add value if not exists 'rup';", sql)
+        self.assertIn("if the table was just created, add its policies", sql)
+        self.assertTrue(any("user_roles created if missing" in n for n in notes), notes)
+        new = copy.deepcopy(m)
+        new["roles"]["rup_assistant"] = {}
+        del new["roles"]["rup"]
+        sql, notes = G.migration(m, new)
+        self.assertIn("alter type public.app_role add value if not exists 'rup_assistant';", sql)
+        self.assertNotIn("create type", sql)
+        self.assertIn("roles rup removed from the metamodel: migrate the rows of user_roles", sql)
+        self.assertEqual(G.migration(m, m)[0], "")
+        # the catalog of an appforge database: the enum and the table become roles:, the table is not a class
+        cat = {"tables": ["departments", "user_roles"], "unique_indexes": [], "constraints": [],
+               "enums": [{"name": "app_role", "values": ["admin", "rup", "area_director"]}],
+               "columns": [{"table": "departments", "name": c, "udt": u, "type": u, "nullable": False, "default": None, "maxlen": None}
+                           for c, u in (("id", "uuid"), ("name", "text"))]
+               + [{"table": "user_roles", "name": c, "udt": u, "type": u, "nullable": c == "scope_id", "default": None, "maxlen": None}
+                  for c, u in (("id", "uuid"), ("profile_id", "uuid"), ("role", "app_role"), ("scope_id", "uuid"), ("created_at", "timestamptz"))]}
+        rev, notes = D.reverse(cat, package="orders")
+        self.assertEqual(rev["roles"], {"rup": {}, "area_director": {}})
+        self.assertEqual(list(rev["classes"]), ["Department"])
+        self.assertTrue(any("roles are declared in the metamodel" in n for n in notes), notes)
+        self.assertEqual(D.drift(rev, cat), [])
+        rev["roles"]["clerk"] = {}
+        del rev["roles"]["rup"]
+        found = D.drift(rev, cat)
+        self.assertIn("MISSING ROLE clerk (not in the database enum app_role)", found)
+        self.assertIn("NOT IN METAMODEL role rup (database enum app_role)", found)
+        cat["enums"], cat["tables"] = [], ["departments"]
+        found = D.drift(rev, cat)
+        self.assertIn("MISSING TYPE app_role (the roles of the metamodel: admin, area_director, clerk)", found)
+        self.assertIn("MISSING TABLE user_roles (who holds the roles: profile_id, role, scope_id)", found)
+        del rev["roles"]
+        cat["tables"] = ["departments", "user_roles"]
+        self.assertIn("NOT IN METAMODEL table user_roles (declare the roles in the metamodel: roles:)", D.drift(rev, cat))
 
 
 class UniqueTogetherTests(unittest.TestCase):
@@ -1369,6 +1486,29 @@ class DatabaseTests(unittest.TestCase):
     def psql(self, sql):
         out = subprocess.run(["psql", self.dsn, "-q", "-v", "ON_ERROR_STOP=1"], input=sql, capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_roles_migration_applies_and_aligns(self):
+        m = {"package": "orders", "roles": {"rup": {}, "area_director": {"scope": "Department"}},
+             "classes": {"Department": {"attributes": {"name": {"type": "EString", "lower": 1}}}}}
+        plain = copy.deepcopy(m)
+        del plain["roles"]
+        self.psql(G.migration({"package": "orders", "classes": {}}, plain)[0])   # the table of the class
+        sql, _ = G.migration(plain, m)                                            # the roles alone
+        self.psql(sql)
+        self.psql(sql)                                                            # idempotent
+        other = {"rooms", "bookings", "booking_items", "tags", "bookings_tags"}
+        self.assertEqual(D.drift(m, D.catalog(self.dsn), other), [])
+        self.assertEqual(D.drift(plain, D.catalog(self.dsn), other), ["NOT IN METAMODEL table user_roles (declare the roles in the metamodel: roles:)"])
+        new = copy.deepcopy(m)
+        new["roles"]["rup_assistant"] = {}
+        self.psql(G.migration(m, new)[0])
+        out = subprocess.run(["psql", self.dsn, "-At", "-c", "select string_agg(enumlabel, ',' order by enumsortorder) "
+                              "from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'app_role'"],
+                             capture_output=True, text=True)
+        self.assertEqual(out.stdout.strip(), "admin,rup,area_director,rup_assistant")
+        self.assertEqual(D.drift(new, D.catalog(self.dsn), other), [])
+        rev, _ = D.reverse(D.catalog(self.dsn), package="orders", exclude=other)
+        self.assertEqual(rev["roles"], {"rup": {}, "area_director": {}, "rup_assistant": {}})
 
     def test_generated_migrations_apply_and_align(self):
         meta = E.load(FIXTURE)

@@ -199,6 +199,76 @@ class BehaviorTests(unittest.TestCase):
         self.assertIn("notifies on Invitation.reverted but no subscription receives it", w[0])
         self.assertEqual(B.transition_reactions(B.expand(behavior()), E.expand(meta()), "Invitation")["submit"], ["notify_submitted"])
 
+    def test_notification_declared_on_the_transition(self):
+        # the fixture: `confirm` and `director_return` notify from the transition (short form); the same reaction stands behind
+        b = B.expand(behavior())
+        e = E.expand(meta())
+        syn = {r["name"]: r for r in b["reactions"] if r.get("_transition")}
+        self.assertEqual(sorted(syn), ["notify_confirm", "notify_director_return"])
+        self.assertEqual((syn["notify_director_return"]["when"], syn["notify_director_return"]["notify"], syn["notify_director_return"]["template"]),
+                         ("transition = director_return", ["self.issuer"], "visit_confirmation_returned"))
+        self.assertEqual(b["workflows"]["Invitation"]["transitions"]["confirm"]["notify"], ["director"])
+        self.assertEqual(B.transition_reactions(b, e, "Invitation")["confirm"], ["notify_confirm"])
+        self.assertEqual(B.template_uses(b)["director_confirmation_requested"], [("Invitation", "transitioned", "transition Invitation.confirm")])
+        self.assertIn({"kind": "notify", "of": "Invitation.confirm"}, B.uses(b, e)["Invitation"]["references"]["department"])   # director: per Department
+        # behavior.json: `notifies` on every transition, both forms
+        rt = B.runtime_json(behavior(), meta())
+        tr = rt["workflows"]["Invitation"]["transitions"]
+        self.assertEqual(tr["confirm"]["notifies"], [{"name": "notify_confirm", "notify": ["director"], "template": "director_confirmation_requested", "own": True}])
+        self.assertEqual([n["name"] for n in tr["approve"]["notifies"]], ["notify_to_manage", "notify_approved"])
+        self.assertFalse(tr["submit"]["notifies"][0]["own"])
+        self.assertEqual(tr["reject"]["notify"], [])
+        # the long form with a condition of its own
+        b = behavior()
+        t = b["workflows"]["Invitation"]["transitions"]["close"]
+        t["notify"] = {"to": ["office", "self.guest.email"], "template": "invitation_closed", "when": "hours > 0"}
+        b["reactions"] = [r for r in b["reactions"] if r["name"] != "notify_closed"]
+        rep = B.validate(b, meta())
+        self.assertEqual((rep.errors, rep.warnings), ([], []))
+        eb = B.expand(b)
+        self.assertEqual([r for r in eb["reactions"] if r["name"] == "notify_close"][0]["when"], "transition = close and (hours > 0)")
+        self.assertEqual(B.transition_reactions(eb, e, "Invitation")["close"], ["notify_close"])
+        self.assertEqual(B.diff(behavior(), b), ["~ transition Invitation.close: notify, template", "- reaction notify_closed"])
+        rt = B.runtime_json(b, meta())
+        self.assertEqual(rt["workflows"]["Invitation"]["transitions"]["close"]["notify_when"]["text"], "hours > 0")
+        fe = B.from_editor(rt)                                       # the proposal of the web modeler keeps the short form
+        self.assertEqual(fe["workflows"]["Invitation"]["transitions"]["close"]["notify"],
+                         {"to": ["office", "self.guest.email"], "template": "invitation_closed", "when": "hours > 0"})
+        self.assertNotIn("notify_close", [r["name"] for r in fe["reactions"]])
+        self.assertNotIn("notifies", fe["workflows"]["Invitation"]["transitions"]["close"])
+        self.assertEqual(B.diff(b, fe), [])
+        text = B.dumps(b)                                            # the file keeps the short form
+        self.assertIn("notify: {to: [office, self.guest.email], template: invitation_closed, when: hours > 0}", text)
+        self.assertNotIn("notify_close", text)
+        self.assertEqual(B.expand(B.loads(text))["reactions"], eb["reactions"])
+        # the engine: the synthetic reaction carries the recipients on the state change, like a written one
+        from metamodel import engine as G
+        sql, _ = G.engine_sql(b, meta())
+        self.assertIn("-- notify_close\n  if p_type = 'invitation.transitioned' and coalesce(((p_extra -> 'transition' ->> 'key') = 'close' and r.hours > 0), false) then", sql)
+        self.assertIn("-- notify_director_return", sql)
+        # BEHAVIOR.md: the transition row says who is notified; the reactions table lists the explicit ones only
+        md = B.to_markdown(behavior(), meta())
+        row = next(l for l in md.splitlines() if l.startswith("| `director_return` |"))
+        self.assertIn("`self.issuer` (`visit_confirmation_returned`)", row)
+        self.assertNotIn("notify_director_return", md)
+        self.assertIn("| `notify_closed` |", md)
+        # what validate refuses
+        b = behavior()
+        trs = b["workflows"]["Invitation"]["transitions"]
+        trs["close"]["template"] = "invitation_closed"                                                       # template alone
+        trs["reject"]["notify"] = {"to": ["self.issuer"], "template": "invitation_rejected", "when": "nope > 1", "extra": 1}
+        trs["approve"]["notify"] = ["office"]                                                                  # no template
+        trs["withdraw"]["notify"] = {"when": "hours > 0"}                                                      # when alone
+        b["reactions"].append({"name": "notify_approve", "event": "Invitation.transitioned", "when": "transition = approve",
+                               "notify": [self_issuer := "self.issuer"], "template": "invitation_approved"})
+        errs = errors(b)
+        for frag in ["transitions.close.template: a template without notify", "transitions.reject.notify: unknown keys: extra",
+                     "transitions.reject.notify.when: 'nope' is not a feature of Invitation", "transitions.approve.notify: template: the key",
+                     "transitions.withdraw.notify: when without to",
+                     "transitions.approve.notify: the notification of transition `approve` is the reaction `notify_approve`"]:
+            self.assertTrue(any(frag in x for x in errs), (frag, errs))
+        self.assertEqual(self_issuer, "self.issuer")
+
     def test_notification_templates_are_checked_against_the_model(self):
         # the fixture: texts for every template, placeholders on the record and the event
         rep = B.validate(behavior(), meta())
@@ -644,10 +714,11 @@ class BehaviorTests(unittest.TestCase):
         b["workflows"]["Invitation"]["states"]["pending_director"]["owner"] = ["director@department"]
         self.assertFalse(any("pending_director.owner" in x for x in errors(b, m)))
         # a reference with the same name as a role: say how to write each
-        b = behavior()
+        b, m = behavior(), meta()
         b["roles"].pop("issuer")
+        m["roles"].pop("issuer")                                       # declared in both files: gone from both
         b["workflows"]["Invitation"]["states"]["draft"]["owner"] = ["issuer"]
-        self.assertTrue(any("unknown role 'issuer' (the reference Invitation.issuer: write self.issuer)" in x for x in errors(b)))
+        self.assertTrue(any("unknown role 'issuer' (the reference Invitation.issuer: write self.issuer)" in x for x in errors(b, m)))
 
     def test_roles_events_reactions_subscriptions(self):
         b = behavior()
@@ -720,6 +791,56 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(errors({}), [])                            # an empty behaviour is fine
         with self.assertRaises(M.ModelError):
             B.loads("- just a list\n")
+
+
+class RolesFromTheMetamodelTests(unittest.TestCase):
+    """The roles are declared in the metamodel (`roles:`): the behaviour resolves its principals against them."""
+
+    def test_roles_of_the_metamodel_resolve_the_principals(self):
+        m, b = meta(), behavior()
+        self.assertEqual(B.validate(b, m).warnings, [])                 # the fixture declares them in both files, identically
+        b.pop("roles")                                                  # the behaviour without its own roles: nothing changes
+        rep = B.validate(b, m)
+        self.assertEqual((rep.errors, rep.warnings), ([], []))
+        bb = B.bind(b, E.expand(m))
+        self.assertEqual(bb["roles"]["director"], {"scope": "Department", "label": {"it": "Direttore di dipartimento", "en": "Department director"},
+                                                   "doc": "", "source": "metamodel"})
+        self.assertEqual(bb["behavior_roles"], {})
+        rt = B.runtime_json(b, m)
+        self.assertEqual(rt["roles"]["office"]["source"], "metamodel")
+        self.assertNotIn("behavior_roles", rt)
+        self.assertNotIn("roles", B.from_editor(rt))                     # the metamodel's roles are not written into behavior.yaml
+        self.assertEqual(B.diff(b, B.from_editor(rt)), [])
+        self.assertEqual(B.runtime_json(behavior(), m)["roles"]["office"]["source"], "both")
+        md = B.to_markdown(b, m)
+        self.assertIn("| director | Department director | per Department |", md)
+        self.assertIn("| self.issuer | issuer | record role (Invitation) |", md)
+        self.assertIn("The roles are declared in the metamodel", md)
+        from metamodel import engine as G
+        sql, _ = G.engine_sql(b, m)
+        self.assertIn("public.has_role('director', ", sql)                # the scope resolved through the metamodel's role
+        self.assertIn("public.role_members('office', null)", sql)
+        # both files: the metamodel wins; differences are reported
+        b, m = behavior(), meta()
+        b["roles"]["director"]["scope"] = "Fund"
+        b["roles"]["office"]["label"] = {"it": "Uffici", "en": "Offices"}
+        b["roles"]["boss"] = {}
+        rep = B.validate(b, m)
+        self.assertTrue(any("roles.director: scope Fund here, Department in the metamodel" in x for x in rep.errors), rep.errors)
+        self.assertTrue(any("roles.office: label differs from the metamodel's" in x for x in rep.warnings), rep.warnings)
+        self.assertTrue(any("roles.boss: the metamodel declares the roles (office, issuer, director) and lacks 'boss'" in x for x in rep.warnings), rep.warnings)
+        # a record role: a direct reference to User acting as a principal is marked role: true
+        m, b = meta(), behavior()
+        m["classes"]["Invitation"]["references"]["issuer"] = "User"
+        w = [x for x in B.validate(b, m).warnings if "role: true" in x]
+        self.assertTrue(w and all("'self.issuer' acts as a role of the record: mark Invitation.issuer" in x for x in w), w)
+        self.assertFalse(any("self.guest.email" in x for x in w))
+        # the form before the roles moved: the behaviour's roles alone, no report
+        m = meta()
+        del m["roles"]
+        rep = B.validate(behavior(), m)
+        self.assertEqual((rep.errors, rep.warnings), ([], []))
+        self.assertEqual(B.runtime_json(behavior(), m)["roles"]["office"]["source"], "behavior")
 
 
 class DerivedInTheMetamodelTests(unittest.TestCase):
@@ -1076,7 +1197,7 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(tr["approve"]["guard"]["type"], "bool")
         self.assertIsNone(tr["reject"]["guard"])
         self.assertEqual(rj["reactions"][0]["when"]["sql"], "(p_extra -> 'transition' ->> 'key') in ('submit', 'resubmit')")
-        self.assertIsNone(rj["reactions"][-1]["when"])
+        self.assertIsNone(next(r for r in rj["reactions"] if r["name"] == "notify_reverted")["when"])
         json.dumps(rj)                                                                  # serializable
 
     def test_clauses_and_engine_version(self):

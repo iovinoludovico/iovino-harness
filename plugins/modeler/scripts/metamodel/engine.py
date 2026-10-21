@@ -16,8 +16,9 @@ exists`) that runs the behaviour inside the database, as the modelled applicatio
 
 The engine relies on a small contract the application provides (fallbacks are created when missing):
 `current_profile_id()`, `is_admin()`, `has_role(role, scope)`, `role_members(role, scope)`,
-`emit_entity_event(entity, id, type, extra)`, `impersonator_id()` (null unless «view as» is on). Messages are in
-the language of the metamodel.
+`emit_entity_event(entity, id, type, extra)`, `impersonator_id()` (null unless «view as» is on). The roles come from
+the metamodel (`roles:` of domain.ecore.yaml, stored as the enum `app_role` and the table `user_roles` that `migrate`
+creates): the fallbacks of `has_role`/`role_members` read that table. Messages are in the language of the metamodel.
 
 «View as» (`view_as: {users_by: [admin, …]}` in behavior.yaml): anyone restricts the session to one of their roles
 (header `x-view-as`, honoured by `has_role`); who is listed uses the application as another user (header
@@ -887,7 +888,7 @@ end;""")
 def engine_sql(raw: dict[str, Any], metamodel: dict[str, Any], schema: str = "public") -> tuple[str, list[str]]:
     """The SQL of the behaviour (one idempotent migration) and the notes to review. Assumes a valid model."""
     e = E.expand(metamodel)
-    b = B.expand(raw)
+    b = B.bind(raw, e)                 # the roles of the metamodel (scopes) resolved
     msgs = MESSAGES.get(e["language"]) or MESSAGES["en"]
     notes: list[str] = []
     classes = []

@@ -14,6 +14,10 @@ nsURI: http://gssi.it/anagrafica    # optional
 language: it                        # it | en: default table names (Persona → persone)
 doc: Persone, account e gruppi      # optional documentation
 
+roles:                              # who the application users can be, besides the built-in admin (see Roles)
+  office:   {label: {it: Uffici, en: Offices}, doc: Gestisce le pratiche}
+  director: {scope: Dipartimento, label: {it: Direttore, en: Director}}   # held per instance of a class
+
 classes:
   Soggetto:
     abstract: true                  # no records of its own; subclasses inherit its features
@@ -33,6 +37,7 @@ classes:
       indirizzi: {type: Indirizzo, upper: -1, containment: true, opposite: persona}   # composition
       gruppi: {type: Gruppo, upper: -1, opposite: membri}                 # many-to-many
       utente: User                                                        # the built-in application user
+      responsabile: {type: User, role: true}                              # a role of the record (see Roles)
   Account:
     attributes:
       email: {type: Email, lower: 1, unique: true}
@@ -98,6 +103,23 @@ in code (a customization, reported as a warning).
 ### Reference keys
 `type lower upper containment opposite doc label help list on_delete(restrict|set_null|cascade) unique
 renamed_from column join_table`
+
+### Roles
+`roles:` declares who the application users can be: `key: {label, doc, scope}`, keys lowercase identifiers;
+`admin` is built in (every application has the administrators) and `creator` is a principal, not a role: neither is
+declared. `scope: <Class>` means the role is held per instance of that class (a director per department): the
+behaviour names it `director` when the class has one reference to the scope class, `director@<path>` otherwise.
+Stored as the Postgres enum **`app_role`** (the keys, `admin` first) and the table **`user_roles`** (`profile_id`,
+`role`, `scope_id`, unique nulls not distinct): `migrate` creates both when the app has none (an appforge app already
+has them and gains the new literals), `drift` compares the enum with the roles (`MISSING ROLE`, `NOT IN METAMODEL
+role`) and `reverse` writes `roles:` from them (scopes and labels to add by hand). The engine's `has_role` and
+`role_members` read that table when the app defines none. A reference to `User` marked **`role: true`** is a
+**record role**: who holds it is written in the record (`Fund.manager`, `Order.rupAssistants`); the behaviour names
+it `self.<reference>`, and `validate` warns when such a reference acts as a principal without the mark. `DOMAIN.md`
+has the «Roles» section (and the record roles), `BEHAVIOR.md` lists both kinds, the web modeler edits the roles
+in its side panel (the «Ruoli» table) and marks the record roles «role» in the class box. Who does what with a role
+(`by`, `owner`, `notify`, `view_as`) stays in `behavior.yaml`; its `roles:` is optional now (it may still add a
+label or a scope the metamodel lacks, and `validate` reports a role described differently in the two files).
 
 ### Rules
 Domain rules the structure cannot express, on the package or on a class: a list of `{id, text}`. The id is a
@@ -165,7 +187,9 @@ room_id}`), `join_table:` names an existing join table, `table:` an existing tab
 | "può essere A, B o C", "stato/tipo/categoria fissa" | enum (a closed list); an open list the users extend is a class |
 | "identificato da", "codice univoco" | `id: true` (or `unique: true`) |
 | "una sola X per ogni combinazione di A e B", "la tariffa per voce e motivo, con un default" | class `unique: [a, b]` (a lookup on several dimensions) |
-| "un utente", "chi ha creato", "il responsabile" (a person who logs in) | reference to `User` |
+| "un utente", "chi ha creato" (a person who logs in) | reference to `User` |
+| "il responsabile del fondo", "gli assistenti dell'ordine" (a user named by the record) | reference to `User` with `role: true` (a record role) |
+| "gli uffici", "il direttore del dipartimento", "chi approva" (what a user can be in the app) | `roles:` of the package (`scope: <Class>` when held per instance), then `by`/`notify` in `behavior.yaml` |
 | "si chiude/approva/passa da … a …" | the states are an enum (or EString) attribute (`stato: StatoOrdine`); states, transitions, who and when are the workflow in `behavior.yaml` |
 | "si calcola come…", "è completo quando…" | the attribute is `derived: true`; its formula is a derivation in `behavior.yaml` |
 | "non può", "deve sempre", "al massimo uno per…" (what no key expresses) | a rule in `rules` of the class or package (`{id, text}`), shown in `docs/DOMAIN.md` |

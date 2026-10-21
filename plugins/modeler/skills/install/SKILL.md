@@ -38,7 +38,9 @@ rivedilo **con l'utente**:
 - containment dedotti da `on delete cascade`, molti-a-molti dalle join table, enum dai `check (… in …)`;
 - `language: it` se i nomi sono italiani; `doc`/`label` per le classi principali;
 - tabelle tecniche dell'app da escludere (`--exclude`, e `MODELER_EXCLUDE` per `model:drift`); una singola
-  colonna tecnica (es. FK verso una tabella esclusa) si esclude con `tabella.colonna`.
+  colonna tecnica (es. FK verso una tabella esclusa) si esclude con `tabella.colonna`. `user_roles` e l'enum `app_role`
+  non si escludono: `reverse` li scrive come `roles:` del metamodello (aggiungi `label`, `doc` e `scope: <Classe>` per i
+  ruoli tenuti per istanza) e `drift` li confronta; se l'app ha un `behavior.yaml` con `roles:`, i due devono coincidere.
 `validate` e `drift` devono dare "OK" e "aligned".
 
 ## 3. Installazione

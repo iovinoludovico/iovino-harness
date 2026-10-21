@@ -350,7 +350,7 @@ test("the class as seen from a state: «1 da <stato>» on rows and connectors, t
   assert.equal(rows.find((r) => r.attr === "hours").text, "hours: EBigDecimal [1 da In attesa di approvazione]");
   assert.equal(rows.find((r) => r.attr === "flatAmount").text, "flatAmount: EBigDecimal [1 da In attesa di approvazione]");
   assert.equal(rows.find((r) => r.attr === "notes").text, "notes: Text");                         // hidden: only in the view
-  assert.equal(rows.find((r) => r.ref === "issuer").text, "↗ issuer: User [1 da In attesa di approvazione]");
+  assert.equal(rows.find((r) => r.ref === "issuer").text, "↗ issuer: User [1 da In attesa di approvazione] «role»");
   assert.ok(!rows.some((r) => r.hidden));
   const plain = Layout.rowItems(mm.classes.Invitation, true, "more", "state");
   assert.deepEqual(plain.map((r) => r.text), Layout.rowItems(mm.classes.Invitation, true, "more", "state", null, {}).map((r) => r.text));

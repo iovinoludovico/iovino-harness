@@ -273,6 +273,14 @@ def reverse(cat: dict[str, Any], package: str = "domain", exclude: set[str] | No
     notes: list[str] = []
     exclude, excluded_columns = split_exclude(exclude)
     exclude |= INTERNAL_TABLES
+    # the roles of the application: the enum app_role and the table user_roles become `roles:` of the metamodel
+    role_enum = next((x for x in cat["enums"] if x["name"] == E.ROLES_ENUM), None)
+    roles: dict[str, Any] | None = None
+    if E.ROLES_TABLE in cat["tables"] or role_enum:
+        roles = {v: {} for v in (role_enum["values"] if role_enum else []) if v not in E.BUILTIN_ROLES}
+        exclude.add(E.ROLES_TABLE)
+        notes.append(f"{E.ROLES_TABLE}/{E.ROLES_ENUM}: the roles are declared in the metamodel (roles: {', '.join(roles) or 'none besides admin'}): "
+                     "add label and doc, and scope: <Class> for the roles held per instance (scope_id)")
     tables = [t for t in cat["tables"] if t not in exclude and (not include or t in include)]
     cols: dict[str, list[dict[str, Any]]] = {}
     for c in cat["columns"]:
@@ -412,7 +420,7 @@ def reverse(cat: dict[str, Any], package: str = "domain", exclude: set[str] | No
         refs[rname] = {"type": dst, "upper": -1, "join_table": jt}
         notes.append(f"{jt}: many-to-many {src}.{rname} -> {dst}")
     ordered = {cls_of[t]: classes[cls_of[t]] for t in tables if t in cls_of}
-    raw = {"package": package, "classes": ordered}
+    raw = {"package": package, **({"roles": roles} if roles else {}), "classes": ordered}
     used = {a["type"] for c in ordered.values() for a in (c.get("attributes") or {}).values()}
     enums = {k: v for k, v in enums.items() if k in used}
     if enums:
@@ -449,6 +457,19 @@ def drift(meta: dict[str, Any], cat: dict[str, Any], exclude: set[str] | None = 
             fk_of[(c["table"], c["columns"][0])] = c
     described = set()
     join_tables = {r.get("join_table") for c in e["classes"].values() for r in c["references"].values() if r.get("join_table")}
+    roles = m.get("roles")
+    if roles:   # the roles: the enum of the keys and the table of who holds them
+        described.add(roles["table"])
+        db_enum = next((x for x in cat["enums"] if x["name"] == roles["enum"]), None)
+        if db_enum is None:
+            out.append(f"MISSING TYPE {roles['enum']} (the roles of the metamodel: {', '.join(roles['values'])})")
+        else:
+            out += [f"MISSING ROLE {v} (not in the database enum {roles['enum']})" for v in roles["values"] if v not in db_enum["values"]]
+            out += [f"NOT IN METAMODEL role {v} (database enum {roles['enum']})" for v in db_enum["values"] if v not in roles["values"]]
+        if roles["table"] not in tables:
+            out.append(f"MISSING TABLE {roles['table']} (who holds the roles: profile_id, role, scope_id)")
+        else:
+            out += [f"MISSING COLUMN {roles['table']}.{c} (roles)" for c in ("profile_id", "role", "scope_id") if c not in cols.get(roles["table"], {})]
     for name, ent in m["entities"].items():
         t = ent["table"]
         described.add(t)
@@ -500,5 +521,6 @@ def drift(meta: dict[str, Any], cat: dict[str, Any], exclude: set[str] | None = 
             if f["many"]:
                 ignored.add(f.get("join_table") or f"{ent['table']}_{f['key']}")
     for t in sorted(tables - ignored):
-        out.append(f"NOT IN METAMODEL table {t}")
+        hint = " (declare the roles in the metamodel: roles:)" if t == E.ROLES_TABLE else ""
+        out.append(f"NOT IN METAMODEL table {t}{hint}")
     return out
