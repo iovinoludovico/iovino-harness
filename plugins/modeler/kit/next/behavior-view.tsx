@@ -13,7 +13,7 @@ type Label = string | Record<string, string> | null | undefined;
 type Typed = { text: string; type?: string } | null | undefined;
 type State = {
   initial?: boolean; final?: boolean; label?: Label; color?: string; owner?: string[]; editable_by?: string[];
-  reminder?: { after?: string; template?: string } | null;
+  requires?: string[]; reminder?: { after?: string; template?: string } | null;
 };
 type Transition = {
   from?: string[]; to?: string | null; by?: string[]; when?: Typed; guard?: Typed; comment?: string | null;
@@ -53,14 +53,14 @@ const TEXT = {
     builtinRoles: "Oltre ai ruoli predefiniti admin (amministratori) e creator (chi ha creato il record).",
     workflow: (c: string) => `Workflow di ${c}`, stateAttr: (a: string) => `Lo stato è l'attributo ${a}.`,
     states: "Stati", state: "Stato", kind: "Tipo", initial: "iniziale", final: "finale", owner: "In attesa di", editableBy: "Modificabile da",
-    reminder: "Sollecito", after: (d: string, t: string) => `dopo ${d} (${t})`,
+    reminder: "Sollecito", requires: "Richiede", after: (d: string, t: string) => `dopo ${d} (${t})`,
     transitions: "Transizioni", transition: "Transizione", fromTo: "Da → A", by: "Chi", when: "Condizione", guard: "Requisito",
     comment: "Commento", required: "obbligatorio", optional: "facoltativo", emits: "Eventi", system: (at: string) => `sistema: ${at}`,
     revert: (by: string, finalBy: string, c: string) => `Ritorno a uno stato precedente: ${by}; da uno stato finale: ${finalBy}; commento ${c}.`,
     derivations: "Attributi calcolati", cls: "Classe", attribute: "Attributo", formula: "Formula", inCode: "calcolato nel codice",
     involved: "Classi coinvolte nel comportamento", feature: "Attributo o riferimento", usedBy: "Usato da",
     involvedNote: "Classi senza workflow di cui il comportamento legge o usa attributi e riferimenti (formule, condizioni, destinatari, ambiti dei ruoli).",
-    kinds: { derivation: "derivazione", guard: "requisito", when: "condizione", at: "scadenza", by: "chi", owner: "in attesa di", editable_by: "modificabile da", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo" } as Record<string, string>,
+    kinds: { derivation: "derivazione", guard: "requisito", when: "condizione", at: "scadenza", by: "chi", owner: "in attesa di", editable_by: "modificabile da", requires: "richiesto nello stato", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo" } as Record<string, string>,
     events: "Eventi", event: "Evento", description: "Descrizione",
     lifecycle: "Ogni classe emette created, updated, deleted; una classe con workflow anche transitioned, completed, reverted, reminder.",
     reactions: "Reazioni", name: "Nome", recipients: "Destinatari", template: "Template",
@@ -72,14 +72,14 @@ const TEXT = {
     builtinRoles: "Besides the built-in roles admin (administrators) and creator (who created the record).",
     workflow: (c: string) => `Workflow of ${c}`, stateAttr: (a: string) => `The state is the attribute ${a}.`,
     states: "States", state: "State", kind: "Kind", initial: "initial", final: "final", owner: "Waiting for", editableBy: "Editable by",
-    reminder: "Reminder", after: (d: string, t: string) => `after ${d} (${t})`,
+    reminder: "Reminder", requires: "Requires", after: (d: string, t: string) => `after ${d} (${t})`,
     transitions: "Transitions", transition: "Transition", fromTo: "From → To", by: "Who", when: "Condition", guard: "Requirement",
     comment: "Comment", required: "required", optional: "optional", emits: "Events", system: (at: string) => `system: ${at}`,
     revert: (by: string, finalBy: string, c: string) => `Back to a previous state: ${by}; from a final state: ${finalBy}; comment ${c}.`,
     derivations: "Derived attributes", cls: "Class", attribute: "Attribute", formula: "Formula", inCode: "computed in code",
     involved: "Classes involved in the behaviour", feature: "Attribute or reference", usedBy: "Used by",
     involvedNote: "Classes without a workflow whose attributes and references the behaviour reads or points to (formulas, conditions, recipients, role scopes).",
-    kinds: { derivation: "derivation", guard: "requirement", when: "condition", at: "due", by: "who", owner: "waiting for", editable_by: "editable by", notify: "recipient", revert: "revert", scope: "role scope" } as Record<string, string>,
+    kinds: { derivation: "derivation", guard: "requirement", when: "condition", at: "due", by: "who", owner: "waiting for", editable_by: "editable by", requires: "required in state", notify: "recipient", revert: "revert", scope: "role scope" } as Record<string, string>,
     events: "Events", event: "Event", description: "Description",
     lifecycle: "Every class emits created, updated, deleted; a class with a workflow also transitioned, completed, reverted, reminder.",
     reactions: "Reactions", name: "Name", recipients: "Recipients", template: "Template",
@@ -195,7 +195,7 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
             )}
             <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t.states}</h4>
             <Table
-              head={[t.state, t.label, t.kind, t.owner, t.editableBy, t.reminder]}
+              head={[t.state, t.label, t.kind, t.owner, t.editableBy, t.requires, t.reminder]}
               rows={states.map(([sn, s]) => [
                 <span key="s" className="inline-flex items-center gap-1">
                   {s.color && <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />}
@@ -205,6 +205,7 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
                 s.initial ? t.initial : s.final ? t.final : "",
                 <Codes key="o" items={s.owner} />,
                 <Codes key="e" items={s.editable_by} />,
+                <Codes key="r" items={s.requires} />,
                 s.reminder?.after ? t.after(s.reminder.after, s.reminder.template ?? `${sn}_reminder`) : "",
               ])}
             />

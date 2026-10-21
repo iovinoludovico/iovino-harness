@@ -45,7 +45,10 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    righe attese, fermati e segnalalo invece di committare. Se la proposta porta una collezione a `lower > 0` o a un
    `upper` finito (es. `orderLines` da `0..*` a `1..*`), il database non impone il vincolo: proponi subito la guardia
    sulla prima transizione del workflow (`orderLines.notEmpty()`; chiedi su quale) o la regola dell'app, con un test
-   della transizione bloccata (skill `behavior`, punto 2); `validate` lo segnala finché manca.
+   della transizione bloccata (skill `behavior`, punto 2); `validate` lo segnala finché manca. Se la proposta rende
+   obbligatorio (`lower: 1`) un attributo o un riferimento di una classe con workflow, chiedi prima «dalla creazione
+   o da quale stato?»: nel secondo caso il metamodello resta `[0..1]` e il campo entra nel `requires` di quello
+   stato in `behavior.yaml` (skill `behavior`, punto 2).
 5. Prosegui come la skill `metamodel`, sezione "Applicare": `npm run model:migrate -- --name <nome>
    --write` (bozza dal metamodello committato a quello appena scritto), TODO risolti, codice, migrazione
    applicata in locale, `npm run model:drift` → "aligned", typecheck, lint e test.

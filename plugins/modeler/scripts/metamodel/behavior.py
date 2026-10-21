@@ -41,7 +41,7 @@ REMINDER_VARS = {"reminder.days", "reminder.count", "reminder.state"}
 STATE_VARS = {"state.key", "state.label"}
 ROLE_KEYS = {"label", "scope", "doc"}
 WORKFLOW_KEYS = {"state", "states", "transitions", "revert", "doc"}
-STATE_KEYS = {"initial", "final", "label", "doc", "owner", "editable_by", "reminder", "color"}
+STATE_KEYS = {"initial", "final", "label", "doc", "owner", "editable_by", "reminder", "color", "requires"}
 TRANSITION_KEYS = {"from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "doc"}
 REVERT_KEYS = {"by", "final_by", "comment"}
 REMINDER_KEYS = {"after", "template"}
@@ -247,7 +247,7 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
             if sn not in ow["states"]:
                 out.append(f"+ state {cn}.{sn}")
             else:
-                ks = changed_keys(ow["states"][sn], st, ("initial", "final", "label", "color", "owner", "editable_by", "reminder"))
+                ks = changed_keys(ow["states"][sn], st, ("initial", "final", "label", "color", "owner", "editable_by", "reminder", "requires"))
                 if ks:
                     out.append(f"~ state {cn}.{sn}: {', '.join(ks)}")
         out += [f"- state {cn}.{sn}" for sn in ow["states"] if sn not in w["states"]]
@@ -325,6 +325,7 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
             states[str(sn)] = {**copy.deepcopy(s), "initial": bool(s.get("initial", False)), "final": bool(s.get("final", False)),
                                "owner": [str(x) for x in _list(s.get("owner"))],
                                "editable_by": [str(x) for x in _list(s.get("editable_by"))],
+                               "requires": [str(x) for x in _list(s.get("requires"))],
                                "reminder": _mapping(rem) if isinstance(rem, dict) else ({"after": rem} if rem else None)}
         transitions: dict[str, Any] = {}
         for tn, tspec in _mapping(w.get("transitions")).items():
@@ -444,14 +445,16 @@ def _check_multiplicities(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -
                                 "a rule of the application at its definitive save")
             elif not _guarded(u, cname, rn):
                 rep.warn(where, f"minimum of the collection ({mult}) not enforced: add a guard on the first transition "
-                                f"of the workflow (e.g. `{rn}.notEmpty()` or `{rn}.size() >= {r['lower']}`)")
+                                f"of the workflow (e.g. `{rn}.notEmpty()` or `{rn}.size() >= {r['lower']}`) or list it in the "
+                                f"`requires` of a state")
 
 
 def _guarded(u: dict[str, Any], cname: str, rn: str) -> bool:
-    """The collection is read by a guard, directly or through a derived attribute of the same class that a guard reads."""
+    """The collection is read by a guard, directly or through a derived attribute of the same class that a guard reads,
+    or a state of the workflow requires it (`requires`: an implicit guard of every transition entering the state)."""
     bucket = u.get(cname) or {}
     entries = (bucket.get("references") or {}).get(rn, [])
-    if any(x["kind"] == "guard" for x in entries):
+    if any(x["kind"] in ("guard", "requires") for x in entries):
         return True
     attrs = bucket.get("attributes") or {}
     for x in entries:
@@ -688,6 +691,7 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
                 rep.error(f"{sw}.reminder", "template: a lowercase identifier")
             if s["final"]:
                 rep.warn(f"{sw}.reminder", "a final state is never reminded")
+        _check_requires(e, cname, sa, sn, s, transitions, f"{sw}.requires", rep)
     ctx = X.Context(e, cname)
     reach: dict[str, set[str]] = {s: set() for s in states}
     for tn, t in transitions.items():
@@ -761,6 +765,72 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
                 _check_principal(b, e, cname, p, f"{rw}.{key}", rep)
         if rv.get("comment") is not None and rv["comment"] not in COMMENT:
             rep.error(f"{rw}.comment", "required or optional")
+
+
+def _check_requires(e: dict[str, Any], cname: str, sa: Any, sn: str, s: dict[str, Any], transitions: dict[str, Any],
+                    where: str, rep: M.Report) -> None:
+    """`requires`: features of the class that must be set (a collection: not empty) to enter the state and while the
+    record stays there. Not derived (computed after the check), not the state attribute, not already required by
+    the metamodel (`lower >= 1`: that is "from creation"), not repeated by a guard of an entering transition."""
+    attrs, refs = E.features(e, cname)
+    seen: set[str] = set()
+    for f in s["requires"]:
+        if f in seen:
+            rep.error(where, f"'{f}' listed twice")
+            continue
+        seen.add(f)
+        spec = attrs.get(f) or refs.get(f)
+        if spec is None:
+            rep.error(where, f"'{f}' is not a feature of {cname}")
+            continue
+        if f == sa:
+            rep.error(where, f"'{f}' is the state attribute")
+            continue
+        if spec.get("derived"):
+            rep.error(where, f"'{f}' is derived: a derived attribute is computed after the check; test it in a guard instead")
+            continue
+        if int(spec.get("lower") or 0) >= 1:
+            rep.warn(where, f"'{f}' is already required by the metamodel (lower {spec['lower']}): the state adds nothing")
+        if s["initial"]:
+            rep.warn(where, f"'{f}' required from the initial state: that is `lower: 1` in the metamodel (required from creation)")
+    if not seen:
+        return
+    ctx = X.Context(e, cname)
+    for tn, t in transitions.items():
+        if t.get("to") != sn or t.get("guard") is None:
+            continue
+        try:
+            node, _ = X.check(str(t["guard"]), ctx, X.BOOL)
+        except X.ExprError:
+            continue
+        repeated = sorted({n["segs"][0] for n in _walk(node)
+                           if n.get("k") == "path" and n.get("call") in ("isSet", "notEmpty") and len(n.get("segs") or []) == 1
+                           and n["segs"][0] in seen})
+        if repeated:
+            rep.warn(where, f"the guard of `{tn}` repeats {', '.join(repeated)}: `requires` already checks them on entering {sn}")
+
+
+def _walk(node: Any):
+    """Every dict of an expression tree, depth first."""
+    if isinstance(node, dict):
+        yield node
+        for v in node.values():
+            yield from _walk(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _walk(v)
+
+
+def requires_tests(e: dict[str, Any], cname: str, s: dict[str, Any]) -> list[tuple[str, str]]:
+    """Each feature a state requires with the expression that tests it: `f.isSet()` for a single value,
+    `f.notEmpty()` for a collection (unknown features are skipped: validate reports them)."""
+    attrs, refs = E.features(e, cname)
+    out: list[tuple[str, str]] = []
+    for f in s.get("requires") or []:
+        spec = attrs.get(f) or refs.get(f)
+        if spec is not None:
+            out.append((f, f"{f}.isSet()" if spec.get("upper", 1) == 1 else f"{f}.notEmpty()"))
+    return out
 
 
 def _check_reactions(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> None:
@@ -978,6 +1048,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "workflow": "Workflow di {cls}", "state_attr": "Lo stato è l'attributo `{attr}`.",
         "states": "Stati", "state": "Stato", "kind": "Tipo", "initial": "iniziale", "final": "finale",
         "owner": "In attesa di", "editable_by": "Modificabile da", "reminder": "Sollecito", "reminder_text": "dopo {after} (`{template}`)",
+        "requires": "Richiede",
         "transitions": "Transizioni", "transition": "Transizione", "from_to": "Da → A", "by": "Chi", "when": "Condizione",
         "guard": "Requisito", "comment": "Commento", "at": "Scadenza", "emits": "Eventi", "notifies": "Avvisa", "system": "sistema: {at}",
         "revert": "Ritorno a uno stato precedente: {by}; da uno stato finale: {final_by}; commento {comment}.",
@@ -1000,6 +1071,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "workflow": "Workflow of {cls}", "state_attr": "The state is the attribute `{attr}`.",
         "states": "States", "state": "State", "kind": "Kind", "initial": "initial", "final": "final",
         "owner": "Waiting for", "editable_by": "Editable by", "reminder": "Reminder", "reminder_text": "after {after} (`{template}`)",
+        "requires": "Requires",
         "transitions": "Transitions", "transition": "Transition", "from_to": "From → To", "by": "Who", "when": "Condition",
         "guard": "Requirement", "comment": "Comment", "at": "Due", "emits": "Events", "notifies": "Notifies", "system": "system: {at}",
         "revert": "Back to a previous state: {by}; from a final state: {final_by}; comment {comment}.",
@@ -1071,8 +1143,9 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
             rem = s.get("reminder")
             rem_text = t["reminder_text"].format(after=rem["after"], template=rem.get("template") or f"{sn}_reminder") if rem else ""
             rows.append([_code(sn), _lbl(s, sn, lang), kind, ", ".join(_code(p) for p in s["owner"]),
-                         ", ".join(_code(p) for p in s["editable_by"]), rem_text])
-        out += [f"### {t['states']}", ""] + E._table([t["state"], t["label"], t["kind"], t["owner"], t["editable_by"], t["reminder"]], rows) + [""]
+                         ", ".join(_code(p) for p in s["editable_by"]), ", ".join(_code(f) for f in s["requires"]), rem_text])
+        out += [f"### {t['states']}", ""] + E._table(
+            [t["state"], t["label"], t["kind"], t["owner"], t["editable_by"], t["requires"], t["reminder"]], rows) + [""]
         rows = []
         named = transition_reactions(b, e, cname)                  # who is notified on the state change, per transition
         by_name = {r.get("name"): r for r in b["reactions"]}
@@ -1146,7 +1219,7 @@ def _typed(text: Any, ctx: X.Context, sql_ctx: X.SqlContext, expect: str | None 
 def uses(b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
     """Which features of which classes the behaviour reads or points to:
     {Class: {attributes: {name: [{kind, of}]}, references: {name: [{kind, of}]}, class: [{kind: "scope", of: role}]}}.
-    `kind` says how (derivation, when, guard, at, by, owner, editable_by, revert, notify, scope), `of` where
+    `kind` says how (derivation, when, guard, at, by, owner, editable_by, requires, revert, notify, scope), `of` where
     (Class.attribute, Class.transition, Class.state, reaction name, role). Computed on the typed trees, so every hop
     of a path is attributed to the class that owns the feature; an expression that does not type-check contributes
     nothing (validate() reports it). Only classes with at least one entry appear."""
@@ -1212,11 +1285,14 @@ def uses(b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
         if cname not in e["classes"]:
             continue
         ctx = X.Context(e, cname)
+        attrs, _ = E.features(e, cname)
         for sn, s in w["states"].items():
             for p in s["owner"]:
                 principal(p, cname, "owner", f"{cname}.{sn}")
             for p in s["editable_by"]:
                 principal(p, cname, "editable_by", f"{cname}.{sn}")
+            for f, _text in requires_tests(e, cname, s):
+                add(cname, "attributes" if f in attrs else "references", f, "requires", f"{cname}.{sn}")
         for tn, t in w["transitions"].items():
             of = f"{cname}.{tn}"
             for p in t["by"]:
@@ -1387,7 +1463,7 @@ def engine_version(raw: dict[str, Any], metamodel: dict[str, Any], cname: str) -
         states.append({"key": sn, "labels": s.get("label") if isinstance(s.get("label"), dict) else {},
                        "kind": "initial" if s["initial"] else "final" if s["final"] else "normal",
                        "color": s.get("color") or "#64748b", "owner": [principal_key(p) for p in s["owner"]],
-                       "editable_by": [principal_key(p) for p in s["editable_by"]],
+                       "editable_by": [principal_key(p) for p in s["editable_by"]], "requires": list(s["requires"]),
                        "reminder_days": days, "reminder_template": (rem or {}).get("template"), "sort": i})
     notify: dict[str, list[dict[str, Any]]] = {}
     for r in b["reactions"]:
@@ -1519,6 +1595,14 @@ def sql_view(raw: dict[str, Any], metamodel: dict[str, Any]) -> str:
                     node, _ = X.check(str(tr[key]), ctx, X.BOOL)
                     out.append(f"--   {tn}.{key}: {X.to_text(node)}")
                     out.append(f"coalesce({X.to_sql(node, sql_ctx)}, false)")
+        for sn, s in w["states"].items():
+            tests = requires_tests(e, cname, s)
+            if not tests:
+                continue
+            out.append(f"--   {sn}.requires: {', '.join(f for f, _ in tests)} (to enter the state, and while the record is there)")
+            for f, text in tests:
+                node, _ = X.check(text, ctx, X.BOOL)
+                out.append(f"coalesce({X.to_sql(node, sql_ctx)}, false)  -- {f}")
         out.append("")
     if b["reactions"]:
         out.append("-- reactions (p_extra: the event's data)")

@@ -35,11 +35,11 @@ REMINDERS = "workflow_reminders"
 MESSAGES = {
     "it": {"not_found": "Record non trovato", "unknown": "Transizione sconosciuta: %", "unavailable": "Transizione non disponibile: %",
            "forbidden": "Operazione non consentita", "timed": "Transizione automatica: non eseguibile a mano",
-           "guard": "Requisiti non soddisfatti: %", "comment": "Commento obbligatorio",
+           "guard": "Requisiti non soddisfatti: %", "required": "Campi richiesti nello stato %: %", "comment": "Commento obbligatorio",
            "state": "Lo stato cambia solo con le transizioni (%_perform_transition)", "revert": "Stato non raggiungibile: %"},
     "en": {"not_found": "Record not found", "unknown": "Unknown transition: %", "unavailable": "Transition not available: %",
            "forbidden": "Operation not allowed", "timed": "Automatic transition: it cannot be performed by hand",
-           "guard": "Requirements not met: %", "comment": "Comment required",
+           "guard": "Requirements not met: %", "required": "Required in state %: %", "comment": "Comment required",
            "state": "The state changes only through the transitions (%_perform_transition)", "revert": "State not reachable: %"},
 }
 
@@ -487,6 +487,16 @@ end;"""
     return out
 
 
+def _requires(cls: _Class, state: dict[str, Any], alias: str) -> list[tuple[str, str]]:
+    """The fields a state requires (`requires`), each with the SQL that tests it on `alias` (`is not null`,
+    `exists (…)` for a collection)."""
+    out: list[tuple[str, str]] = []
+    for f, text in B.requires_tests(cls.e, cls.cname, state):
+        node, _ = X.check(text, X.Context(cls.e, cls.cname), X.BOOL)
+        out.append((f, X.to_sql(node, cls.ctx(alias))))
+    return out
+
+
 def _workflow(cls: _Class, msgs: dict[str, str], notes: list[str]) -> str:
     w = cls.w
     assert w is not None
@@ -496,15 +506,19 @@ def _workflow(cls: _Class, msgs: dict[str, str], notes: list[str]) -> str:
     ctx = X.Context(cls.e, cls.cname)
     out = f"-- ---- {cls.cname}: workflow ----\n"
     # the state is set on insert and changes only through the transitions
+    required: list[str] = []                                   # fields a state requires while the record is there
+    for sn, s in w["states"].items():
+        for f, sql_new in _requires(cls, s, "new"):
+            if cls.attrs.get(f, cls.refs.get(f, {})).get("upper", 1) == 1:
+                required.append(f"  if new.{sc} = {_lit(sn)} and not coalesce({sql_new}, false) then\n"
+                                f"    raise exception {_lit(msgs['required'])}, {_lit(sn)}, {_lit(f)} using errcode = '23514';\n  end if;")
     out += _fn(f"{k}_workflow_guard", "", "trigger", f"""begin
   if tg_op = 'INSERT' then
     if new.{sc} is null then new.{sc} := {_lit(initial)}; end if;
-    return new;
-  end if;
-  if new.{sc} is distinct from old.{sc} and coalesce(current_setting('app.in_transition', true), '') <> 'on' then
+  elsif new.{sc} is distinct from old.{sc} and coalesce(current_setting('app.in_transition', true), '') <> 'on' then
     raise exception {_lit(msgs['state'].replace('%', k))};
   end if;
-  return new;
+{chr(10).join(required) + chr(10) if required else ''}  return new;
 end;""")
     out += (f"drop trigger if exists {k}_10_workflow on {tbl};\n"
             f"create trigger {k}_10_workflow before insert or update on {tbl} for each row execute function public.{k}_workflow_guard();\n")
@@ -525,21 +539,27 @@ end;""")
             node, _ = X.check(str(t["guard"]), ctx, X.BOOL)
             guard = f"coalesce({X.to_sql(node, cls.ctx())}, false)"
         timed = t.get("at") is not None
+        req = _requires(cls, w["states"].get(t["to"]) or {}, "r")     # the fields the target state requires
+        missing = ("array_remove(array[" + ", ".join(f"case when not coalesce({sql}, false) then {_lit(f)} end" for f, sql in req)
+                   + "]::text[], null)") if req else "'{}'::text[]"
         blocks.append(f"""  {'if' if not blocks else 'elsif'} p_key = {_lit(tn)} then
     v_from := {_arr(t['from'])}; v_to := {_lit(t['to'])}; v_allowed := {_arr([B.principal_key(p) for p in t['by']])};
     v_timed := {'true' if timed else 'false'}; v_comment := {_lit(t.get('comment') or 'optional')}; v_emits := {_arr([f'{k}.{ev}' for ev in t['emits']])};
     v_cond := {cond};
-    v_guard := {guard}; v_guard_text := {_lit(X.to_text(X.parse(str(t['guard']))) if t.get('guard') is not None else '')};""")
+    v_guard := {guard}; v_guard_text := {_lit(X.to_text(X.parse(str(t['guard']))) if t.get('guard') is not None else '')};
+    v_missing := {missing};""")
         if not timed:
             label = t.get("label") if isinstance(t.get("label"), dict) else {}
+            guard_ok = f"({guard} and cardinality({missing}) = 0)" if req else guard
+            missing_key = f", 'missing', to_jsonb({missing})" if req else ""
             avail.append(f"""    select jsonb_build_object('key', {_lit(tn)}, 'to', {_lit(t['to'])}, 'label', {_lit(B.json_text(label))}::jsonb,
-                             'comment', {_lit(t.get('comment') or 'optional')}, 'guard_ok', {guard}, 'guard', {_lit(X.to_text(X.parse(str(t['guard']))) if t.get('guard') is not None else '')}) as j
+                             'comment', {_lit(t.get('comment') or 'optional')}, 'guard_ok', {guard_ok}, 'guard', {_lit(X.to_text(X.parse(str(t['guard']))) if t.get('guard') is not None else '')}{missing_key}) as j
      where r.{sc} = any ({_arr(t['from'])}) and {cond} and v_p && (array['admin'] || {_arr([B.principal_key(p) for p in t['by']])})""")
     final_test = f"v_to = any ({_arr(finals)})"
     out += _fn(f"{k}_perform_transition", "p_id uuid, p_key text, p_comment text default null, p_system boolean default false", "uuid", f"""declare
   r public.{tbl.split('.', 1)[1]}%rowtype;
   v_from text[]; v_to text; v_allowed text[]; v_timed boolean; v_comment text; v_emits text[];
-  v_cond boolean; v_guard boolean; v_guard_text text;
+  v_cond boolean; v_guard boolean; v_guard_text text; v_missing text[];
   v_state text; v_hist uuid; v_extra jsonb; v_ev text;
   v_actor uuid := public.current_profile_id();
 begin
@@ -556,6 +576,7 @@ begin
   end if;
   if not v_cond then raise exception {_lit(msgs['unavailable'])}, p_key; end if;
   if not v_guard then raise exception {_lit(msgs['guard'])}, v_guard_text; end if;
+  if cardinality(v_missing) > 0 then raise exception {_lit(msgs['required'])}, v_to, array_to_string(v_missing, ', ') using errcode = '23514'; end if;
   if v_comment = 'required' and nullif(trim(coalesce(p_comment, '')), '') is null then raise exception {_lit(msgs['comment'])}; end if;
   v_state := r.{sc};
   perform set_config('app.in_transition', 'on', true);

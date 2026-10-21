@@ -1019,7 +1019,7 @@
       if (ow.state !== w.state) out.push(`~ workflow ${cn}: state attribute ${ow.state} -> ${w.state}`);
       for (const [sn, st] of Object.entries(w.states || {})) {
         if (!ow.states?.[sn]) out.push(`+ state ${cn}.${sn}`);
-        else { const ks = keysChanged(ow.states[sn], st, ["initial", "final", "label", "color", "owner", "editable_by", "reminder"]); if (ks.length) out.push(`~ state ${cn}.${sn}: ${ks.join(", ")}`); }
+        else { const ks = keysChanged(ow.states[sn], st, ["initial", "final", "label", "color", "owner", "editable_by", "reminder", "requires"]); if (ks.length) out.push(`~ state ${cn}.${sn}: ${ks.join(", ")}`); }
       }
       for (const sn of Object.keys(ow.states || {})) if (!w.states?.[sn]) out.push(`- state ${cn}.${sn}`);
       for (const [tn, tr] of Object.entries(w.transitions || {})) {
@@ -1074,7 +1074,7 @@
       derived: "calcolato", inCode: "calcolato nel codice", formula: "formula",
       legendWf: "classe con workflow", legendInvolved: "coinvolta nel comportamento", legendStruct: "solo struttura",
       usedBy: "usato da", derivation: "derivazione", guard: "requisito", when: "condizione", at: "scadenza", by: "chi",
-      owner: "in attesa di", editable_by: "modificabile da", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo",
+      owner: "in attesa di", editable_by: "modificabile da", requires: "richiede", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo",
       addWorkflow: "Workflow", removeWorkflow: "Rimuovi workflow", stateAttr: "attributo di stato", stateAttrHint: "serve un attributo EString o enum",
       state: "Stato", kind: "Tipo", initial: "iniziale", final: "finale", color: "Colore", reminder: "Sollecito",
       transition: "Transizione", from: "Da", to: "A", who: "Chi", comment: "Commento", required: "obbligatorio", optional: "facoltativo",
@@ -1083,6 +1083,7 @@
       resize: "Trascina per ridimensionare, doppio click per tornare all'altezza automatica",
       wfNoInitial: "nessuno stato iniziale", wfManyInitial: "più stati iniziali", wfNoFinal: "nessuno stato finale",
       wfBadState: "stato sconosciuto", wfNoActor: "senza chi né scadenza", wfBadKey: "chiave non valida", wfStateAttr: "attributo di stato mancante",
+      wfBadRequires: "richiede una feature che la classe non ha:", requiresHint: "attributi o riferimenti da valorizzare per entrare nello stato",
       wfEnumStates: "gli stati devono essere i letterali dell'enum", rxBadEvent: "evento Classe.evento",
     },
     en: {
@@ -1104,7 +1105,7 @@
       derived: "derived", inCode: "computed in code", formula: "formula",
       legendWf: "class with a workflow", legendInvolved: "involved in the behaviour", legendStruct: "structure only",
       usedBy: "used by", derivation: "derivation", guard: "requirement", when: "condition", at: "due", by: "who",
-      owner: "waiting for", editable_by: "editable by", notify: "recipient", revert: "revert", scope: "role scope",
+      owner: "waiting for", editable_by: "editable by", requires: "requires", notify: "recipient", revert: "revert", scope: "role scope",
       addWorkflow: "Workflow", removeWorkflow: "Remove workflow", stateAttr: "state attribute", stateAttrHint: "needs an EString or enum attribute",
       state: "State", kind: "Kind", initial: "initial", final: "final", color: "Colour", reminder: "Reminder",
       transition: "Transition", from: "From", to: "To", who: "Who", comment: "Comment", required: "required", optional: "optional",
@@ -1113,6 +1114,7 @@
       resize: "Drag to resize, double click for the automatic height",
       wfNoInitial: "no initial state", wfManyInitial: "several initial states", wfNoFinal: "no final state",
       wfBadState: "unknown state", wfNoActor: "neither who nor due", wfBadKey: "invalid key", wfStateAttr: "state attribute missing",
+      wfBadRequires: "requires a feature the class does not have:", requiresHint: "attributes or references that must be set to enter the state",
       wfEnumStates: "the states must be the literals of the enum", rxBadEvent: "event as Class.event",
     },
   };
@@ -1614,6 +1616,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         if (initial.length > 1) out.push(`${cn}: ${t.wfManyInitial}`);
         if (!states.some((sn) => w.states[sn].final)) out.push(`${cn}: ${t.wfNoFinal}`);
         for (const sn of states) if (!KEY.test(sn)) out.push(`${cn}.${sn}: ${t.wfBadKey}`);
+        for (const sn of states) for (const f of [].concat(w.states[sn].requires || [])) if (!c.attributes[f] && !c.references[f]) out.push(`${cn}.${sn}: ${t.wfBadRequires} ${f}`);
         for (const [tn, tr] of Object.entries(w.transitions || {})) {
           if (!KEY.test(tn)) out.push(`${cn}.${tn}: ${t.wfBadKey}`);
           for (const f of [].concat(tr.from || [])) if (!w.states?.[f]) out.push(`${cn}.${tn}: ${t.wfBadState} ${f}`);
@@ -2015,6 +2018,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           el("option", { value: "", selected: !st.initial && !st.final }, "—"), el("option", { value: "initial", selected: !!st.initial }, t.initial), el("option", { value: "final", selected: !!st.final }, t.final))),
         el("td", {}, el("input", { class: "w", value: (st.owner || []).join(", "), title: t.listHint, onchange: (ev) => { st.owner = this._list(ev.target.value); this._bhChanged(); } })),
         el("td", {}, el("input", { class: "w", value: (st.editable_by || []).join(", "), title: t.listHint, onchange: (ev) => { st.editable_by = this._list(ev.target.value); this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "w", value: (st.requires || []).join(", "), title: t.requiresHint, onchange: (ev) => { const v = this._list(ev.target.value); if (v.length) st.requires = v; else delete st.requires; this._bhChanged(); } })),
         el("td", {}, el("input", { class: "n", value: st.reminder?.after || "", placeholder: "7d", onchange: (ev) => { const v = ev.target.value.trim(); st.reminder = v ? { ...(st.reminder || {}), after: v } : null; this._bhChanged(); } })),
         el("td", {}, el("button", { class: "x", title: t.del, onclick: () => { delete states[sn]; this._bhChanged(); } }, "×"))));
       const stateOptions = (cur) => Object.keys(states).map((sn) => el("option", { value: sn, selected: sn === cur }, sn));
@@ -2035,7 +2039,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       return el("div", { class: "wfedit" },
         el("div", {},
           el("h4", {}, `${t.states} · ⟳ ${w.state}`),
-          el("table", {}, el("tr", {}, ...[t.name, t.label, t.color, t.kind, t.owner, t.editable_by, t.reminder, ""].map((h) => el("th", {}, h))), ...stateRows),
+          el("table", {}, el("tr", {}, ...[t.name, t.label, t.color, t.kind, t.owner, t.editable_by, t.requires, t.reminder, ""].map((h) => el("th", {}, h))), ...stateRows),
           el("button", { onclick: () => { states[this._uniqueName("state", Object.keys(states))] = {}; this._bhChanged(); } }, `+ ${t.state}`)),
         el("div", {},
           el("h4", {}, t.transitions),
