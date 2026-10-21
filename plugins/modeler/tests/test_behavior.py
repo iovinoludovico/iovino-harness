@@ -714,10 +714,11 @@ class BehaviorTests(unittest.TestCase):
         b["workflows"]["Invitation"]["states"]["pending_director"]["owner"] = ["director@department"]
         self.assertFalse(any("pending_director.owner" in x for x in errors(b, m)))
         # a reference with the same name as a role: say how to write each
-        b = behavior()
+        b, m = behavior(), meta()
         b["roles"].pop("issuer")
+        m["roles"].pop("issuer")                                       # declared in both files: gone from both
         b["workflows"]["Invitation"]["states"]["draft"]["owner"] = ["issuer"]
-        self.assertTrue(any("unknown role 'issuer' (the reference Invitation.issuer: write self.issuer)" in x for x in errors(b)))
+        self.assertTrue(any("unknown role 'issuer' (the reference Invitation.issuer: write self.issuer)" in x for x in errors(b, m)))
 
     def test_roles_events_reactions_subscriptions(self):
         b = behavior()
@@ -790,6 +791,56 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(errors({}), [])                            # an empty behaviour is fine
         with self.assertRaises(M.ModelError):
             B.loads("- just a list\n")
+
+
+class RolesFromTheMetamodelTests(unittest.TestCase):
+    """The roles are declared in the metamodel (`roles:`): the behaviour resolves its principals against them."""
+
+    def test_roles_of_the_metamodel_resolve_the_principals(self):
+        m, b = meta(), behavior()
+        self.assertEqual(B.validate(b, m).warnings, [])                 # the fixture declares them in both files, identically
+        b.pop("roles")                                                  # the behaviour without its own roles: nothing changes
+        rep = B.validate(b, m)
+        self.assertEqual((rep.errors, rep.warnings), ([], []))
+        bb = B.bind(b, E.expand(m))
+        self.assertEqual(bb["roles"]["director"], {"scope": "Department", "label": {"it": "Direttore di dipartimento", "en": "Department director"},
+                                                   "doc": "", "source": "metamodel"})
+        self.assertEqual(bb["behavior_roles"], {})
+        rt = B.runtime_json(b, m)
+        self.assertEqual(rt["roles"]["office"]["source"], "metamodel")
+        self.assertNotIn("behavior_roles", rt)
+        self.assertNotIn("roles", B.from_editor(rt))                     # the metamodel's roles are not written into behavior.yaml
+        self.assertEqual(B.diff(b, B.from_editor(rt)), [])
+        self.assertEqual(B.runtime_json(behavior(), m)["roles"]["office"]["source"], "both")
+        md = B.to_markdown(b, m)
+        self.assertIn("| director | Department director | per Department |", md)
+        self.assertIn("| self.issuer | issuer | record role (Invitation) |", md)
+        self.assertIn("The roles are declared in the metamodel", md)
+        from metamodel import engine as G
+        sql, _ = G.engine_sql(b, m)
+        self.assertIn("public.has_role('director', ", sql)                # the scope resolved through the metamodel's role
+        self.assertIn("public.role_members('office', null)", sql)
+        # both files: the metamodel wins; differences are reported
+        b, m = behavior(), meta()
+        b["roles"]["director"]["scope"] = "Fund"
+        b["roles"]["office"]["label"] = {"it": "Uffici", "en": "Offices"}
+        b["roles"]["boss"] = {}
+        rep = B.validate(b, m)
+        self.assertTrue(any("roles.director: scope Fund here, Department in the metamodel" in x for x in rep.errors), rep.errors)
+        self.assertTrue(any("roles.office: label differs from the metamodel's" in x for x in rep.warnings), rep.warnings)
+        self.assertTrue(any("roles.boss: the metamodel declares the roles (office, issuer, director) and lacks 'boss'" in x for x in rep.warnings), rep.warnings)
+        # a record role: a direct reference to User acting as a principal is marked role: true
+        m, b = meta(), behavior()
+        m["classes"]["Invitation"]["references"]["issuer"] = "User"
+        w = [x for x in B.validate(b, m).warnings if "role: true" in x]
+        self.assertTrue(w and all("'self.issuer' acts as a role of the record: mark Invitation.issuer" in x for x in w), w)
+        self.assertFalse(any("self.guest.email" in x for x in w))
+        # the form before the roles moved: the behaviour's roles alone, no report
+        m = meta()
+        del m["roles"]
+        rep = B.validate(behavior(), m)
+        self.assertEqual((rep.errors, rep.warnings), ([], []))
+        self.assertEqual(B.runtime_json(behavior(), m)["roles"]["office"]["source"], "behavior")
 
 
 class DerivedInTheMetamodelTests(unittest.TestCase):

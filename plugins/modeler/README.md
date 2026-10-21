@@ -38,6 +38,11 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   the same road: `/modeler:metamodel` edits a draft in `.modeler/drafts/` and `npm run model:propose` saves it as a
   pending proposal (`author: claude`, «from the prompt»), so the modeler shows it before it is applied.
 - `drift` compares the metamodel with a live database (local Supabase by default): "aligned" is the invariant.
+- The **roles** of the application users are part of the metamodel (`roles:` with `label`, `doc`, `scope: <Class>` for
+  the ones held per instance; `admin` built in), stored as the enum `app_role` and the table `user_roles` that `migrate`
+  creates when missing and `drift` compares (`reverse` writes them from an existing database); a reference to `User`
+  marked `role: true` is a record role (`Fund.manager`). `DOMAIN.md` has the «Roles» section, the web modeler edits
+  them in its side panel, the behaviour resolves `by`/`notify`/`view_as` against them (its own `roles:` is optional).
 - Behaviour is the second model, **`behavior.yaml`** next to the metamodel: roles, derivations of the attributes
   marked `derived: true`, workflows (states with the fields they `require` and, through `model`, **the class as seen
   from the state**: an overlay that locks, hides or narrows features per state, enforced by the engine, shown as a

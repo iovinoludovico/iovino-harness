@@ -42,8 +42,13 @@ il client lo supporta); `--format storage` mostra tabelle e colonne.
 ## 3. Dalla descrizione al metamodello
 1. Estrai classi, attributi e relazioni con la tabella "From the user's words to the metamodel" del
    riferimento. Mantieni nomi e lingua dell'utente (nomi italiani → `language: it`).
+   «Chi può fare cosa» parte da qui: i ruoli dell'applicazione (`gli uffici`, `il direttore del dipartimento`) sono
+   `roles:` del metamodello (`scope: <Classe>` se tenuti per istanza di una classe; `admin` è predefinito), memorizzati
+   come enum `app_role` e tabella `user_roles` (la migrazione li crea se mancano; `drift` li confronta); un utente
+   nominato dal record («il responsabile del fondo», «gli assistenti dell'ordine») è un `ref` a `User` con `role: true`
+   (ruolo di record). Chi fa cosa con quei ruoli (`by`, `notify`, `view_as`) va poi in `behavior.yaml`.
 2. **Elenca le ambiguità che cambiano la struttura** (molteplicità, containment o riferimento, opposite,
-   attributo o classe, enum o classe, `User` o una classe persona, ereditarietà o enum di tipo). Chiedile in
+   attributo o classe, enum o classe, `User` o una classe persona, ruolo dell'app o ruolo di record, ereditarietà o enum di tipo). Chiedile in
    **un solo giro**, al massimo 4 domande a scelta multipla con l'opzione consigliata per prima; le minori
    decidile tu e riportale come ipotesi. Esempio per "una Persona ha associato un Account":
    - Account obbligatorio per ogni Persona? (`[1]` dalla creazione / `[0..1]` / da uno stato del workflow in poi:

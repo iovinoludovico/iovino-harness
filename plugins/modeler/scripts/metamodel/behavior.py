@@ -145,7 +145,10 @@ def from_editor(doc: dict[str, Any]) -> dict[str, Any]:
     for key in ("metamodel", "doc"):
         if doc.get(key):
             raw[key] = doc[key]
-    raw["roles"] = {rn: {k: v for k, v in (r or {}).items()} for rn, r in _mapping(doc.get("roles")).items()}
+    own = {rn: {k: v for k, v in (r or {}).items() if k != "source"} for rn, r in _mapping(doc.get("roles")).items()
+           if _mapping(r).get("source") != "metamodel"}               # the metamodel's roles live in domain.ecore.yaml
+    if own:
+        raw["roles"] = own
     if doc.get("view_as") is not None:
         raw["view_as"] = dict(_mapping(doc["view_as"]))
     raw["derivations"] = {cn: {an: text(ex) for an, ex in _mapping(ders).items()} for cn, ders in _mapping(doc.get("derivations")).items()}
@@ -412,6 +415,31 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def bind(raw: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
+    """The canonical behaviour with the roles resolved: `roles:` of the metamodel (expanded) first, `roles:` of
+    behavior.yaml adds label, doc or scope where the metamodel has none and declares the roles the metamodel lacks
+    (the form before the roles moved to the metamodel). Every role carries `source`: metamodel, behavior or both;
+    `behavior_roles` keeps what behavior.yaml declared, for validate() and the file writers."""
+    b = expand(raw)
+    merged: dict[str, Any] = {}
+    for rn, r in (e.get("roles") or {}).items():
+        merged[rn] = {"scope": r.get("scope"), "label": r.get("label"), "doc": r.get("doc") or "", "source": "metamodel"}
+    for rn, r in b["roles"].items():
+        if rn in merged:
+            m = merged[rn]
+            for k in ("scope", "label"):
+                if m.get(k) is None and r.get(k) is not None:
+                    m[k] = r[k]
+            if not m["doc"]:
+                m["doc"] = r.get("doc") or ""
+            m["source"] = "both"
+        else:
+            merged[rn] = {**r, "source": "behavior"}
+    b["behavior_roles"] = b["roles"]
+    b["roles"] = merged
+    return b
+
+
 # --------------------------------------------------------------------------- #
 # Events and contexts
 # --------------------------------------------------------------------------- #
@@ -538,7 +566,7 @@ def validate(raw: dict[str, Any], metamodel: dict[str, Any]) -> M.Report:
         rep.error("behavior", f"unknown top-level keys: {', '.join(sorted(map(str, unknown)))} "
                   f"(allowed: {', '.join(sorted(TOP_KEYS))})")
     e = E.expand(metamodel)
-    b = expand(raw)
+    b = bind(raw, e)
     _check_roles(b, e, rep)
     _check_view_as(b, rep)
     _check_derivations(b, e, rep)
@@ -604,8 +632,19 @@ def _guarded(u: dict[str, Any], cname: str, rn: str) -> bool:
 
 
 def _check_roles(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> None:
-    for rn, r in b["roles"].items():
+    """`roles:` of behavior.yaml: well formed, and consistent with the roles the metamodel declares (the two files
+    may both describe a role; they must agree)."""
+    for rn, r in b.get("behavior_roles", b["roles"]).items():
         where = f"roles.{rn}"
+        mr = (e.get("roles") or {}).get(rn)
+        if mr is not None:
+            if r.get("scope") is not None and r.get("scope") != mr.get("scope"):
+                rep.error(where, f"scope {r['scope']} here, {mr.get('scope') or 'none'} in the metamodel: one declaration (the metamodel's)")
+            for k in ("label", "doc"):
+                if r.get(k) not in (None, "") and mr.get(k) not in (None, "") and r.get(k) != mr.get(k):
+                    rep.warn(where, f"{k} differs from the metamodel's: the metamodel wins (drop it here)")
+        elif e.get("roles"):
+            rep.warn(where, f"the metamodel declares the roles ({', '.join(e['roles'])}) and lacks '{rn}': declare it there (roles:) too")
         if not IDENT.match(rn):
             rep.error(where, "role names are lowercase identifiers (letters, digits, _)")
         if rn in BUILTIN_PRINCIPALS:
@@ -749,6 +788,13 @@ def _check_principal(b: dict[str, Any], e: dict[str, Any], cname: str, p: str, w
         if not ok:
             want = "a User reference or an Email attribute" if notify else "a User reference"
             rep.error(where, f"'{p}' is {X.type_name(t)}: a principal path leads to {want}")
+            return
+        hop = p[len("self."):]
+        if "." not in hop and cname in e["classes"] and base == X.CLASS + "User":
+            _, refs = E.features(e, cname)
+            if hop in refs and not refs[hop].get("role"):
+                rep.warn(where, f"'{p}' acts as a role of the record: mark {cname}.{hop} with `role: true` in the metamodel "
+                                "(listed with the roles)")
         return
     m = ROLE_AT.match(p)
     if not m:
@@ -1312,6 +1358,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "view_as": "**Vedi come**: chiunque può limitare la propria sessione a uno dei suoi ruoli; {who} possono usare l'app come un altro utente, con le azioni intestate all'utente reale (`impersonated_by`) e registrate (`view_as_log`).",
         "nobody": "nessuno",
         "scope_per": "per {cls}", "builtin_roles": "Oltre ai ruoli predefiniti `admin` (amministratori) e `creator` (chi ha creato il record).",
+        "record_role": "di record ({cls})", "roles_in_metamodel": "I ruoli sono dichiarati nel metamodello (`roles:` di `domain.ecore.yaml`).",
         "workflow": "Workflow di {cls}", "state_attr": "Lo stato è l'attributo `{attr}`.",
         "states": "Stati", "state": "Stato", "kind": "Tipo", "initial": "iniziale", "final": "finale",
         "owner": "In attesa di", "editable_by": "Modificabile da", "reminder": "Sollecito", "reminder_text": "dopo {after} (`{template}`)",
@@ -1339,6 +1386,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "view_as": "**View as**: anyone may restrict their session to one of their roles; {who} may use the application as another user, with what they do attributed to the real user (`impersonated_by`) and logged (`view_as_log`).",
         "nobody": "nobody",
         "scope_per": "per {cls}", "builtin_roles": "Besides the built-in roles `admin` (administrators) and `creator` (who created the record).",
+        "record_role": "record role ({cls})", "roles_in_metamodel": "The roles are declared in the metamodel (`roles:` of `domain.ecore.yaml`).",
         "workflow": "Workflow of {cls}", "state_attr": "The state is the attribute `{attr}`.",
         "states": "States", "state": "State", "kind": "Kind", "initial": "initial", "final": "final",
         "owner": "Waiting for", "editable_by": "Editable by", "reminder": "Reminder", "reminder_text": "after {after} (`{template}`)",
@@ -1412,17 +1460,20 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
     """The behaviour explained: roles, one section per workflow (diagram, states, transitions), derivations, events,
     reactions, subscriptions. Deterministic. Assumes a valid behaviour model."""
     e = E.expand(metamodel)
-    b = expand(raw)
+    b = bind(raw, e)
     lang = lang or e["language"]
     t = DOC_TEXT.get(lang) or DOC_TEXT["en"]
     out = [f"# {t['title'].format(package=e['package'])}", ""]
     if b["doc"]:
         out += [str(b["doc"]), ""]
     out += [f"> {t['note']}", ""]
-    if b["roles"]:
+    record_roles = [(cn, rn, r) for cn, c in e["classes"].items() for rn, r in c["references"].items() if r.get("role")]
+    if b["roles"] or record_roles:
         rows = [[rn, E._label(r.get("label"), lang), t["scope_per"].format(cls=r["scope"]) if r.get("scope") else t["scope_global"]]
                 for rn, r in b["roles"].items()]
-        out += [f"## {t['roles']}", ""] + E._table([t["role"], t["label"], t["scope"]], rows) + ["", t["builtin_roles"], ""]
+        rows += [[f"self.{rn}", E._label(r.get("label"), lang) or rn, t["record_role"].format(cls=cn)] for cn, rn, r in record_roles]
+        note = t["builtin_roles"] + (" " + t["roles_in_metamodel"] if e.get("roles") else "")
+        out += [f"## {t['roles']}", ""] + E._table([t["role"], t["label"], t["scope"]], rows) + ["", note, ""]
     if b["view_as"] is not None:
         who = ", ".join(_code(p) for p in b["view_as"]["users_by"]) or t["nobody"]
         out += [t["view_as"].format(who=who), ""]
@@ -1638,7 +1689,8 @@ def runtime_json(raw: dict[str, Any], metamodel: dict[str, Any]) -> dict[str, An
     """The behaviour as the application reads it: canonical form, every expression typed (text, type, tree, SQL),
     the entity key of each class (snake_case: event prefix, workflow entity). Assumes a valid behaviour model."""
     e = E.expand(metamodel)
-    b = expand(raw)
+    b = bind(raw, e)
+    b.pop("behavior_roles", None)
     b["entities"] = {cname: M.snake(cname) for cname in list(b["workflows"]) + list(b["derivations"]) + list(b["events"])}
     b["uses"] = uses(b, e)                 # on the texts, before they become typed dicts below
     for cname, ders in b["derivations"].items():
@@ -1765,7 +1817,7 @@ def engine_version(raw: dict[str, Any], metamodel: dict[str, Any], cname: str) -
     principals, clauses, trigger, offset and event names. Reactions on `<Class>.transitioned` naming one transition
     become its `notify`. Raises ExprError for a guard the engine cannot evaluate."""
     e = E.expand(metamodel)
-    b = expand(raw)
+    b = bind(raw, e)
     w = b["workflows"][cname]
     entity = M.snake(cname)
     ctx = X.Context(e, cname)
@@ -1913,7 +1965,7 @@ def sql_view(raw: dict[str, Any], metamodel: dict[str, Any]) -> str:
     """Derivations, guards, conditions and reaction conditions as PostgreSQL on a row `r` of each class: a preview
     of what the engine evaluates (to paste into functions, triggers or generated columns)."""
     e = E.expand(metamodel)
-    b = expand(raw)
+    b = bind(raw, e)
     out: list[str] = []
     for cname, ders in b["derivations"].items():
         attrs, _ = E.features(e, cname)

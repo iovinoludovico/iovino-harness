@@ -57,7 +57,10 @@ reactions:                              # one reaction = notify someone when an 
 subscriptions:                          # webhook subscribers (n8n, …)
   - {name: n8n, url_env: N8N_WEBHOOK_URL, events: [Invitation.*, Guest.created, user.*]}
 ```
-Top-level keys: `metamodel doc roles view_as derivations workflows events reactions subscriptions templates`. Quote an
+Top-level keys: `metamodel doc roles view_as derivations workflows events reactions subscriptions templates`. The roles
+are declared in the metamodel (`roles:` of `domain.ecore.yaml`, `ecore-notation.md` «Roles»): `roles:` here is
+optional, for a label, a doc or a scope the metamodel lacks (and for the files written before the roles moved; `validate`
+warns about a role the metamodel does not declare and reports one described differently in the two files). Quote an
 expression that contains `[`, `:` or `#` (YAML flow syntax): `when: "transition in [submit, resubmit]"`. The
 reaction key is `event`, not `on` (`on` is a boolean in YAML).
 
@@ -91,10 +94,10 @@ in another table, an external value) is computed in code and reported as a warni
 | form | meaning |
 |---|---|
 | `admin`, `creator` | built in: the administrators; who created the record |
-| `office` | a role declared in `roles` without scope |
+| `office` | a role declared in the metamodel's `roles` (or here) without scope |
 | `director` | a role with `scope: Department`: held per department, the record's one being the only single-valued reference of the class to Department (own or inherited) |
 | `director@department` | the same, naming the reference when the class has none or several to the scope class |
-| `self.issuer`, `self.department.createdBy` | the user(s) reached by a navigation (a `User` reference; through a many-valued reference, all of them) |
+| `self.issuer`, `self.department.createdBy` | the user(s) reached by a navigation (a `User` reference; through a many-valued reference, all of them); a direct reference used this way is a **record role**: mark it `role: true` in the metamodel (`validate` warns until then) |
 | `self.guest.email` | in `notify` only: also an `Email` attribute |
 
 A principal path always starts with `self.`: this tells the reference `issuer` apart from a role named `issuer`.
@@ -290,7 +293,7 @@ workflow, derivations or reactions (`<entity>` = the snake_case of the class, `i
 ## From the user's words to the behaviour model
 | the user says | behaviour model |
 |---|---|
-| "chi approva / gli uffici / il direttore del dipartimento" | `roles` (with `scope` when held per instance of a class) |
+| "chi approva / gli uffici / il direttore del dipartimento" | `roles:` of the metamodel (with `scope` when held per instance of a class), then the principals here |
 | "passa da … a … quando …", "si può … solo se …" | a transition with `when` (hidden) or `guard` (blocked with an explanation) |
 | "dopo N giorni dalla data di fine", "scade il …" | a timed transition `at: <date attribute> + Nd` |
 | "si calcola come", "è completo quando" | `derived: true` on the attribute (metamodel) and its formula in `derivations` |

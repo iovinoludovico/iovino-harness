@@ -105,6 +105,11 @@ metamodello, poi `npm run model:propose`), così compare in `/admin/model` prima
 mano o senza modellatore modifica il file direttamente.
 
 ## 3. Se serve anche la struttura
+I ruoli (`gli uffici`, `il direttore`) sono `roles:` del metamodello (`domain.ecore.yaml`, notazione «Roles»), non di
+`behavior.yaml`: un ruolo nuovo si dichiara lì (con `scope: <Classe>` se tenuto per istanza) e la migrazione aggiunge il
+letterale ad `app_role`; `roles:` qui resta solo per etichette o ambiti che il metamodello non ha (`validate` segnala le
+differenze). Un utente nominato dal record usato come principal (`self.rupAssistants`) è un ruolo di record: `role: true`
+sul riferimento a `User` nel metamodello (`validate` avvisa finché manca).
 Un attributo `derived` nuovo, un attributo di stato o un letterale dell'enum che manca, un riferimento usato da una
 guardia o da un destinatario (`self.fund.manager`): si aggiungono a `domain.ecore.yaml` **nella stessa modifica**,
 seguendo `/modeler:metamodel` (sezioni 3 e 4: ambiguità della struttura, migrazione con i `TODO(modeler)`

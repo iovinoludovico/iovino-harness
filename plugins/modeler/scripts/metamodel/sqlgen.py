@@ -215,11 +215,12 @@ def migration(old_meta: dict[str, Any], new_meta: dict[str, Any], origin: str = 
             risky += [f"-- {TODO}: literals {', '.join(removed)} removed from {en}: migrate the rows that use them, "
                       "then narrow the check / recreate the type"]
             notes.append(f"enum {en}: literals removed ({', '.join(removed)})")
+    roles = _roles(old.get("roles"), new.get("roles"), risky, notes)
     for t in rls:
         risky.append(f"-- {TODO}: row level security is on for {t} with no policy (nobody can read it): add the "
                      "policies and grants following the app's conventions")
     sections = [("New tables", created), ("References of the new tables", new_refs), ("Changed tables", changed),
-                ("Join tables", joins), ("Enum literals", enums), ("To review", risky)]
+                ("Join tables", joins), ("Enum literals", enums), ("Roles", roles), ("To review", risky)]
     body = [f"-- {title}\n" + "\n".join(lines) for title, lines in sections if lines]
     if not any(lines for title, lines in sections if title != "To review") and not risky:
         return "", notes
@@ -255,6 +256,55 @@ def _compare(st: dict[str, Any], t: str, g: dict[str, Any], f: dict[str, Any], c
         changed += [f"alter table {col} drop constraint if exists {name};",
                     f"alter table {col} add constraint {name} foreign key ({_q(key)}) references "
                     f"public.{_q(_target_table(st, f))} (id) on delete {_on_delete(f)};"]
+
+
+def _roles(old: dict[str, Any] | None, new: dict[str, Any] | None, risky: list[str], notes: list[str]) -> list[str]:
+    """The roles of the metamodel in the database: the enum `app_role` and the table `user_roles` (created when the
+    application has none: an appforge app already has both), a new literal per added role; a removed role is left to
+    review (Postgres cannot drop an enum value: its rows must be migrated first)."""
+    if not new:
+        if old:
+            risky.append(f"-- {TODO}: the roles left the metamodel: {old['enum']} and {old['table']} stay (drop them by hand if the app no longer uses them)")
+            notes.append("roles removed from the metamodel (type and table kept)")
+        return []
+    enum, table = _q(new["enum"]), _q(new["table"])
+    lines: list[str] = []
+    if not old:
+        values = ", ".join(_lit(v) for v in new["values"])
+        lines += ["do $$", "begin",
+                  "  if not exists (select 1 from pg_type t join pg_namespace n on n.oid = t.typnamespace",
+                  f"                 where n.nspname = 'public' and t.typname = {_lit(new['enum'])}) then",
+                  f"    create type public.{enum} as enum ({values});",
+                  "  end if;",
+                  "end $$;",
+                  f"create table if not exists public.{table} (",
+                  "  id         uuid primary key default gen_random_uuid(),",
+                  "  profile_id uuid not null,",
+                  f"  role       public.{enum} not null,",
+                  "  scope_id   uuid,",
+                  "  created_at timestamptz not null default now(),",
+                  f"  constraint {_q(new['table'] + '_unique')} unique nulls not distinct (profile_id, role, scope_id)",
+                  ");",
+                  "do $$", "begin",
+                  f"  if to_regclass('public.profiles') is not null and not exists (select 1 from pg_constraint where conname = {_lit(new['table'] + '_profile_fk')}) then",
+                  f"    alter table public.{table} add constraint {_q(new['table'] + '_profile_fk')} foreign key (profile_id) references public.profiles (id) on delete cascade;",
+                  "  end if;",
+                  "end $$;",
+                  f"create index if not exists {_q(new['table'] + '_profile_idx')} on public.{table} (profile_id);",
+                  f"create index if not exists {_q(new['table'] + '_scope_idx')} on public.{table} (scope_id);",
+                  f"alter table public.{table} enable row level security;"]
+        risky.append(f"-- {TODO}: {new['table']}: if the table was just created, add its policies (administrators manage, a user reads "
+                     "their own rows) and grants; the engine's has_role/role_members read it when the app defines none")
+        notes.append(f"roles: {new['enum']} and {new['table']} created if missing")
+    added = [v for v in new["values"] if not old or v not in old["values"]]
+    # idempotent: an existing type (appforge) gains the roles it lacks; a type just created already has them
+    lines += [f"alter type public.{enum} add value if not exists {_lit(v)};" for v in added]
+    removed = [v for v in (old["values"] if old else []) if v not in new["values"]]
+    if removed:
+        risky.append(f"-- {TODO}: roles {', '.join(removed)} removed from the metamodel: migrate the rows of {new['table']} that hold them "
+                     f"(the value stays in {new['enum']}: Postgres cannot drop an enum value)")
+        notes.append(f"roles removed: {', '.join(removed)} (rows to migrate)")
+    return lines
 
 
 def _enum_literals(type_name: str, added: list[str], values: list[str], users: list[tuple[str, str]]) -> list[str]:
