@@ -78,6 +78,14 @@ mantieni nomi e lingua dell'utente.
   ambiguità, o proponine di provvisori da far correggere all'utente; mai lasciarli al sottoscrittore (n8n spedisce,
   non scrive). Il motore li rende per destinatario; l'app li corregge dalla pagina admin a matrice
   (`<NotificationTemplates>`, tabella `notification_templates` che `install` aggiunge quando il modello ha testi).
+- **«Vedi come»**: se l'utente dice che un amministratore (o un ufficio) deve «vedere l'app come un altro utente»,
+  «entrare come», «impersonare», o che chi ha più ruoli deve poterne scegliere uno, è `view_as: {users_by: [admin,
+  …]}` nel modello (solo `admin` e ruoli senza ambito), non una pagina scritta a mano: il motore genera le funzioni
+  (`current_profile_id` che diventa l'altro utente, `impersonated_by` ovunque, `view_as_audit`/`view_as_log`),
+  `install` porta cookie, azioni e componenti (`src/lib/modeler/view-as.ts`, `src/components/modeler/view-as.tsx`); mai
+  una sessione o un token dell'altro utente. Con un motore a mano i frammenti vengono da `npm run model:engine` (sezione
+  «View as»). Se l'app ha già una sua implementazione (`CUSTOM(view-as)`), proponi di dichiararla nel modello e di
+  sostituirla con quella generata nella stessa modifica, o lasciala come personalizzazione motivata.
 - **Ambiguità da chiedere in un giro solo**, al massimo 4 domande a scelta multipla con l'opzione consigliata per
   prima (le minori decidile tu e riportale come ipotesi): chi può eseguire una transizione (ruolo, con quale
   ambito, o un utente collegato al record come `self.issuer`); se una condizione nasconde la transizione (`when`)

@@ -37,6 +37,7 @@ export type Behavior = {
   events?: Record<string, Record<string, { doc?: string }>>;
   reactions?: Reaction[];
   subscriptions?: Subscription[];
+  view_as?: { users_by?: string[] } | null;
 };
 type Metamodel = { classes?: Record<string, { attributes?: Record<string, { derived?: boolean }> }> };
 
@@ -52,6 +53,8 @@ const TEXT = {
     title: "Comportamento", note: "Generato da behavior.yaml (npm run model:sync): il comportamento si modifica nel modello con /modeler:behavior, non qui.",
     roles: "Ruoli", role: "Ruolo", label: "Etichetta", scope: "Ambito", global: "globale", per: (c: string) => `per ${c}`,
     builtinRoles: "Oltre ai ruoli predefiniti admin (amministratori) e creator (chi ha creato il record).",
+    viewAs: (who: string) => `Vedi come: chiunque può limitare la propria sessione a uno dei suoi ruoli; ${who} possono usare l'app come un altro utente, con le azioni intestate all'utente reale e registrate.`,
+    nobody: "nessuno",
     workflow: (c: string) => `Workflow di ${c}`, stateAttr: (a: string) => `Lo stato è l'attributo ${a}.`,
     states: "Stati", state: "Stato", kind: "Tipo", initial: "iniziale", final: "finale", owner: "In attesa di", editableBy: "Modificabile da",
     reminder: "Sollecito", requires: "Richiede", after: (d: string, t: string) => `dopo ${d} (${t})`,
@@ -73,6 +76,8 @@ const TEXT = {
     title: "Behaviour", note: "Generated from behavior.yaml (npm run model:sync): the behaviour changes in the model with /modeler:behavior, not here.",
     roles: "Roles", role: "Role", label: "Label", scope: "Scope", global: "global", per: (c: string) => `per ${c}`,
     builtinRoles: "Besides the built-in roles admin (administrators) and creator (who created the record).",
+    viewAs: (who: string) => `View as: anyone may restrict their session to one of their roles; ${who} may use the application as another user, with what they do attributed to the real user and logged.`,
+    nobody: "nobody",
     workflow: (c: string) => `Workflow of ${c}`, stateAttr: (a: string) => `The state is the attribute ${a}.`,
     states: "States", state: "State", kind: "Kind", initial: "initial", final: "final", owner: "Waiting for", editableBy: "Editable by",
     reminder: "Reminder", requires: "Requires", after: (d: string, t: string) => `after ${d} (${t})`,
@@ -196,6 +201,7 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
           <h3 className="font-medium">{t.roles}</h3>
           <Table head={[t.role, t.label, t.scope]} rows={roles.map(([rn, r]) => [<Code key="n">{rn}</Code>, label(r.label, rn, l), r.scope ? t.per(r.scope) : t.global])} />
           <p className="text-xs text-muted-foreground">{t.builtinRoles}</p>
+          {b.view_as != null && <p className="text-sm">{t.viewAs((b.view_as.users_by ?? []).join(", ") || t.nobody)}</p>}
         </div>
       )}
 

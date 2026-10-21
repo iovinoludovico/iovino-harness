@@ -486,6 +486,46 @@ class BehaviorTests(unittest.TestCase):
         st["bookings_confirmed"]["model"] = {"travelMethod": {"lower": 1, "in": ["agency"]}}
         self.assertEqual(len([x for x in B.validate(b, m).errors if "can never fire" in x]), 2)   # confirm_bookings and rebook
 
+    def test_view_as_who_may_use_the_app_as_another_user(self):
+        b = behavior()
+        b["view_as"] = {"users_by": ["admin", "office"]}
+        rep = B.validate(b, meta())
+        self.assertEqual(rep.errors, [])
+        self.assertEqual([w for w in rep.warnings if "view_as" in w], [])
+        x = B.expand(b)
+        self.assertEqual(x["view_as"], {"users_by": ["admin", "office"]})
+        self.assertIsNone(B.expand(behavior())["view_as"])
+        md = B.to_markdown(b, meta(), "en")
+        self.assertIn("**View as**: anyone may restrict their session to one of their roles; `admin`, `office` may use the application as another user", md)
+        self.assertNotIn("View as", B.to_markdown(behavior(), meta(), "en"))
+        # the file keeps it on one line after roles; an empty mapping stays (roles only)
+        text = B.dumps(b)
+        self.assertIn("\nview_as: {users_by: [admin, office]}\n", text)
+        self.assertEqual(B.expand(B.loads(text))["view_as"], {"users_by": ["admin", "office"]})
+        self.assertIn("view_as: {}", B.dumps({**b, "view_as": {"users_by": []}}))
+        self.assertEqual(B.expand(B.from_editor(B.runtime_json(b, meta())))["view_as"], {"users_by": ["admin", "office"]})
+        # diff
+        self.assertEqual(B.diff(behavior(), b), ["+ view_as (users_by: admin, office)"])
+        self.assertEqual(B.diff(b, {**b, "view_as": {"users_by": ["admin"]}}), ["~ view_as: users_by admin"])
+        self.assertEqual(B.diff(b, behavior()), ["- view_as"])
+        # what validate refuses: scoped roles, record paths, unknown roles and keys; an empty list is a warning
+        bad = behavior()
+        bad["view_as"] = {"users_by": ["director", "self.issuer", "creator", "boss", "admin", "admin"], "x": 1}
+        rep = B.validate(bad, meta())
+        for expected in ("view_as: unknown keys: x (allowed: doc, users_by)",
+                         "view_as.users_by: 'director' is held per Department: acting as another user needs a role without scope",
+                         "view_as.users_by: 'self.issuer': only admin or a role declared in roles without scope (who may act as another user is not a property of a record)",
+                         "view_as.users_by: 'creator': only admin or a role declared in roles without scope (who may act as another user is not a property of a record)",
+                         "view_as.users_by: unknown role 'boss'",
+                         "view_as.users_by: 'admin' listed twice"):
+            self.assertIn(expected, rep.errors)
+        bad["view_as"] = "admin"
+        self.assertIn("view_as: a mapping: {users_by: [admin, <role>]}", B.validate(bad, meta()).errors)
+        bad["view_as"] = {}
+        rep = B.validate(bad, meta())
+        self.assertEqual(rep.errors, [])
+        self.assertIn("view_as: users_by is empty: nobody acts as another user; the session can still be restricted to one of the user's roles", rep.warnings)
+
     def test_domain_md_follows_the_state_model(self):
         import argparse
         import contextlib
@@ -1319,6 +1359,32 @@ class EngineTests(unittest.TestCase):
         from metamodel import engine as N
         sql, notes = N.engine_sql(behavior(), meta())
         self.assertIn("jsonb_build_object('recipients'", sql)      # every emitted event carries `recipients`, [] when nobody
+        # the contract: who really acts (null unless «view as» is on), kept by the history and the events
+        self.assertIn("if to_regprocedure('public.impersonator_id()') is null then", sql)
+        self.assertIn("alter table public.workflow_history alter column impersonated_by set default public.impersonator_id();", sql)
+        self.assertIn("|| jsonb_strip_nulls(jsonb_build_object('impersonated_by', public.impersonator_id()))", sql)
+        self.assertNotIn("View as", sql)
+        self.assertNotIn("view_as_profile_id", sql)
+        va = behavior()
+        va["view_as"] = {"users_by": ["admin", "office"]}
+        vsql, _ = N.engine_sql(va, meta())
+        for frag in ["-- ===================== View as =====================",
+                     "alter function public.current_profile_id() rename to real_profile_id;",
+                     "alter function public.has_role(text, uuid) rename to has_role_real;",
+                     "if to_regprocedure('public.view_as_allowed(uuid)') is null then",
+                     "v_ok := public.has_role_real('admin', null) or public.has_role_real('office', null);",
+                     "if coalesce(current_setting('app.view_as_resolving', true), '') = 'on' then return null; end if;",
+                     "v_raw := nullif(current_setting('request.headers', true), '')::json ->> 'x-view-as-user';",
+                     "select coalesce(public.view_as_profile_id(), public.real_profile_id());",
+                     "select case when public.view_as_profile_id() is not null then public.real_profile_id() end;",
+                     "'select (public.view_as_role() is null or public.view_as_role() = p_role::text) and public.has_role_real(p_role, p_scope)'",
+                     "create table if not exists public.view_as_log (",
+                     "create or replace function public.view_as_audit(p_profile uuid, p_start boolean)",
+                     "perform public.emit_entity_event('profile', p_profile, case when p_start then 'user.view_as_started' else 'user.view_as_ended' end,",
+                     "create or replace function public.view_as_log(p_limit int default 20)",
+                     "register: user.view_as_started, user.view_as_ended, invitation.created",
+                     "view as: the Supabase server client sends the headers x-view-as / x-view-as-user"]:
+            self.assertIn(frag, vsql)
         for frag in ["create or replace function public.invitation_principals(r public.invitations)",
                      "case when r.issuer = public.current_profile_id() then 'field:issuer' end",
                      "case when public.has_role('director', r.department) then 'director' end",
@@ -1489,6 +1555,53 @@ class EngineDatabaseTests(WorkflowDatabaseTests):
         self.assertNotEqual(out.returncode, 0, out.stdout)
         self.assertIn(fragment, out.stderr)
 
+    ADMIN = "00000000-0000-0000-0000-00000000000e"
+
+    def view_as_checks(self, inv):
+        """«View as» on the same database: an administrator acts as the issuer, the office restricts its role."""
+        from metamodel import engine as N
+        va = behavior()
+        va["view_as"] = {"users_by": ["admin"]}
+        self.psql(self.dsn, N.engine_sql(va, meta())[0])
+        self.psql(self.dsn, N.engine_sql(va, meta())[0])                                  # idempotent (renames once)
+        self.psql(self.dsn, f"insert into public.profiles (id, email) values ('{self.ADMIN}', 'admin@x.org');"
+                            f"insert into public.user_roles values ('{self.ADMIN}', 'admin', null);")
+        as_issuer = f"select set_config('request.headers', '{{\"x-view-as-user\": \"{self.ISSUER}\"}}', false);"
+        self.assertEqual(self.ok(self.ADMIN, as_issuer + "select current_profile_id() || '|' || impersonator_id() || '|' || is_admin();"),
+                         f"{self.ISSUER}|{self.ADMIN}|false")
+        self.assertEqual(self.ok(self.OTHER, as_issuer + "select current_profile_id() || '|' || coalesce(impersonator_id()::text, '-');"),
+                         f"{self.OTHER}|-")                                              # not allowed to: the header is ignored
+        # what the administrator does as someone is that someone's, with the administrator next to it
+        as_director = f"select set_config('request.headers', '{{\"x-view-as-user\": \"{self.DIRECTOR}\"}}', false);"
+        self.ok(self.ADMIN, as_issuer + "update public.invitations set notes = 'seen by the admin as the issuer';")
+        self.fails(self.ADMIN, as_issuer + f"select public.invitation_perform_transition({inv}, 'reject', 'as the issuer');", "Operation not allowed")   # the issuer cannot
+        self.ok(self.ADMIN, as_director + f"select public.invitation_perform_transition({inv}, 'reject', 'as the director');")
+        self.assertEqual(self.ok(self.ISSUER, "select actor_id || '|' || impersonated_by from public.workflow_history where transition = 'reject';"),
+                         f"{self.DIRECTOR}|{self.ADMIN}")
+        ev = self.ok(self.ISSUER, "select data from public.events where type = 'invitation.transitioned' and data -> 'transition' ->> 'key' = 'reject';")
+        self.assertIn(f'"impersonated_by": "{self.ADMIN}"', ev)
+        self.ok(self.ADMIN, as_issuer + f"select public.invitation_perform_transition({inv}, 'resubmit');")       # back where the test was
+        self.assertEqual(self.ok(self.ISSUER, "select state from public.invitations;"), "pending_director")
+        # the role restriction keeps one of the user's own roles, never adds one
+        as_office = "select set_config('request.headers', '{\"x-view-as\": \"office\"}', false);"
+        self.assertEqual(self.ok(self.OFFICE, as_office + "select has_role('office', null) || '|' || is_admin();"), "true|false")
+        self.assertEqual(self.ok(self.ADMIN, as_office + "select has_role('office', null) || '|' || is_admin();"), "false|true")     # not held: ignored
+        self.assertEqual(self.ok(self.DIRECTOR, as_office + "select has_role('director', null);"), "t")                           # not held: ignored
+        self.psql(self.dsn, f"insert into public.user_roles values ('{self.OFFICE}', 'director', null);")                            # two roles: one kept
+        self.assertEqual(self.ok(self.OFFICE, as_office + "select has_role('director', null) || '|' || has_role('office', null);"), "false|true")
+        self.assertEqual(self.ok(self.OFFICE, "select has_role('director', null) || '|' || has_role('office', null);"), "true|true")  # no header: all of them
+        self.psql(self.dsn, f"delete from public.user_roles where profile_id = '{self.OFFICE}' and role = 'director';")
+        # the register
+        self.ok(self.ADMIN, f"select public.view_as_audit('{self.ISSUER}', true);")
+        self.ok(self.ADMIN, f"select public.view_as_audit('{self.ISSUER}', false);")
+        self.fails(self.OFFICE, f"select public.view_as_audit('{self.ISSUER}', true);", "Operation not allowed")
+        self.fails(self.ADMIN, f"select public.view_as_audit('{self.ADMIN}', true);", "Operation not allowed")
+        self.assertEqual(self.ok(self.ADMIN, "select string_agg(started::text || ':' || actor_email || '>' || user_email, ',' order by occurred_at) from public.view_as_log(5);"),
+                         "true:admin@x.org>issuer@x.org,false:admin@x.org>issuer@x.org")
+        self.assertEqual(self.ok(self.OFFICE, "select count(*) from public.view_as_log(5);"), "0")
+        self.assertEqual(self.ok(self.ADMIN, "select count(*) from public.events where type in ('user.view_as_started', 'user.view_as_ended');"), "2")
+        self.psql(self.dsn, N.engine_sql(behavior(), meta())[0])                            # the fixture's engine again: has_role stays wrapped, harmless
+
     def test_workflow_end_to_end(self):
         from metamodel import engine as N
         from metamodel import sqlgen as G
@@ -1550,9 +1663,11 @@ class EngineDatabaseTests(WorkflowDatabaseTests):
         self.assertIn('"flatAmount": {"hidden": false, "readonly": true, "required": true}', policy)
         self.assertIn('"travelMethod": {"in": ["none", "agency"], "hidden": false, "readonly": false, "required": false}', policy)
         self.psql(self.dsn, engine)                                                      # back to the fixture's engine
-        self.assertEqual(self.ok(self.ISSUER, "select transition || '|' || from_state || '|' || to_state || '|' || actor_id from public.workflow_history;"),
-                         f"submit|draft|pending_director|{self.ISSUER}")
-        ev = self.ok(self.ISSUER, "select data from public.events where type = 'invitation.transitioned';")
+        self.assertEqual(self.ok(self.ISSUER, "select transition || '|' || from_state || '|' || to_state || '|' || actor_id || '|' || coalesce(impersonated_by::text, '-') from public.workflow_history;"),
+                         f"submit|draft|pending_director|{self.ISSUER}|-")
+        self.assertNotIn("impersonated_by", self.ok(self.ISSUER, "select data from public.events where type = 'invitation.transitioned';"))
+        self.view_as_checks(inv)
+        ev = self.ok(self.ISSUER, "select data from public.events where type = 'invitation.transitioned' and data -> 'transition' ->> 'key' = 'submit';")
         self.assertIn('"key": "submit"', ev)
         self.assertIn('"email": "dir@x.org"', ev)                                       # notify_submitted -> the director of the department
         self.assertIn('"template": "invitation_submitted"', ev)

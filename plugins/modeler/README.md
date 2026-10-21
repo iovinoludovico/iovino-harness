@@ -134,6 +134,7 @@ Eclipse EMF and Epsilon.
 | `src/components/modeler/workflow-view.tsx` | modeler | replaced |
 | `src/components/modeler/notification-templates.tsx`, `src/lib/modeler/notification-actions.ts` | modeler | replaced |
 | `supabase/migrations/<ts>_notification_templates.sql` (when `behavior.yaml` has `templates:`) | app | written once |
+| `src/lib/modeler/view-as.ts`, `src/lib/modeler/view-as-actions.ts`, `src/components/modeler/view-as.tsx` (when `behavior.yaml` has `view_as:`) | modeler | replaced |
 | `src/lib/modeler/metamodel-actions.ts` | modeler | replaced |
 | `tools/modeler/` (+ `VERSION`), `model:*` scripts | modeler | replaced |
 | `src/lib/modeler/metamodel.json` | generated from `domain.ecore.yaml` | refreshed (`model:sync`) |

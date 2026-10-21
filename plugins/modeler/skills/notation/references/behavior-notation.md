@@ -19,6 +19,8 @@ roles:                                  # who acts, besides the built-in admin a
   office:   {label: {it: Uffici amministrativi, en: Administrative offices}}
   director: {scope: Department, label: {it: Direttore, en: Director}}    # held per Department
 
+view_as: {users_by: [admin, office]}    # who may use the application as another user (anyone may restrict to one of their roles)
+
 derivations:                            # formulas of the attributes `derived: true` in the metamodel
   Invitation:
     agencyBookingRequired: accommodationMethod = agency or travelMethod = agency
@@ -54,7 +56,7 @@ reactions:                              # one reaction = notify someone when an 
 subscriptions:                          # webhook subscribers (n8n, …)
   - {name: n8n, url_env: N8N_WEBHOOK_URL, events: [Invitation.*, Guest.created, user.*]}
 ```
-Top-level keys: `metamodel doc roles derivations workflows events reactions subscriptions`. Quote an
+Top-level keys: `metamodel doc roles view_as derivations workflows events reactions subscriptions templates`. Quote an
 expression that contains `[`, `:` or `#` (YAML flow syntax): `when: "transition in [submit, resubmit]"`. The
 reaction key is `event`, not `on` (`on` is a boolean in YAML).
 
@@ -95,6 +97,17 @@ in another table, an external value) is computed in code and reported as a warni
 | `self.guest.email` | in `notify` only: also an `Email` attribute |
 
 A principal path always starts with `self.`: this tells the reference `issuer` apart from a role named `issuer`.
+
+## View as (`view_as`)
+`view_as: {users_by: [admin, office]}` declares «view as» for the application: **anyone** may restrict their session
+to one of the roles they hold (it removes privileges, never adds any: a role the user does not hold is ignored), and
+the principals in `users_by` (`admin` or roles declared without scope) may use the application **as another
+user**: they see what that user sees and do what that user can do, and everything they do is attributed to the
+real user (`impersonated_by` in `workflow_history` and in the events) and recorded (`view_as_audit`,
+`view_as_log`). It is never another session: no login as the other user, no token; only two request headers the
+Supabase server client sends (`x-view-as: <role>`, `x-view-as-user: <profile id>`) that the database reads. An
+empty `users_by` keeps the role restriction only (warning). `validate` refuses a scoped role, a record path or an
+unknown role in `users_by`. Without `view_as` nothing changes: `impersonator_id()` is null.
 
 ## Workflows
 - `state`: an attribute of the (concrete) class, `EString` or an enum. With an enum, states and literals must
@@ -186,7 +199,8 @@ a date, an `emits` not declared; unreachable states, several initial states, no 
 attribute that is not `derived`, with the wrong type, or in a cycle; derived attributes without a derivation
 (warning); a state's `requires`/`model` naming a feature the class does not have, relaxing the metamodel or
 contradicting itself (`hidden` and required), a transition its source state can never satisfy (`in` disjoint from
-the target's), and along the path what a target state asks of a feature its source state locks (warning). The same
+the target's), and along the path what a target state asks of a feature its source state locks (warning); a
+`view_as.users_by` with a scoped role, a record path, an unknown role or a duplicate (empty: warning). The same
 check runs when `domain.ecore.yaml` changes: the message then says the domain change
 breaks the behaviour and where.
 
@@ -242,10 +256,21 @@ workflow, derivations or reactions (`<entity>` = the snake_case of the class, `i
   whose `event` and `when` match, resolved by `<entity>_recipients`) and calls the application's
   `emit_entity_event`; a lifecycle trigger emits `created`, `updated`, `deleted`.
 - Contract: the engine calls `current_profile_id()`, `is_admin()`, `has_role(role, scope)`,
-  `role_members(role, scope)` and `emit_entity_event(entity, id, type, extra)`. The migration creates a fallback
-  only where the application has none: the profile from the setting `app.profile_id`, roles from a `user_roles`
-  table when it exists (else a stub that raises), an `events` outbox table. Messages are in the language of the
-  metamodel. `workflow_history` and `workflow_reminders` belong to the engine (`drift` ignores them).
+  `role_members(role, scope)`, `emit_entity_event(entity, id, type, extra)` and `impersonator_id()` (who really
+  acts when «view as» is on; null otherwise, written as `impersonated_by` in `workflow_history` and in the
+  events). The migration creates a fallback only where the application has none: the profile from the setting
+  `app.profile_id`, roles from a `user_roles` table when it exists (else a stub that raises), an `events` outbox
+  table, a null `impersonator_id`. Messages are in the language of the metamodel. `workflow_history`,
+  `workflow_reminders` and `view_as_log` belong to the engine (`drift` ignores them).
+- «View as» (`view_as`): the engine renames the application's `current_profile_id` to `real_profile_id` and its
+  `has_role` to `has_role_real` (once), then defines `view_as_role()` (header `x-view-as`, kept only if the user
+  holds the role), `view_as_profile_id()` (header `x-view-as-user`, honoured only for a real caller in `users_by`
+  and a target `view_as_allowed(uuid)` accepts: every known profile unless the application defines that function
+  itself, to keep out inactive or unapproved users), `current_profile_id() = coalesce(view_as_profile_id(),
+  real_profile_id())`, `impersonator_id()`, `has_role` over `has_role_real` with the role filter,
+  `view_as_audit(profile, start)` (checks the real caller, writes `view_as_log`, emits `user.view_as_started` /
+  `user.view_as_ended`) and `view_as_log(limit)` (readable by who may act as another user). The application only
+  sends the headers (`src/lib/modeler/view-as.ts`, installed by `install`) and mounts the kit components.
 - In an app with a hand-written engine the generated functions replace the app's functions with the same names:
   review the migration before applying it, and `npm run model:drift` must stay aligned afterwards.
 

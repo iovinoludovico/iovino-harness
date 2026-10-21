@@ -56,6 +56,10 @@ rivedilo **con l'utente**:
   `public.notification_templates`),
 - `supabase/migrations/<ts>_notification_templates.sql` (solo la prima volta e solo se `behavior.yaml` ha `templates:`:
   la tabella degli override che il motore e la pagina usano),
+- `src/lib/modeler/view-as.ts`, `src/lib/modeler/view-as-actions.ts` e `src/components/modeler/view-as.tsx` (solo se
+  `behavior.yaml` ha `view_as:`: i cookie e le intestazioni `x-view-as`/`x-view-as-user`, le azioni server che
+  registrano inizio e fine con `view_as_audit`, il selettore del ruolo, i banner e il registro `<ViewAsLog>`; il
+  database fa il resto con il motore generato),
 - `src/lib/modeler/metamodel-actions.ts` (salva, elenca e scarta le proposte: file in sviluppo, tabella in produzione;
   «Applica» su una proposta di produzione avvia il workflow `modeler-apply`),
 - `supabase/migrations/<ts>_model_change_requests_apply.sql` (solo la prima volta: le colonne `pr_url`, `apply_error`,
@@ -137,6 +141,17 @@ rivedilo **con l'utente**:
   hidden, in}}`, `{}` quando lo stato non cambia nulla) e lo riflettono (obbligatorio, disabilitato, non mostrato,
   opzioni ridotte); liste come `STATE_REQUIRES`/`STATE_EDITORS` scritte a mano si tolgono o restano solo come
   `CUSTOM(...)` motivata. Con un motore a mano i frammenti vengono da `npm run model:behavior -- --format sql`.
+- Se `behavior.yaml` ha `view_as:` (`install` lo segnala con «view_as found in behavior.yaml»): nel client Supabase
+  server aggiungi `...(await viewAsHeaders())` (da `@/lib/modeler/view-as`) alle `global.headers` di
+  `createServerClient`; nel layout monta `<ViewAsSwitcher roles={…} current={await viewAsRole()} lang="it" />` (i
+  ruoli dell'utente reale con le etichette di `behavior.json`, solo se ne ha più di uno), `<ViewAsRoleBanner>` quando
+  `viewAsRole()` non è nullo e `<ImpersonationBanner user={…} by={…}>` quando `viewAsUser()` non è nullo (il profilo
+  reale si legge con `select real_profile_id()`); nella pagina admin degli utenti un bottone «Vedi come» per utente
+  (`startViewAsUser(id)`) e `<ViewAsLog entries={(await supabase.rpc("view_as_log", {p_limit: 10})).data ?? []} />`.
+  Poi `npm run model:engine -- --write` e la migrazione: il motore rinomina `current_profile_id` → `real_profile_id`
+  e `has_role` → `has_role_real` dell'app (da lì in poi si modificano quelle), e crea `view_as_allowed(uuid)` solo se
+  manca: definiscila nell'app per escludere utenti inattivi o non approvati. Un'app che aveva già «Vedi come» a mano
+  (`CUSTOM(view-as)`) toglie la sua versione nella stessa modifica o la tiene come personalizzazione motivata.
 - `tsconfig.json` deve avere `resolveJsonModule` (la pagina importa `metamodel.json`, e `behavior.json` se c'è).
 - `.gitignore`: `install` aggiunge `__pycache__/` (il bytecode della CLI in `tools/modeler/`), `.modeler/backups/` e
   `.modeler/drafts/` (le bozze che `model:propose` trasforma in proposte); non ignorare `.modeler/proposals/` (le

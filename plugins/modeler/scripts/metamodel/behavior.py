@@ -30,7 +30,7 @@ from . import ecore as E
 from . import expr as X
 
 BEHAVIOR_FILE = E.BEHAVIOR_FILE
-TOP_KEYS = {"metamodel", "doc", "roles", "derivations", "workflows", "events", "reactions", "subscriptions", "templates"}
+TOP_KEYS = {"metamodel", "doc", "roles", "view_as", "derivations", "workflows", "events", "reactions", "subscriptions", "templates"}
 TEMPLATE_KEYS = {"subject", "body"}
 LANG_RE = re.compile(r"^[a-z]{2}$")
 PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][\w.]*)\s*\}\}")
@@ -40,6 +40,7 @@ TRANSITION_VARS = {"transition.key", "transition.label", "transition.from", "tra
 REMINDER_VARS = {"reminder.days", "reminder.count", "reminder.state"}
 STATE_VARS = {"state.key", "state.label"}
 ROLE_KEYS = {"label", "scope", "doc"}
+VIEW_AS_KEYS = {"users_by", "doc"}   # «view as»: who may use the application as another user
 WORKFLOW_KEYS = {"state", "states", "transitions", "revert", "doc"}
 STATE_KEYS = {"initial", "final", "label", "doc", "owner", "editable_by", "reminder", "color", "requires", "model"}
 MODEL_KEYS = {"lower", "readonly", "hidden", "in"}   # the overlay of a state on a feature (`states.<key>.model`)
@@ -140,6 +141,8 @@ def from_editor(doc: dict[str, Any]) -> dict[str, Any]:
         if doc.get(key):
             raw[key] = doc[key]
     raw["roles"] = {rn: {k: v for k, v in (r or {}).items()} for rn, r in _mapping(doc.get("roles")).items()}
+    if doc.get("view_as") is not None:
+        raw["view_as"] = dict(_mapping(doc["view_as"]))
     raw["derivations"] = {cn: {an: text(ex) for an, ex in _mapping(ders).items()} for cn, ders in _mapping(doc.get("derivations")).items()}
     raw["workflows"] = {}
     for cn, w in _mapping(doc.get("workflows")).items():
@@ -177,6 +180,8 @@ def dumps(raw: dict[str, Any]) -> str:
             out.append(f"{key}: {scalar.split(chr(10))[0] if scalar.endswith('...') else scalar}")
     if r.get("roles"):
         out += ["", dump(block({"roles": flow_map(r["roles"])}))]
+    if r.get("view_as") is not None:
+        out += ["", dump(block({"view_as": _Flow(r["view_as"] if isinstance(r["view_as"], dict) else {})}))]
     if r.get("derivations"):
         out += ["", "derivations:"]
         for cn, ders in r["derivations"].items():
@@ -228,6 +233,13 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
         elif changed_keys(a["roles"][rn], b["roles"][rn], ("scope", "label")):
             out.append(f"~ role {rn}: {', '.join(changed_keys(a['roles'][rn], b['roles'][rn], ('scope', 'label')))}")
     out += [f"- role {rn}" for rn in a["roles"] if rn not in b["roles"]]
+    av, bv = a["view_as"], b["view_as"]
+    if bv is not None and av is None:
+        out.append(f"+ view_as (users_by: {', '.join(bv['users_by']) or 'nobody'})")
+    elif bv is not None and av is not None and not same(av["users_by"], bv["users_by"]):
+        out.append(f"~ view_as: users_by {', '.join(bv['users_by']) or 'nobody'}")
+    elif bv is None and av is not None:
+        out.append("- view_as")
     for cn in b["derivations"]:
         for an, ex in b["derivations"][cn].items():
             old_ex = a["derivations"].get(cn, {}).get(an)
@@ -315,6 +327,10 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
     for rn, rspec in _mapping(raw.get("roles")).items():
         r = _mapping(rspec) if rspec is not None else {}
         out["roles"][str(rn)] = {**copy.deepcopy(r), "scope": r.get("scope"), "label": r.get("label"), "doc": r.get("doc") or ""}
+    out["view_as"] = None
+    if raw.get("view_as") is not None:
+        v = _mapping(raw["view_as"]) if isinstance(raw["view_as"], dict) else {"_invalid": raw["view_as"]}
+        out["view_as"] = {**copy.deepcopy(v), "users_by": [str(x) for x in _list(v.get("users_by"))]}
     for cn, dspec in _mapping(raw.get("derivations")).items():
         out["derivations"][str(cn)] = {str(an): ex for an, ex in _mapping(dspec).items()}
     for cn, wspec in _mapping(raw.get("workflows")).items():
@@ -497,6 +513,7 @@ def validate(raw: dict[str, Any], metamodel: dict[str, Any]) -> M.Report:
     e = E.expand(metamodel)
     b = expand(raw)
     _check_roles(b, e, rep)
+    _check_view_as(b, rep)
     _check_derivations(b, e, rep)
     for cname, w in b["workflows"].items():
         _check_workflow(b, e, cname, w, rep)
@@ -575,6 +592,37 @@ def _check_roles(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> None:
                 rep.error(where, f"scope {scope}: a role is held per instance of a domain class, not per user")
             elif scope not in e["classes"]:
                 rep.error(where, f"scope: unknown class {scope}")
+
+
+def _check_view_as(b: dict[str, Any], rep: M.Report) -> None:
+    """`view_as: {users_by: [admin, office]}`: who may use the application as another user (the administrators
+    and roles without scope); restricting one's own session to one of one's roles needs no declaration."""
+    v = b["view_as"]
+    if v is None:
+        return
+    where = "view_as"
+    if "_invalid" in v:
+        rep.error(where, "a mapping: {users_by: [admin, <role>]}")
+        return
+    extra = set(v) - VIEW_AS_KEYS
+    if extra:
+        rep.error(where, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(VIEW_AS_KEYS))})")
+    seen: set[str] = set()
+    for p in v["users_by"]:
+        fw = f"{where}.users_by"
+        if p in seen:
+            rep.error(fw, f"'{p}' listed twice")
+        seen.add(p)
+        if p == "admin":
+            continue
+        if p == "creator" or p.startswith("self.") or "@" in p:
+            rep.error(fw, f"'{p}': only admin or a role declared in roles without scope (who may act as another user is not a property of a record)")
+        elif p not in b["roles"]:
+            rep.error(fw, f"unknown role '{p}'")
+        elif b["roles"][p].get("scope") is not None:
+            rep.error(fw, f"'{p}' is held per {b['roles'][p]['scope']}: acting as another user needs a role without scope")
+    if not v["users_by"]:
+        rep.warn(where, "users_by is empty: nobody acts as another user; the session can still be restricted to one of the user's roles")
 
 
 def _attribute(e: dict[str, Any], cname: str, an: str) -> dict[str, Any] | None:
@@ -1216,6 +1264,8 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "title": "Comportamento del dominio {package}",
         "note": "Generato da `behavior.yaml` con `npm run model:sync`: il comportamento si modifica nel modello, non qui.",
         "roles": "Ruoli", "role": "Ruolo", "label": "Etichetta", "scope": "Ambito", "scope_global": "globale",
+        "view_as": "**Vedi come**: chiunque può limitare la propria sessione a uno dei suoi ruoli; {who} possono usare l'app come un altro utente, con le azioni intestate all'utente reale (`impersonated_by`) e registrate (`view_as_log`).",
+        "nobody": "nessuno",
         "scope_per": "per {cls}", "builtin_roles": "Oltre ai ruoli predefiniti `admin` (amministratori) e `creator` (chi ha creato il record).",
         "workflow": "Workflow di {cls}", "state_attr": "Lo stato è l'attributo `{attr}`.",
         "states": "Stati", "state": "Stato", "kind": "Tipo", "initial": "iniziale", "final": "finale",
@@ -1241,6 +1291,8 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "title": "Behaviour of the domain {package}",
         "note": "Generated from `behavior.yaml` by `npm run model:sync`: the behaviour changes in the model, not here.",
         "roles": "Roles", "role": "Role", "label": "Label", "scope": "Scope", "scope_global": "global",
+        "view_as": "**View as**: anyone may restrict their session to one of their roles; {who} may use the application as another user, with what they do attributed to the real user (`impersonated_by`) and logged (`view_as_log`).",
+        "nobody": "nobody",
         "scope_per": "per {cls}", "builtin_roles": "Besides the built-in roles `admin` (administrators) and `creator` (who created the record).",
         "workflow": "Workflow of {cls}", "state_attr": "The state is the attribute `{attr}`.",
         "states": "States", "state": "State", "kind": "Kind", "initial": "initial", "final": "final",
@@ -1326,6 +1378,9 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
         rows = [[rn, E._label(r.get("label"), lang), t["scope_per"].format(cls=r["scope"]) if r.get("scope") else t["scope_global"]]
                 for rn, r in b["roles"].items()]
         out += [f"## {t['roles']}", ""] + E._table([t["role"], t["label"], t["scope"]], rows) + ["", t["builtin_roles"], ""]
+    if b["view_as"] is not None:
+        who = ", ".join(_code(p) for p in b["view_as"]["users_by"]) or t["nobody"]
+        out += [t["view_as"].format(who=who), ""]
     for cname, w in b["workflows"].items():
         out += [f"## {t['workflow'].format(cls=cname)}", "", t["state_attr"].format(attr=w["state"]), "",
                 "```mermaid", mermaid_workflow(w, lang).rstrip("\n"), "```", ""]
