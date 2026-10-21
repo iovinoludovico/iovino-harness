@@ -94,6 +94,13 @@ domain.ecore.yaml`), poi:
 3. Codice: tipi (`supabase gen types` o lo script dell'app), query, form e pagine che usano la struttura nuova.
    Una vista generata dal modello (es. `<WorkflowView>`) che arriva su una pagina con una vista equivalente scritta a
    mano va in schede, con quella esistente predefinita (skill `install`, punto 4).
+   Riferimenti nei form (convenzione «+ Nuovo» in modale): per ogni `ref` non containment verso una classe con un
+   form, select + `<ECreate onCreated>`: `create<E>Inline(prev, formData)` valida e inserisce come `save<E>` ma
+   ritorna `{ok, created: {id, label, hint?}}` senza redirect; `<ECreate>` è un `Dialog` (`max-h-[90vh]
+   overflow-y-auto`) che monta lo stesso `<EForm action={create<E>Inline}>` e chiama `onCreated`; il chiamante
+   tiene le opzioni in `useState` (`setOptions(cur => [created, ...cur]); setValue(created.id)`) e riceve
+   `canCreate<E>` dal server component. Test: l'azione inline non reindirizza e ritorna il record. Chiavi i18n
+   `addNew`, `newTitle`, `create`. Esempio: `SupplierCreate`/`createSupplierInline` di order-management.
 4. Applica la migrazione al database locale (`supabase db reset` o `supabase migration up`) e
    `npm run model:drift` finché risponde "metamodel and database are aligned".
 5. Typecheck, lint e test dell'app.
