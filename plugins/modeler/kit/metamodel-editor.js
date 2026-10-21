@@ -912,7 +912,19 @@
     // the ids of the edges leaving a state (the transitions a record in that state can take; a bus counts when the
     // state is one of its sources): what <workflow-view> draws at full strength
     const workflowFocus = (edges, stateKey) => (stateKey == null ? [] : edges.filter((e) => e.from.includes(stateKey)).map((e) => e.id));
-    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, workflowModel, workflowLayout, workflowFocus, WF, STEREO_H };
+    // The view of the canvas: {k, x, y} (scale and translation). fitView fills the canvas with the bounds of the
+    // diagram (centred, a margin around, the scale between K_MIN and K_MAX); zoomView scales around a point of the
+    // canvas (the centre for the toolbar buttons) so that point stays where it is.
+    const fitView = (bounds, size, margin = MARGIN, kMin = K_MIN, kMax = K_MAX) => {
+      const w = Math.max(1, bounds.x1 - bounds.x0), h = Math.max(1, bounds.y1 - bounds.y0);
+      const k = Math.min(kMax, Math.max(kMin, Math.min((size.w - 2 * margin) / w, (size.h - 2 * margin) / h)));
+      return { k, x: (size.w - w * k) / 2 - bounds.x0 * k, y: (size.h - h * k) / 2 - bounds.y0 * k };
+    };
+    const zoomView = (view, factor, at, kMin = K_MIN, kMax = K_MAX) => {
+      const k = Math.min(kMax, Math.max(kMin, view.k * factor));
+      return { k, x: at.x - ((at.x - view.x) * k) / view.k, y: at.y - ((at.y - view.y) * k) / view.k };
+    };
+    return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, fitView, zoomView, workflowModel, workflowLayout, workflowFocus, WF, STEREO_H };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -1056,7 +1068,7 @@
 
   const T = {
     it: {
-      addClass: "Classe", addEnum: "Enum", layout: "Riordina", fit: "Adatta", save: "Salva", note: "Nota sulla modifica",
+      addClass: "Classe", addEnum: "Enum", layout: "Riordina", fit: "Adatta", zoomIn: "Ingrandisci", zoomOut: "Riduci", save: "Salva", note: "Nota sulla modifica",
       panel: "Pannello", fullscreen: "Schermo intero", exitFullscreen: "Esci", allAttrs: "Tutti gli attributi",
       compact: "Compatto", more: "altri",
       issues: "problemi", ok: "Metamodello valido", name: "Nome", abstract: "Astratta", supertypes: "Supertipi",
@@ -1087,7 +1099,7 @@
       wfEnumStates: "gli stati devono essere i letterali dell'enum", rxBadEvent: "evento Classe.evento",
     },
     en: {
-      addClass: "Class", addEnum: "Enum", layout: "Layout", fit: "Fit", save: "Save", note: "Change note",
+      addClass: "Class", addEnum: "Enum", layout: "Layout", fit: "Fit", zoomIn: "Zoom in", zoomOut: "Zoom out", save: "Save", note: "Change note",
       panel: "Panel", fullscreen: "Full screen", exitFullscreen: "Exit", allAttrs: "All attributes",
       compact: "Compact", more: "more",
       issues: "issues", ok: "Valid metamodel", name: "Name", abstract: "Abstract", supertypes: "Supertypes",
@@ -1657,11 +1669,19 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       if (this._ext) {   // connectors that run around the boxes stay in view
         x0 = Math.min(x0, this._ext.x0); y0 = Math.min(y0, this._ext.y0); x1 = Math.max(x1, this._ext.x1); y1 = Math.max(y1, this._ext.y1);
       }
-      const k = Math.min(K_MAX, Math.max(K_MIN, Math.min((r.width - 2 * MARGIN) / (x1 - x0), (r.height - 2 * MARGIN) / (y1 - y0))));
-      this._view = { k, x: (r.width - (x1 - x0) * k) / 2 - x0 * k, y: (r.height - (y1 - y0) * k) / 2 - y0 * k };
+      this._view = Layout.fitView({ x0, y0, x1, y1 }, { w: r.width, h: r.height });
       this._renderDiagram();
     }
     _refit() { this._autoFit = true; this._fit(); }
+    _zoom(factor) {
+      // zoom buttons only: the wheel scrolls the page, as everywhere else (no accidental zoom), and the diagram
+      // fills the canvas by default (fit on open and on resize until the user zooms or pans)
+      const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
+      if (!r) return;
+      this._autoFit = false;
+      this._view = Layout.zoomView(this._view, factor, { x: r.width / 2, y: r.height / 2 });
+      this._renderDiagram();
+    }
     _separate() {
       // boxes grew (all attributes shown): push down the ones that now overlap, keeping columns and order
       const mm = this._mm;
@@ -1755,6 +1775,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         this.readonly ? null : el("button", { onclick: () => this._addEnum(), title: t.addEnum }, `+ ${t.addEnum}`),
         el("button", { onclick: () => { this._autoLayout(true); this._refit(); this._changed(); }, disabled: this.readonly }, t.layout),
         el("button", { onclick: () => this._refit() }, t.fit),
+        el("button", { onclick: () => this._zoom(1.25), title: t.zoomIn, "aria-label": t.zoomIn }, "+"),
+        el("button", { onclick: () => this._zoom(0.8), title: t.zoomOut, "aria-label": t.zoomOut }, "−"),
         el("button", { class: this._allAttrs ? "on" : "", onclick: () => { this._allAttrs = !this._allAttrs; this._separate(); this._render(); this._refit(); } },
           this._allAttrs ? t.compact : t.allAttrs),
         el("button", { class: this._panel ? "on" : "", onclick: () => { this._panel = !this._panel; this._render(); } }, t.panel),
@@ -1839,15 +1861,6 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       canvas.addEventListener("dblclick", (ev) => { if (!ev.target.closest?.(".box")) this._refit(); });
       canvas.addEventListener("pointerup", end);
       canvas.addEventListener("pointercancel", end);
-      canvas.addEventListener("wheel", (ev) => {
-        ev.preventDefault();
-        this._autoFit = false;
-        const r = canvas.getBoundingClientRect();
-        const k = Math.min(K_MAX, Math.max(K_MIN, this._view.k * (ev.deltaY < 0 ? 1.1 : 0.9)));
-        const mx = ev.clientX - r.left, my = ev.clientY - r.top;
-        this._view = { k, x: mx - ((mx - this._view.x) * k) / this._view.k, y: my - ((my - this._view.y) * k) / this._view.k };
-        this._renderDiagram();
-      }, { passive: false });
     }
 
     _anchor(name, toward) {

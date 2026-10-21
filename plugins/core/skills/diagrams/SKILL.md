@@ -16,6 +16,10 @@ in `plugins/modeler/kit/metamodel-editor.js` (il pannello del workflow dell'edit
   Sotto una larghezza minima (la parola più lunga dei nomi) il diagramma scorre invece di stringersi.
 - Si riadatta quando il contenitore cambia, finché l'utente non fa zoom o spostamenti a mano; un comando
   "Adatta" lo riporta all'adattamento automatico.
+- Lo zoom si fa solo con i pulsanti della barra («+», «−», «Adatta»), mai con la rotella del mouse: sulla tela la
+  rotella scorre la pagina come ovunque (niente zoom accidentale mentre si scorre). Lo zoom dei pulsanti scala
+  attorno al centro della tela, con limiti minimo e massimo; la vista (`fitView`, `zoomView`) è una funzione pura
+  testata come il layout.
 
 ## Layout testabile
 - Il layout è una funzione pura (`layout(nodi, archi, larghezza)` → posizioni e percorsi), separata dal disegno.
