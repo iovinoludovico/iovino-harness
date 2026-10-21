@@ -977,6 +977,13 @@ def _check_templates(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> Non
                     _check_placeholder(b, e, name, uses.get(key, []), f"{lw}.{field}", rep)
 
 
+def uses_url(raw: dict[str, Any]) -> bool:
+    """Whether a notification text uses `{{url}}`: the application must then define `public.record_url(entity, id)`
+    (one SQL map of its pages); the engine calls it when it exists, otherwise the placeholder renders empty."""
+    return any("{{url}}" in (tx.get(field) or "") for langs in expand(raw)["templates"].values()
+               for tx in langs.values() for field in ("subject", "body"))
+
+
 def _check_placeholder(b: dict[str, Any], e: dict[str, Any], name: str, where: list[tuple[str, str, str]], fw: str, rep: M.Report) -> None:
     for cname, event, use in where:
         entity = M.snake(cname)

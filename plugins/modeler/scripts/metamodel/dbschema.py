@@ -102,6 +102,7 @@ select json_build_object(
 )
 """
 HAS_WORKFLOW_SQL = "select to_json(to_regclass('{s}.workflow_versions') is not null)"
+HAS_RECORD_URL_SQL = "select to_json(to_regprocedure('{s}.record_url(text,uuid)') is not null)"
 
 
 def _query_json(dsn: str, sql: str) -> Any:
@@ -172,6 +173,13 @@ def _check_schema(schema: str) -> None:
 def catalog(dsn: str, schema: str = "public") -> dict[str, Any]:
     _check_schema(schema)
     return _query_json(dsn, CATALOG_SQL.format(s=schema))
+
+
+def has_record_url(dsn: str, schema: str = "public") -> bool:
+    """Whether the application defines `record_url(entity text, id uuid)`, the one SQL map of its pages that the
+    notification texts (`{{url}}`) and the record links of the events rely on."""
+    _check_schema(schema)
+    return bool(_query_json(dsn, HAS_RECORD_URL_SQL.format(s=schema)))
 
 
 def workflow_catalog(dsn: str, schema: str = "public") -> dict[str, Any] | None:

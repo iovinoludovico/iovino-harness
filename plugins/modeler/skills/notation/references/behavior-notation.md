@@ -143,7 +143,7 @@ A principal path always starts with `self.`: this tells the reference `issuer` a
   paths (`{{self.code}}`, `{{self.guest.email}}`, `{{self.id}}`; `{{order.code}}` with the entity key reads the
   same) and the event's variables: `actor.name`, `actor.email`, `comment`, `url` (`public.record_url(entity, id)`:
   the application defines it, one SQL map of its pages as the `core` convention on record links says; the engine
-  calls it when it exists, otherwise `{{url}}` renders empty and `validate` reminds you), on a state change `transition.key|label|from|to` and `state.key|label` (labels in the
+  calls it when it exists, otherwise `{{url}}` renders empty and `drift` reports the missing function), on a state change `transition.key|label|from|to` and `state.key|label` (labels in the
   language of the metamodel), on a reminder `reminder.days|count|state`. `validate` checks that every template a
   reaction or reminder names has texts in the metamodel's language and that every placeholder exists; without the
   section the subscriber renders the texts (an explicit choice: say so in the app). The engine renders

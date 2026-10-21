@@ -208,6 +208,13 @@ class BehaviorTests(unittest.TestCase):
                          [("Invitation", "transitioned", "reaction notify_submitted")])
         self.assertIn("reminder.days", B.template_variables(B.expand(b), "Invitation", "reminder"))
         self.assertNotIn("transition.label", B.template_variables(B.expand(b), "Invitation", "reverted"))
+        # the texts use {{url}}: the app defines record_url (drift checks the database for it)
+        self.assertTrue(B.uses_url(b))
+        for langs in b["templates"].values():
+            for tx in langs.values():
+                tx["body"] = tx["body"].replace("{{url}}", "")
+        self.assertFalse(B.uses_url(b))
+        b = behavior()
         # a template a reaction names but no texts for it
         b["templates"].pop("invitation_closed")
         w = [x for x in B.validate(b, meta()).warnings if "invitation_closed" in x]
@@ -1116,6 +1123,9 @@ class WorkflowDatabaseTests(unittest.TestCase):
                                   f"{der['agencyBookingRequired']['sql']}, {der['fundsTotal']['sql']} from public.invitations r"],
                                  capture_output=True, text=True)
             self.assertEqual(out.stdout.strip(), "hourly|100.00|20.00|f|0", out.stderr)
+            self.assertFalse(D.has_record_url(self.dsn))                                # drift reports it: the texts use {{url}}
+            self.psql(self.dsn, "create function public.record_url(entity text, id uuid) returns text language sql as $$ select '/x/' || entity || '/' || id $$;")
+            self.assertTrue(D.has_record_url(self.dsn))
             cat = D.workflow_catalog(self.dsn)
             self.assertEqual(cat["versions"][0]["entity"], "invitation")
             self.assertEqual(B.workflow_drift(behavior(), meta(), cat), [])
@@ -1312,26 +1322,25 @@ class EngineDatabaseTests(WorkflowDatabaseTests):
         self.assertNotIn('"key": "approve"', avail)
         self.fails(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');", "Requirements not met: dataComplete")
         self.fails(self.ISSUER, "update public.invitations set state = 'closed';", "The state changes only through the transitions")
-        # a field required from pending_director: submit names it among the missing ones; once there it cannot be cleared
-        req = behavior()
-        req["workflows"]["Invitation"]["states"]["pending_director"]["requires"] = ["hours"]
-        self.psql(self.dsn, N.engine_sql(req, meta())[0])
-        self.ok(self.ISSUER, "update public.invitations set hours = null;")
-        self.assertIn('"missing": ["hours"]', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
-        self.fails(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');", "Required in state pending_director: hours")
-        self.ok(self.ISSUER, "update public.invitations set hours = 2;")
-        self.assertIn('"missing": []', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
         # the funds complete the data: the child table refreshes the parent's derived attributes
         self.ok(self.ISSUER, "with f as (insert into public.funds (name) values ('F1') returning id) "
                              f"insert into public.invitation_funds (amount, invitation, fund, created_by) select 180, i.id, f.id, '{self.ISSUER}' "
                              "from public.invitations i, f;")
         self.assertEqual(self.ok(self.ISSUER, "select funds_total || '|' || data_complete from public.invitations;"), "180|true")
         self.assertIn('"guard_ok": true', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
+        # a field required from pending_director: submit names it among the missing ones; once there it cannot be cleared
+        req = behavior()
+        req["workflows"]["Invitation"]["states"]["pending_director"]["requires"] = ["flatAmount"]   # not read by dataComplete (hourly)
+        self.psql(self.dsn, N.engine_sql(req, meta())[0])
+        self.assertIn('"missing": ["flatAmount"]', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
+        self.fails(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');", "Required in state pending_director: flatAmount")
+        self.ok(self.ISSUER, "update public.invitations set flat_amount = 10;")
+        self.assertIn('"missing": [], "guard_ok": true', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
         self.fails(self.OTHER, f"select public.invitation_perform_transition({inv}, 'submit');", "Operation not allowed")
         self.assertEqual(self.ok(self.OTHER, f"select public.invitation_available_transitions({inv});"), "[]")
         self.ok(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');")
         self.assertEqual(self.ok(self.ISSUER, "select state from public.invitations;"), "pending_director")
-        self.fails(self.ISSUER, "update public.invitations set hours = null;", "Required in state pending_director: hours")
+        self.fails(self.ISSUER, "update public.invitations set flat_amount = null;", "Required in state pending_director: flatAmount")
         self.psql(self.dsn, engine)                                                      # back to the fixture's engine
         self.assertEqual(self.ok(self.ISSUER, "select transition || '|' || from_state || '|' || to_state || '|' || actor_id from public.workflow_history;"),
                          f"submit|draft|pending_director|{self.ISSUER}")

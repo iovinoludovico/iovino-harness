@@ -64,7 +64,7 @@ mantieni nomi e lingua dell'utente.
   en: {…}}}` con i segnaposto `{{self.<path>}}`, `{{transition.label}}`, `{{actor.name}}`, `{{comment}}`, `{{url}}`,
   `{{reminder.days}}` (riferimento, «Events, reactions, subscriptions»); se i testi usano `{{url}}` l'app definisce
   `public.record_url(entity text, id uuid)`, l'unica mappa SQL delle sue pagine (convenzione di `core` sui link ai
-  record), che il motore chiama se esiste. Chiedi i testi insieme alle altre
+  record), che il motore chiama se esiste (`drift` segnala quando manca). Chiedi i testi insieme alle altre
   ambiguità, o proponine di provvisori da far correggere all'utente; mai lasciarli al sottoscrittore (n8n spedisce,
   non scrive). Il motore li rende per destinatario; l'app li corregge dalla pagina admin a matrice
   (`<NotificationTemplates>`, tabella `notification_templates` che `install` aggiunge quando il modello ha testi).
@@ -88,9 +88,9 @@ risolti, `model:drift`). Mai un `behavior.yaml` che cita feature che il metamode
 
 ## 4. Allineare l'applicazione (nella stessa modifica, su un branch)
 1. `npm run model:validate`: zero errori, e leggi i warning (minimo senza guardia, campo di `requires` già
-   obbligatorio nel metamodello o ripetuto da una guardia, testi con `{{url}}` senza `record_url` nell'app, template
-   mancante o in una lingua sola, reazione che nessuna sottoscrizione riceve, destinatari su un evento secondario,
-   doppi destinatari).
+   obbligatorio nel metamodello o ripetuto da una guardia, template mancante o in una lingua sola, reazione che
+   nessuna sottoscrizione riceve, destinatari su un evento secondario, doppi destinatari); `npm run model:drift`
+   segnala anche i testi con `{{url}}` quando il database non ha `record_url`.
 2. `npm run model:sync` rigenera `docs/BEHAVIOR.md` e `src/lib/modeler/behavior.json` (il modellatore web in
    `/admin/model` mostra il workflow nuovo).
 3. Il motore SQL, in uno dei due modi:
