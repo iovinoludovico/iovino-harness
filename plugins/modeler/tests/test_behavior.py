@@ -344,6 +344,167 @@ class BehaviorTests(unittest.TestCase):
         b["workflows"]["Invitation"]["states"]["payment"]["requires"] = ["hours", "flatAmount"]
         self.assertIn("requires: [hours, flatAmount]}", B.dumps(b))
 
+    def test_state_model_the_class_as_seen_from_a_state(self):
+        # `model` of a state: a restrictive overlay on the class (lower, readonly, hidden, in); `requires` = lower: 1
+        b = behavior()
+        m = meta()
+        st = b["workflows"]["Invitation"]["states"]
+        st["pending_director"]["requires"] = ["hours"]
+        st["pending_director"]["model"] = {"flatAmount": {"lower": 1, "readonly": True}, "notes": {"hidden": True},
+                                           "travelMethod": {"in": ["agency", "receipts"]}}
+        rep = B.validate(b, m)
+        self.assertEqual((rep.errors, rep.warnings), ([], []))
+        x = B.expand(b)["workflows"]["Invitation"]["states"]["pending_director"]
+        self.assertEqual(x["model"]["notes"], {"lower": None, "readonly": False, "hidden": True, "in": None})
+        ov = B.state_overlay(x)
+        self.assertEqual(ov["hours"], {"lower": 1, "readonly": False, "hidden": False, "in": None})
+        self.assertEqual(ov["flatAmount"], {"lower": 1, "readonly": True, "hidden": False, "in": None})
+        self.assertEqual(ov["notes"], {"lower": None, "readonly": True, "hidden": True, "in": None})   # hidden implies read only
+        self.assertEqual(ov["travelMethod"]["in"], ["agency", "receipts"])
+        self.assertEqual(B.required_features(x), ["hours", "flatAmount"])
+        self.assertEqual(B.requires_tests(E.expand(m), "Invitation", x), [("hours", "hours.isSet()"), ("flatAmount", "flatAmount.isSet()")])
+        u = B.uses(B.expand(b), E.expand(m))["Invitation"]["attributes"]
+        of = "Invitation.pending_director"
+        self.assertIn({"kind": "requires", "of": of}, u["flatAmount"])
+        self.assertIn({"kind": "readonly", "of": of}, u["flatAmount"])
+        self.assertIn({"kind": "hidden", "of": of}, u["notes"])
+        self.assertIn({"kind": "allowed", "of": of}, u["travelMethod"])
+        # refine: the metamodel as seen from the state (MM_s)
+        r = B.refine(m, "Invitation", x)
+        c = r["classes"]["Invitation"]["attributes"]
+        self.assertNotIn("notes", c)
+        self.assertEqual((c["flatAmount"]["lower"], c["flatAmount"]["changeable"]), (1, False))
+        self.assertEqual((c["hours"]["lower"], c["travelMethod"]["in"]), (1, ["agency", "receipts"]))
+        emf = E.to_emfatic(r)
+        self.assertIn("  readonly attr EBigDecimal[1] flatAmount;", emf)
+        self.assertIn("  attr EBigDecimal[1] hours;", emf)
+        self.assertIn('  attr TravelMethod[1] travelMethod = "none";  // in: agency, receipts', emf)
+        self.assertNotIn("notes", emf.split("class Invitation")[1].split("}")[0])
+        self.assertIn("  attr Text notes;", E.to_emfatic(m))                                   # the metamodel itself is untouched
+        # the feature × state table of BEHAVIOR.md, the matrix behind it
+        mx = B.state_matrix(B.expand(b), E.expand(m), "Invitation")
+        self.assertEqual([row["feature"] for row in mx], ["hours", "flatAmount", "travelMethod", "notes"])     # class order
+        self.assertEqual(list(mx[1]["states"]), ["pending_director"])
+        md = B.to_markdown(b, m, "en")
+        self.assertIn("| `pending_director` | Awaiting approval |  | `director` |  | `hours`, `flatAmount` |  |", md)
+        self.assertIn("### The class as seen from each state", md)
+        self.assertIn("| `flatAmount` |  | ● 🔒 |  |  |  |  |  |  |  |  |  |", md)
+        self.assertIn("| `notes` |  | ○ |", md)
+        self.assertIn("| `travelMethod` |  | {agency, receipts} |", md)
+        self.assertIn("### Il metamodello per stato", B.to_markdown(b, m, "it"))
+        self.assertNotIn("### The class as seen from each state", B.to_markdown(behavior(), m, "en"))   # no overlay: no table
+        v = B.engine_version(b, m, "Invitation")
+        sv = next(s for s in v["states"] if s["key"] == "pending_director")
+        self.assertEqual(sv["requires"], ["hours", "flatAmount"])
+        self.assertEqual(sv["model"]["notes"], {"lower": None, "readonly": True, "hidden": True, "in": None})
+        self.assertEqual(next(s for s in v["states"] if s["key"] == "draft")["model"], {})
+        sql = B.sql_view(b, m)
+        self.assertIn("coalesce(r.travel_method is null or r.travel_method in ('agency', 'receipts'), false)  -- travelMethod", sql)
+        self.assertIn("--   pending_director: read only: flatAmount, notes (an update that changes them is refused while the record is there)", sql)
+        self.assertIn("new.flat_amount is distinct from old.flat_amount  -- flatAmount", sql)
+        self.assertIn("coalesce(r.flat_amount is not null, false)  -- flatAmount", sql)
+        self.assertEqual(B.diff(behavior(), b), ["~ state Invitation.pending_director: requires, model"])
+        self.assertEqual(B.state_overlay(B.loads(B.dumps(b))["workflows"]["Invitation"]["states"]["pending_director"]), ov)   # round trip
+        self.assertIn("requires: [hours], model: {flatAmount: {lower: 1, readonly: true}, notes: {hidden: true}", B.dumps(b))
+        # docs/DOMAIN.md: the multiplicity and the notes carry the states
+        anns = B.domain_annotations(b, m)
+        ann = anns["Invitation"]
+        self.assertEqual(ann["flatAmount"], [{"state": "pending_director", "label": {"it": "In attesa di approvazione", "en": "Awaiting approval"},
+                                              "lower": 1, "readonly": True, "hidden": False, "in": None}])
+        dm = E.to_markdown(m, "en", anns)
+        self.assertIn("| flatAmount | EBigDecimal | 0..1 · 1 from Awaiting approval | read only from Awaiting approval |  |", dm)
+        self.assertIn("| hours | EBigDecimal | 0..1 · 1 from Awaiting approval |  |  |", dm)
+        self.assertIn("| notes | Text | 0..1 | hidden from Awaiting approval |  |", dm)
+        self.assertIn("| travelMethod | TravelMethod | 1 | default none, {agency, receipts} from Awaiting approval |  |", dm)
+        it = E.to_markdown(m, "it", anns)
+        self.assertIn("| flatAmount | EBigDecimal | 0..1 · 1 da In attesa di approvazione | sola lettura da In attesa di approvazione |  |", it)
+        self.assertEqual(E.to_markdown(m, "en"), E.to_markdown(m, "en", {}))
+        # errors
+        b = behavior()
+        st = b["workflows"]["Invitation"]["states"]
+        st["payment"]["model"] = {"ghost": {"lower": 1}, "state": {"readonly": True}, "dataComplete": {"lower": 1},
+                                  "totalAmount": {"readonly": True}, "fundsTotal": {"hidden": True}, "hours": {"lower": 2},
+                                  "department": {"lower": 0}, "notes": {"hidden": True, "lower": 1}, "flatAmount": {"in": ["x"]},
+                                  "travelMethod": {"in": ["plane"]}, "accommodationMethod": {"in": []}, "code": {"bogus": 1},
+                                  "justification": "required"}
+        errs = errors(b)
+        where = "workflows.Invitation.states.payment.model"
+        for expected in (f"{where}.ghost: 'ghost' is not a feature of Invitation",
+                         f"{where}.state: 'state' is the state attribute",
+                         f"{where}.totalAmount: 'totalAmount' is derived: already read only",
+                         f"{where}.hours: lower: 0 or 1 (a state requires a feature or leaves it as the metamodel says)",
+                         f"{where}.department: 'department' is required by the metamodel (lower 1): a state cannot relax it",
+                         f"{where}.notes: 'notes' hidden and required: a hidden feature cannot be set",
+                         f"{where}.flatAmount: in: only for a single-valued enum attribute ('flatAmount' is EBigDecimal)",
+                         f"{where}.travelMethod: in: not literals of TravelMethod: plane",
+                         f"{where}.accommodationMethod: in: at least one literal",
+                         f"{where}.code: unknown keys: bogus (allowed: hidden, in, lower, readonly)",
+                         f"{where}.justification: a mapping: {{lower: 1, readonly: true, hidden: true, in: [a, b]}}"):
+            self.assertIn(expected, errs)
+        self.assertTrue(any(x.startswith(f"{where}.dataComplete: 'dataComplete' is derived") for x in errs), errs)
+        self.assertFalse(any("fundsTotal" in x for x in errs), errs)                      # a derived attribute can be hidden
+        # warnings: what the engine cannot enforce or the metamodel already says
+        b = behavior()
+        m = meta()
+        m["classes"]["Invitation"]["attributes"]["justification"] = {"type": "EString", "changeable": False}
+        b["workflows"]["Invitation"]["states"]["payment"]["model"] = {
+            "invitationFunds": {"hidden": True}, "travelMethod": {"in": ["agency", "receipts", "flat", "none"]},
+            "department": {"lower": 1}, "justification": {"readonly": True}}
+        rep = B.validate(b, m)
+        self.assertEqual(rep.errors, [])
+        for expected in (f"{where}.invitationFunds: 'invitationFunds' is a collection: hidden is not enforced by the engine (its parts have their own table), only reported to the application",
+                         f"{where}.travelMethod: in: all the literals of TravelMethod: the state adds nothing",
+                         f"{where}.department: 'department' is already required by the metamodel (lower 1): the state adds nothing",
+                         f"{where}.justification: 'justification' is already read only in the metamodel (changeable: false): the state adds nothing"):
+            self.assertIn(expected, rep.warnings)
+        # along the path: what a target state asks must be settable in the source state
+        b = behavior()
+        st = b["workflows"]["Invitation"]["states"]
+        st["bookings"]["model"] = {"flatAmount": {"readonly": True}, "travelMethod": {"readonly": True, "in": ["agency", "receipts"]}}
+        st["bookings_confirmed"]["model"] = {"flatAmount": {"lower": 1}, "travelMethod": {"in": ["agency"]}}
+        rep = B.validate(b, meta())
+        self.assertEqual(rep.errors, [])
+        pw = "workflows.Invitation.states.bookings_confirmed.model"
+        self.assertIn(f"{pw}.flatAmount: 'flatAmount' cannot be set in bookings but bookings_confirmed requires it (`confirm_bookings`): require it before bookings or set it in the transition", rep.warnings)
+        self.assertIn(f"{pw}.travelMethod: 'travelMethod' cannot be changed in bookings but bookings_confirmed allows only agency (`confirm_bookings`)", rep.warnings)
+        st["bookings"]["model"] = {"flatAmount": {"lower": 1, "readonly": True}, "travelMethod": {"readonly": True, "in": ["agency"]}}   # settled before: fine
+        self.assertEqual([w for w in B.validate(b, meta()).warnings if "bookings_confirmed" in w], [])
+
+    def test_domain_md_follows_the_state_model(self):
+        import argparse
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "domain.ecore.yaml").write_text(META.read_text())
+            (root / "behavior.yaml").write_text(BEHAVIOR.read_text())
+            cli.sync(root)
+            self.assertNotIn("1 from", (root / "docs/DOMAIN.md").read_text())
+            self.assertEqual(cli.docs_status(root)["state"], "aligned")
+            text = BEHAVIOR.read_text().replace("pending_director:      {label", "pending_director:      {requires: [hours], model: {flatAmount: {readonly: true}}, label", 1)
+            (root / "behavior.yaml").write_text(text)
+            self.assertEqual(cli.docs_status(root)["state"], "stale")             # the overlay changed: regenerate
+            cli.sync(root)
+            dm = (root / "docs/DOMAIN.md").read_text()
+            self.assertIn("| hours | EBigDecimal | 0..1 · 1 from Awaiting approval |  |  |", dm)
+            self.assertIn("| flatAmount | EBigDecimal | 0..1 | read only from Awaiting approval |  |", dm)
+            self.assertEqual(cli.docs_status(root)["state"], "aligned")
+            # the metamodel as seen from the state, from the command line
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(cli.cmd_show(argparse.Namespace(path=str(root), format="emfatic", state="Invitation.pending_director", behavior=None)), 0)
+            self.assertIn("  attr EBigDecimal[1] hours;", out.getvalue())
+            self.assertIn("  readonly attr EBigDecimal flatAmount;", out.getvalue())
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                self.assertEqual(cli.cmd_show(argparse.Namespace(path=str(root), format="emfatic", state="Invitation.nope", behavior=None)), 1)
+            self.assertIn("Invitation.pending_director", err.getvalue())
+            # a broken behaviour: DOMAIN.md is the metamodel's alone
+            (root / "behavior.yaml").write_text(text.replace("guard: dataComplete,", "guard: nope,", 1))
+            cli.sync(root)
+            self.assertNotIn("1 from", (root / "docs/DOMAIN.md").read_text())
+            self.assertEqual(cli.docs_status(root)["state"], "aligned")
+
     def test_workflow_rules(self):
         b = behavior()
         w = b["workflows"]["Invitation"]

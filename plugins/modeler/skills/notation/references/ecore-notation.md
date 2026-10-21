@@ -55,7 +55,8 @@ enums:
 `lower` (default 0) and `upper` (default 1; `-1` or `"*"` = many). Emfatic-style reading: `[0..1]` optional,
 `[1]` required, `[*]` many, `[+]` = `lower: 1, upper: -1` (stored as many). `lower: 1` is required from creation
 (`not null`); a feature required only from a state of the workflow on ("the supplier from `ordered`") stays `[0..1]`
-here and is listed in that state's `requires` in `behavior.yaml`. The minimum of a collection cannot be
+here and is listed in that state's `requires` in `behavior.yaml` (whose `model` also locks, hides or narrows a
+feature per state: the class as seen from the state). The minimum of a collection cannot be
 checked when its container is inserted (the parts come after the record): with a workflow it is a guard of the first
 transition (`orderLines.notEmpty()`, `lines.size() >= 2`), evaluated by the generated engine or given by
 `behavior --format sql` to a hand-written one; without a workflow it is a rule of the application at its definitive

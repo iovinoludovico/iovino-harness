@@ -47,7 +47,8 @@ il client lo supporta); `--format storage` mostra tabelle e colonne.
    **un solo giro**, al massimo 4 domande a scelta multipla con l'opzione consigliata per prima; le minori
    decidile tu e riportale come ipotesi. Esempio per "una Persona ha associato un Account":
    - Account obbligatorio per ogni Persona? (`[1]` dalla creazione / `[0..1]` / da uno stato del workflow in poi:
-     `[0..1]` qui e `requires` sullo stato in `behavior.yaml`)
+     `[0..1]` qui e `requires` sullo stato in `behavior.yaml`; se in uno stato è anche bloccato, nascosto o limitato
+     a certi valori, `model` di quello stato)
    - Una Persona può avere più Account? (`[0..1]` / `[*]`)
    - Dall'Account si risale alla Persona? (opposite `persona`)
    - L'Account si cancella con la Persona? (containment)
@@ -68,7 +69,8 @@ metamodello né direttamente nel codice: vanno in `behavior.yaml`, accanto a `do
 `/modeler:behavior` **nella stessa modifica** (un campo calcolato è `derived: true` qui e ha la formula là; un
 attributo di stato è un `EString` o un enum con un letterale per stato; una collezione con `lower > 0` o `upper`
 finito chiede una guardia; un campo obbligatorio solo da uno stato in poi resta `[0..1]` qui ed è `requires` di
-quello stato là). L'hook valida `behavior.yaml` anche quando cambia il metamodello: una rinomina che rompe
+quello stato là, e ciò che in uno stato è in sola lettura, nascosto o limitato a certi valori è `model` di quello
+stato: il metamodello è ciò che vale in ogni stato). L'hook valida `behavior.yaml` anche quando cambia il metamodello: una rinomina che rompe
 una guardia o un destinatario viene segnalata subito, e va sistemata qui. Con un motore scritto a mano
 (`CUSTOM(*-workflow)`) non si lancia `npm run model:engine -- --write`: i dettagli sono nella skill `behavior`,
 sezione 4.

@@ -886,7 +886,8 @@ def to_emfatic(raw: dict[str, Any]) -> str:
                      + ("readonly " if a.get("changeable") is False and not a.get("derived") else ""))
             d = a.get("default")
             dflt = "" if d is None else f" = {str(d).lower()}" if isinstance(d, bool) else f" = {d}" if isinstance(d, (int, float)) else f" = \"{d}\""
-            out.append(f"  {flags}attr {a['type']}{_mult(a['lower'], a['upper'])} {an}{dflt};")
+            allowed = f"  // in: {', '.join(a['in'])}" if a.get("in") else ""
+            out.append(f"  {flags}attr {a['type']}{_mult(a['lower'], a['upper'])} {an}{dflt};{allowed}")
         for rn, r in c["references"].items():
             kw = "val" if r["containment"] else "ref"
             opp = f"#{r['opposite']}" if r.get("opposite") else ""
@@ -949,6 +950,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "id": "identificativo", "unique": "unico", "default": "default {v}", "max_length": "max {n} caratteri",
         "min": "min {v}", "max": "max {v}", "readonly": "sola lettura", "derived": "calcolato", "containment": "contenimento",
         "opposite": "opposto `{name}`", "on_delete": "alla cancellazione: {v}",
+        "required_from": "1 da {s}", "readonly_from": "sola lettura da {s}", "hidden_from": "assente da {s}", "in_from": "{v} da {s}",
     },
     "en": {
         "title": "Domain {package}",
@@ -962,6 +964,7 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "id": "identifier", "unique": "unique", "default": "default {v}", "max_length": "max {n} characters",
         "min": "min {v}", "max": "max {v}", "readonly": "read only", "derived": "derived", "containment": "containment",
         "opposite": "opposite `{name}`", "on_delete": "on delete: {v}",
+        "required_from": "1 from {s}", "readonly_from": "read only from {s}", "hidden_from": "hidden from {s}", "in_from": "{v} from {s}",
     },
 }
 MARKDOWN_MARK = "<!-- modeler: generated from domain.ecore.yaml by model:sync; checksum {checksum} -->"
@@ -1028,12 +1031,36 @@ def _description(f: dict[str, Any]) -> str:
     return f"{doc} ({f['help']})".strip() if f.get("help") else doc
 
 
-def to_markdown(raw: dict[str, Any], lang: str | None = None) -> str:
+def _state_notes(entries: list[dict[str, Any]] | None, t: dict[str, str], lang: str) -> tuple[str, str]:
+    """What the workflow states add to a feature's row of DOMAIN.md: (multiplicity suffix, notes), from the entries
+    of `behavior.domain_annotations` ({state, label, lower, readonly, hidden, in})."""
+    mult, notes = [], []
+    for x in entries or []:
+        label = _label(x.get("label"), lang) or x["state"]
+        if x.get("lower") == 1:
+            mult.append(t["required_from"].format(s=label))
+        if x.get("hidden"):
+            notes.append(t["hidden_from"].format(s=label))
+        elif x.get("readonly"):
+            notes.append(t["readonly_from"].format(s=label))
+        if x.get("in") is not None:
+            notes.append(t["in_from"].format(v="{" + ", ".join(x["in"]) + "}", s=label))
+    return ("".join(f" · {m}" for m in mult), ", ".join(notes))
+
+
+def to_markdown(raw: dict[str, Any], lang: str | None = None, states: dict[str, Any] | None = None) -> str:
     """The domain explained: package, diagram, one section per class (attributes, references, rules), enums.
-    Deterministic: the same metamodel always gives the same text (docs/DOMAIN.md is compared with it)."""
+    Deterministic: the same metamodel always gives the same text (docs/DOMAIN.md is compared with it). `states`
+    (`behavior.domain_annotations`: what the workflow states require, lock, hide or narrow per feature) adds
+    «1 da <stato>» to the multiplicity and the rest to the constraints or notes."""
     e = expand(raw)
     lang = lang or e["language"]
     t = DOC_TEXT.get(lang) or DOC_TEXT["en"]
+    states = states or {}
+
+    def cells(cn: str, fn: str, static: str) -> tuple[str, str]:
+        suffix, notes = _state_notes(states.get(cn, {}).get(fn), t, lang)
+        return suffix, ", ".join(x for x in (static, notes) if x)
 
     def heading(name: str) -> str:
         spec = e["classes"].get(name) or e["enums"].get(name) or {}
@@ -1061,13 +1088,17 @@ def to_markdown(raw: dict[str, Any], lang: str | None = None) -> str:
         if intro:
             out += [" ".join(intro), ""]
         if c["attributes"]:
-            rows = [[an, a["type"], _mermaid_mult(a["lower"], a["upper"]), _constraints(a, t), _description(a)]
-                    for an, a in c["attributes"].items()]
+            rows = []
+            for an, a in c["attributes"].items():
+                suffix, cons = cells(cn, an, _constraints(a, t))
+                rows.append([an, a["type"], _mermaid_mult(a["lower"], a["upper"]) + suffix, cons, _description(a)])
             out += [f"### {t['attributes']}", ""] + _table([t["name"], t["type"], t["mult"], t["constraints"], t["description"]], rows) + [""]
         if c["references"]:
-            rows = [[rn, display(r["type"]) if r["type"] in e["classes"] else r["type"],
-                     _mermaid_mult(r["lower"], r["upper"]), _ref_notes(r, t), _description(r)]
-                    for rn, r in c["references"].items()]
+            rows = []
+            for rn, r in c["references"].items():
+                suffix, notes = cells(cn, rn, _ref_notes(r, t))
+                rows.append([rn, display(r["type"]) if r["type"] in e["classes"] else r["type"],
+                             _mermaid_mult(r["lower"], r["upper"]) + suffix, notes, _description(r)])
             out += [f"### {t['references']}", ""] + _table([t["name"], t["to"], t["mult"], t["notes"], t["description"]], rows) + [""]
         if c.get("rules"):
             out += [f"### {t['class_rules']}", ""] + [f"- `{r['id']}`: {r['text']}" for r in c["rules"]] + [""]
@@ -1096,9 +1127,9 @@ def markdown_checksum(body: str) -> str:
     return hashlib.sha256(markdown_normalize(body).encode("utf-8")).hexdigest()[:12]
 
 
-def markdown_document(raw: dict[str, Any], lang: str | None = None) -> str:
+def markdown_document(raw: dict[str, Any], lang: str | None = None, states: dict[str, Any] | None = None) -> str:
     """What `sync` writes: the marker line (with the checksum of the body) and the body."""
-    body = to_markdown(raw, lang)
+    body = to_markdown(raw, lang, states)
     return MARKDOWN_MARK.format(checksum=markdown_checksum(body)) + "\n" + body
 
 

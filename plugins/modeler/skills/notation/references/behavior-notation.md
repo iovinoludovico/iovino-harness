@@ -32,7 +32,8 @@ workflows:
     state: state                        # the attribute holding the state: EString, or an enum whose literals are the states
     states:
       draft:    {initial: true, owner: [self.issuer], editable_by: [self.issuer, office], label: {it: Bozza, en: Draft}}
-      pending:  {owner: [director], reminder: {after: 7d, template: approval_reminder}, requires: [reason, hours]}
+      pending:  {owner: [director], reminder: {after: 7d, template: approval_reminder}, requires: [reason, hours],
+                 model: {hourlyRate: {readonly: true}, notes: {hidden: true}}}   # the class as seen from this state
       closed:   {final: true}
     transitions:
       submit:   {from: draft, to: pending, by: [self.issuer], guard: dataComplete, label: {it: Emetti, en: Submit}}
@@ -111,6 +112,23 @@ A principal path always starts with `self.`: this tells the reference `issuer` a
   means required from a state. Not for derived attributes (computed after the check: test them in a guard) nor the
   state attribute; `validate` warns when the metamodel already requires the feature, when the initial state requires
   one (that is `lower: 1`) and when a guard of an entering transition repeats `x.isSet()`.
+- `model: {feature: {lower: 1, readonly: true, hidden: true, in: [a, b]}}`: **the class as seen from that state**, an
+  overlay that only tightens the metamodel (the metamodel holds in every state; the overlay lists the features the
+  state changes; nothing is inherited between states). `lower: 1` is what `requires` abbreviates; `readonly`: an
+  update that changes the feature while the record is in the state is refused (SQLSTATE `23514`); `hidden`: not
+  shown by the forms and read only, the value stays; `in`: the literals a single-valued enum attribute may take there
+  (checked on entering, listed as `missing`, and while there). The engine enforces all of it on single-valued
+  features; on a collection only `lower: 1` (on entering) is enforced, `readonly`/`hidden` are reported to the
+  application through `<entity>_field_policy(r)` (`{feature: {required, readonly, hidden, in}}` for the forms).
+  `validate` reports a feature the class does not have, the state attribute, a derived attribute (only `hidden` is
+  allowed), a `lower` that would relax the metamodel, `hidden` with `lower: 1`, `in` on anything but a single-valued
+  enum attribute or with unknown literals; it warns about what the metamodel already says (`lower: 1`,
+  `changeable: false`, all the literals) and, **along the path**, about a feature read only or hidden in a source
+  state but required or narrowed in the target of a transition (set it before, or in the transition). The views:
+  `npm run model:show -- --state <Class>.<state>` prints the metamodel as seen from the state (Emfatic: `[1]`,
+  `readonly`, hidden features gone, `// in: a, b`); `BEHAVIOR.md`, `<BehaviorView>` and the web modeler show the
+  feature × state table (● required, 🔒 read only, ○ hidden, `{a, b}`); `DOMAIN.md` adds «1 from <state>» to the
+  multiplicity and the rest to the constraints.
 - Transitions: `from` (one state or a list), `to`, and either `by` (principals) or `at` (a `Date`/`DateTime`
   attribute with an optional offset: `endDate + 1d`, run by the scheduler). `when` hides the transition when
   false (a condition), `guard` blocks it explaining what is missing (a requirement); `comment: required|optional`;
@@ -164,20 +182,22 @@ class the record does not reference (or references twice) or written like a refe
 not end on a User or an Email; a transition without `by`/`at`, with an unknown `from`/`to`, an `at` that is not
 a date, an `emits` not declared; unreachable states, several initial states, no final state; a derivation on an
 attribute that is not `derived`, with the wrong type, or in a cycle; derived attributes without a derivation
-(warning). The same check runs when `domain.ecore.yaml` changes: the message then says the domain change
+(warning); a state's `requires`/`model` naming a feature the class does not have, relaxing the metamodel or
+contradicting itself (`hidden` and required), and along the path what a target state asks of a feature its source
+state locks (warning). The same check runs when `domain.ecore.yaml` changes: the message then says the domain change
 breaks the behaviour and where.
 
 ## What is generated
 - `npm run model:sync` writes **`docs/BEHAVIOR.md`** (roles, one section per workflow with the Mermaid state diagram
-  and the tables of states and transitions, derived attributes, events, reactions, subscriptions; in the language of
-  the metamodel) and **`src/lib/modeler/behavior.json`** (the canonical model with every expression typed: text,
+  and the tables of states and transitions, the feature × state table when a state has `requires`/`model`, derived
+  attributes, events, reactions, subscriptions; in the language of the metamodel) and **`src/lib/modeler/behavior.json`** (the canonical model with every expression typed: text,
   type, tree and SQL; `entities` maps each class to its snake_case key). `BEHAVIOR.md` is rewritten every time: it
   takes no hand notes (a `docs/behavior.md` with other letter case is another document and blocks it until renamed).
 - `npm run model:behavior -- --format markdown|mermaid|json|sql|engine` prints the same views. `sql`: every
   derivation, guard, condition and reaction condition as PostgreSQL on a row `r` of the class's table (paths through
   references become subselects, collections become aggregates), to paste into triggers or functions. `engine`: each
   workflow as a version of the runtime engine (tables `workflow_versions/states/transitions`): states with `kind`,
-  `owner`, `editable_by`, `reminder_days`; transitions with `allowed`, `trigger`/`at_field`/`at_offset`, `comment`,
+  `owner`, `editable_by`, `reminder_days`, `requires` and `model` (the overlay per feature); transitions with `allowed`, `trigger`/`at_field`/`at_offset`, `comment`,
   `guard` and `condition` as clauses `[{field, op, value}]`, `emits`, and the `notify` of the reactions that name the
   transition. Principals are stored as the engine reads them: roles as they are, `self.issuer` → `field:issuer`.
 - A guard or condition the engine evaluates as clauses must be a **conjunction of tests on single attributes of the
@@ -229,6 +249,7 @@ workflow, derivations or reactions (`<entity>` = the snake_case of the class, `i
 | "passa da … a … quando …", "si può … solo se …" | a transition with `when` (hidden) or `guard` (blocked with an explanation) |
 | "dopo N giorni dalla data di fine", "scade il …" | a timed transition `at: <date attribute> + Nd` |
 | "si calcola come", "è completo quando" | `derived: true` on the attribute (metamodel) and its formula in `derivations` |
+| "X è obbligatorio da quando è in …", "X non si tocca più dopo …", "in bozza X non compare", "qui Y vale solo a o b" | `requires` / `model` of that state (the class as seen from the state) |
 | "avvisa X quando Y" | a reaction `event: <Class>.<event>`, `when`, `notify`, `template`, and its texts in `templates:` |
 | "n8n riceve gli eventi di …" | a subscription |
 | what no key expresses (arithmetic, external calls) | code, a customization (`docs/customizations.md`, `CUSTOM(<id>)`) |

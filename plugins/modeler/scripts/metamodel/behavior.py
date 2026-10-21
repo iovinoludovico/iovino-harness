@@ -41,7 +41,8 @@ REMINDER_VARS = {"reminder.days", "reminder.count", "reminder.state"}
 STATE_VARS = {"state.key", "state.label"}
 ROLE_KEYS = {"label", "scope", "doc"}
 WORKFLOW_KEYS = {"state", "states", "transitions", "revert", "doc"}
-STATE_KEYS = {"initial", "final", "label", "doc", "owner", "editable_by", "reminder", "color", "requires"}
+STATE_KEYS = {"initial", "final", "label", "doc", "owner", "editable_by", "reminder", "color", "requires", "model"}
+MODEL_KEYS = {"lower", "readonly", "hidden", "in"}   # the overlay of a state on a feature (`states.<key>.model`)
 TRANSITION_KEYS = {"from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "doc"}
 REVERT_KEYS = {"by", "final_by", "comment"}
 REMINDER_KEYS = {"after", "template"}
@@ -247,7 +248,7 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
             if sn not in ow["states"]:
                 out.append(f"+ state {cn}.{sn}")
             else:
-                ks = changed_keys(ow["states"][sn], st, ("initial", "final", "label", "color", "owner", "editable_by", "reminder", "requires"))
+                ks = changed_keys(ow["states"][sn], st, ("initial", "final", "label", "color", "owner", "editable_by", "reminder", "requires", "model"))
                 if ks:
                     out.append(f"~ state {cn}.{sn}: {', '.join(ks)}")
         out += [f"- state {cn}.{sn}" for sn in ow["states"] if sn not in w["states"]]
@@ -326,6 +327,7 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
                                "owner": [str(x) for x in _list(s.get("owner"))],
                                "editable_by": [str(x) for x in _list(s.get("editable_by"))],
                                "requires": [str(x) for x in _list(s.get("requires"))],
+                               "model": _model_spec(s.get("model")),
                                "reminder": _mapping(rem) if isinstance(rem, dict) else ({"after": rem} if rem else None)}
         transitions: dict[str, Any] = {}
         for tn, tspec in _mapping(w.get("transitions")).items():
@@ -370,6 +372,99 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Events and contexts
 # --------------------------------------------------------------------------- #
+def _model_spec(v: Any) -> dict[str, Any]:
+    """`model` of a state in canonical form: {feature: {lower, readonly, hidden, in, …}}; unknown keys are kept for
+    validate, a value that is not a mapping becomes {"_invalid": value}."""
+    out: dict[str, Any] = {}
+    for f, spec in _mapping(v).items():
+        o = dict(spec) if isinstance(spec, dict) else {"_invalid": spec}
+        o["lower"] = o.get("lower")
+        o["readonly"] = bool(o.get("readonly", False))
+        o["hidden"] = bool(o.get("hidden", False))
+        o["in"] = [str(x) for x in _list(o.get("in"))] if o.get("in") is not None else None
+        out[str(f)] = o
+    return out
+
+
+EMPTY_OVERLAY = {"lower": None, "readonly": False, "hidden": False, "in": None}
+
+
+def state_overlay(s: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The class as seen from a state: `model` merged with `requires` (the shorthand for `lower: 1`), per feature
+    {lower (0, 1 or None), readonly, hidden (implies readonly), in (literals or None)}. Only the features the state
+    changes; the metamodel says the rest. Works on an expanded or a raw state."""
+    out: dict[str, dict[str, Any]] = {}
+    for f in _list(s.get("requires")):
+        out.setdefault(str(f), dict(EMPTY_OVERLAY))["lower"] = 1
+    for f, o in _model_spec(s.get("model")).items():
+        cur = out.setdefault(f, dict(EMPTY_OVERLAY))
+        if o["lower"] is not None:
+            cur["lower"] = o["lower"]
+        cur["hidden"] = cur["hidden"] or o["hidden"]
+        cur["readonly"] = cur["readonly"] or o["readonly"] or o["hidden"]
+        if o["in"] is not None:
+            cur["in"] = list(o["in"])
+    return out
+
+
+def required_features(s: dict[str, Any]) -> list[str]:
+    """The features a state requires: `requires` and the `lower: 1` of its `model`."""
+    return [f for f, o in state_overlay(s).items() if o["lower"] == 1]
+
+
+def refine(metamodel: dict[str, Any], cname: str, s: dict[str, Any]) -> dict[str, Any]:
+    """The metamodel as seen from a state of `cname` (the expanded metamodel with the state's overlay applied to the
+    class: `lower: 1`, `changeable: false` for read only, hidden features removed, `in` as the allowed literals)."""
+    e = copy.deepcopy(E.expand(metamodel))
+    attrs, refs = E.features(e, cname)
+    for f, o in state_overlay(s).items():
+        spec = attrs.get(f) or refs.get(f)
+        if spec is None:
+            continue
+        group = "attributes" if f in attrs else "references"
+        owner = e["classes"][spec["_owner"]][group]
+        if o["hidden"]:
+            owner.pop(f, None)
+            continue
+        if o["lower"] == 1:
+            owner[f]["lower"] = 1
+        if o["readonly"]:
+            owner[f]["changeable"] = False
+        if o["in"] is not None:
+            owner[f]["in"] = list(o["in"])
+    return e
+
+
+def state_matrix(b: dict[str, Any], e: dict[str, Any], cname: str) -> list[dict[str, Any]]:
+    """Feature × state of a workflow: [{feature, states: {state: overlay}}], one row per feature at least one
+    state changes, in the order of the class."""
+    w = b["workflows"].get(cname)
+    if not w:
+        return []
+    attrs, refs = E.features(e, cname)
+    overlays = {sn: state_overlay(s) for sn, s in w["states"].items()}
+    out = []
+    for f in list(attrs) + list(refs):
+        cells = {sn: ov[f] for sn, ov in overlays.items() if f in ov}
+        if cells:
+            out.append({"feature": f, "states": cells})
+    return out
+
+
+def domain_annotations(raw: dict[str, Any], metamodel: dict[str, Any]) -> dict[str, Any]:
+    """What docs/DOMAIN.md says of the workflow states next to each feature: {Class: {feature: [{state, label,
+    lower, readonly, hidden, in}]}} (the label as written in the model: a string or {it, en})."""
+    e, b = E.expand(metamodel), expand(raw)
+    out: dict[str, Any] = {}
+    for cname, w in b["workflows"].items():
+        if cname not in e["classes"]:
+            continue
+        for row in state_matrix(b, e, cname):
+            out.setdefault(cname, {})[row["feature"]] = [
+                {"state": sn, "label": w["states"][sn].get("label"), **o} for sn, o in row["states"].items()]
+    return out
+
+
 def events_of(b: dict[str, Any], cname: str) -> list[str]:
     """The events a class can emit: lifecycle, workflow (if it has one) and the declared ones."""
     out = list(LIFECYCLE_EVENTS)
@@ -691,7 +786,7 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
                 rep.error(f"{sw}.reminder", "template: a lowercase identifier")
             if s["final"]:
                 rep.warn(f"{sw}.reminder", "a final state is never reminded")
-        _check_requires(e, cname, sa, sn, s, transitions, f"{sw}.requires", rep)
+        _check_state_model(e, cname, sa, sn, s, states, transitions, sw, rep)
     ctx = X.Context(e, cname)
     reach: dict[str, set[str]] = {s: set() for s in states}
     for tn, t in transitions.items():
@@ -767,47 +862,104 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
             rep.error(f"{rw}.comment", "required or optional")
 
 
-def _check_requires(e: dict[str, Any], cname: str, sa: Any, sn: str, s: dict[str, Any], transitions: dict[str, Any],
-                    where: str, rep: M.Report) -> None:
-    """`requires`: features of the class that must be set (a collection: not empty) to enter the state and while the
-    record stays there. Not derived (computed after the check), not the state attribute, not already required by
-    the metamodel (`lower >= 1`: that is "from creation"), not repeated by a guard of an entering transition."""
+def _check_state_model(e: dict[str, Any], cname: str, sa: Any, sn: str, s: dict[str, Any], states: dict[str, Any],
+                       transitions: dict[str, Any], where: str, rep: M.Report) -> None:
+    """`requires` and `model`: the class as seen from the state only tightens the metamodel. A required feature
+    (`requires`, `lower: 1`) must be set to enter the state and while the record stays there: not derived (computed
+    after the check), not the state attribute, not already required by the metamodel, not repeated by a guard of
+    an entering transition. `readonly`/`hidden` (enforced on single-valued features), `in` (a single-valued enum
+    attribute, a subset of its literals). Along the path: a feature that cannot be set in a source state but is
+    required (or narrowed) in the target is reported."""
     attrs, refs = E.features(e, cname)
     seen: set[str] = set()
     for f in s["requires"]:
         if f in seen:
-            rep.error(where, f"'{f}' listed twice")
-            continue
+            rep.error(f"{where}.requires", f"'{f}' listed twice")
         seen.add(f)
+    model = s.get("model") or {}
+    for f, o in model.items():
+        if "_invalid" in o:
+            rep.error(f"{where}.model.{f}", "a mapping: {lower: 1, readonly: true, hidden: true, in: [a, b]}")
+            continue
+        extra = set(o) - MODEL_KEYS
+        if extra:
+            rep.error(f"{where}.model.{f}", f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(MODEL_KEYS))})")
+    overlay = state_overlay(s)
+    for f, o in overlay.items():
+        fw = f"{where}.requires" if f in seen and f not in model else f"{where}.model.{f}"
         spec = attrs.get(f) or refs.get(f)
         if spec is None:
-            rep.error(where, f"'{f}' is not a feature of {cname}")
+            rep.error(fw, f"'{f}' is not a feature of {cname}")
             continue
         if f == sa:
-            rep.error(where, f"'{f}' is the state attribute")
+            rep.error(fw, f"'{f}' is the state attribute")
             continue
+        single = spec.get("upper", 1) == 1
         if spec.get("derived"):
-            rep.error(where, f"'{f}' is derived: a derived attribute is computed after the check; test it in a guard instead")
+            if o["lower"] == 1 or o["in"] is not None:
+                rep.error(fw, f"'{f}' is derived: a derived attribute is computed after the check; test it in a guard instead")
+            elif o["readonly"] and not o["hidden"]:
+                rep.error(fw, f"'{f}' is derived: already read only")
             continue
-        if int(spec.get("lower") or 0) >= 1:
-            rep.warn(where, f"'{f}' is already required by the metamodel (lower {spec['lower']}): the state adds nothing")
-        if s["initial"]:
-            rep.warn(where, f"'{f}' required from the initial state: that is `lower: 1` in the metamodel (required from creation)")
-    if not seen:
-        return
-    ctx = X.Context(e, cname)
+        if o["lower"] not in (None, 0, 1):
+            rep.error(fw, "lower: 0 or 1 (a state requires a feature or leaves it as the metamodel says)")
+        elif o["lower"] == 0 and int(spec.get("lower") or 0) >= 1:
+            rep.error(fw, f"'{f}' is required by the metamodel (lower {spec['lower']}): a state cannot relax it")
+        elif o["lower"] == 1:
+            if o["hidden"]:
+                rep.error(fw, f"'{f}' hidden and required: a hidden feature cannot be set")
+            if int(spec.get("lower") or 0) >= 1:
+                rep.warn(fw, f"'{f}' is already required by the metamodel (lower {spec['lower']}): the state adds nothing")
+            if s["initial"]:
+                rep.warn(fw, f"'{f}' required from the initial state: that is `lower: 1` in the metamodel (required from creation)")
+        if o["readonly"] and not single:
+            rep.warn(fw, f"'{f}' is a collection: {'hidden' if o['hidden'] else 'readonly'} is not enforced by the engine (its parts have "
+                         "their own table), only reported to the application")
+        elif o["readonly"] and not o["hidden"] and spec.get("changeable") is False:
+            rep.warn(fw, f"'{f}' is already read only in the metamodel (changeable: false): the state adds nothing")
+        if o["in"] is not None:
+            if f in refs or not single or spec.get("type") not in e["enums"]:
+                rep.error(fw, f"in: only for a single-valued enum attribute ('{f}' is {spec.get('type')}{'' if single else '[*]'})")
+            else:
+                lits = [lit["name"] for lit in e["enums"][spec["type"]]["literals"]]
+                unknown = [x for x in o["in"] if x not in lits]
+                if not o["in"]:
+                    rep.error(fw, "in: at least one literal")
+                elif unknown:
+                    rep.error(fw, f"in: not literals of {spec['type']}: {', '.join(unknown)}")
+                elif set(o["in"]) == set(lits):
+                    rep.warn(fw, f"in: all the literals of {spec['type']}: the state adds nothing")
+    required = {f for f, o in overlay.items() if o["lower"] == 1 and (attrs.get(f) or refs.get(f)) is not None}
+    if required:
+        ctx = X.Context(e, cname)
+        for tn, t in transitions.items():
+            if t.get("to") != sn or t.get("guard") is None:
+                continue
+            try:
+                node, _ = X.check(str(t["guard"]), ctx, X.BOOL)
+            except X.ExprError:
+                continue
+            repeated = sorted({n["segs"][0] for n in _walk(node)
+                               if n.get("k") == "path" and n.get("call") in ("isSet", "notEmpty") and len(n.get("segs") or []) == 1
+                               and n["segs"][0] in required})
+            if repeated:
+                rep.warn(f"{where}.requires", f"the guard of `{tn}` repeats {', '.join(repeated)}: `requires` already checks them on entering {sn}")
+    # along the path: what the target asks must be settable in the source
     for tn, t in transitions.items():
-        if t.get("to") != sn or t.get("guard") is None:
+        if t.get("to") != sn:
             continue
-        try:
-            node, _ = X.check(str(t["guard"]), ctx, X.BOOL)
-        except X.ExprError:
-            continue
-        repeated = sorted({n["segs"][0] for n in _walk(node)
-                           if n.get("k") == "path" and n.get("call") in ("isSet", "notEmpty") and len(n.get("segs") or []) == 1
-                           and n["segs"][0] in seen})
-        if repeated:
-            rep.warn(where, f"the guard of `{tn}` repeats {', '.join(repeated)}: `requires` already checks them on entering {sn}")
+        for src in t["from"]:
+            if src == sn or src not in states:
+                continue
+            before = state_overlay(states[src])
+            for f, o in overlay.items():
+                prev = before.get(f)
+                if not prev or not prev["readonly"]:
+                    continue
+                if o["lower"] == 1 and prev["lower"] != 1:
+                    rep.warn(f"{where}.model.{f}", f"'{f}' cannot be set in {src} but {sn} requires it (`{tn}`): require it before {src} or set it in the transition")
+                if o["in"] is not None and (prev["in"] is None or not set(prev["in"]) <= set(o["in"])):
+                    rep.warn(f"{where}.model.{f}", f"'{f}' cannot be changed in {src} but {sn} allows only {', '.join(o['in'])} (`{tn}`)")
 
 
 def _walk(node: Any):
@@ -822,11 +974,11 @@ def _walk(node: Any):
 
 
 def requires_tests(e: dict[str, Any], cname: str, s: dict[str, Any]) -> list[tuple[str, str]]:
-    """Each feature a state requires with the expression that tests it: `f.isSet()` for a single value,
-    `f.notEmpty()` for a collection (unknown features are skipped: validate reports them)."""
+    """Each feature a state requires (`requires`, `lower: 1` of its `model`) with the expression that tests it:
+    `f.isSet()` for a single value, `f.notEmpty()` for a collection (unknown features are skipped: validate reports them)."""
     attrs, refs = E.features(e, cname)
     out: list[tuple[str, str]] = []
-    for f in s.get("requires") or []:
+    for f in required_features(s):
         spec = attrs.get(f) or refs.get(f)
         if spec is not None:
             out.append((f, f"{f}.isSet()" if spec.get("upper", 1) == 1 else f"{f}.notEmpty()"))
@@ -1056,6 +1208,8 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "states": "Stati", "state": "Stato", "kind": "Tipo", "initial": "iniziale", "final": "finale",
         "owner": "In attesa di", "editable_by": "Modificabile da", "reminder": "Sollecito", "reminder_text": "dopo {after} (`{template}`)",
         "requires": "Richiede",
+        "state_model": "Il metamodello per stato",
+        "state_model_note": "Come la classe appare in ogni stato (`model` dello stato): ● richiesto, 🔒 sola lettura, ○ assente (non mostrato né modificabile, il valore resta), {a, b} valori ammessi; vuoto: come nel metamodello.",
         "transitions": "Transizioni", "transition": "Transizione", "from_to": "Da → A", "by": "Chi", "when": "Condizione",
         "guard": "Requisito", "comment": "Commento", "at": "Scadenza", "emits": "Eventi", "notifies": "Avvisa", "system": "sistema: {at}",
         "revert": "Ritorno a uno stato precedente: {by}; da uno stato finale: {final_by}; commento {comment}.",
@@ -1079,6 +1233,8 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "states": "States", "state": "State", "kind": "Kind", "initial": "initial", "final": "final",
         "owner": "Waiting for", "editable_by": "Editable by", "reminder": "Reminder", "reminder_text": "after {after} (`{template}`)",
         "requires": "Requires",
+        "state_model": "The class as seen from each state",
+        "state_model_note": "What the class looks like in every state (`model` of the state): ● required, 🔒 read only, ○ hidden (not shown nor editable, the value stays), {a, b} the allowed literals; empty: as in the metamodel.",
         "transitions": "Transitions", "transition": "Transition", "from_to": "From → To", "by": "Who", "when": "Condition",
         "guard": "Requirement", "comment": "Comment", "at": "Due", "emits": "Events", "notifies": "Notifies", "system": "system: {at}",
         "revert": "Back to a previous state: {by}; from a final state: {final_by}; comment {comment}.",
@@ -1103,6 +1259,22 @@ def _lbl(spec: dict[str, Any], key: str, lang: str) -> str:
 
 def _code(v: Any) -> str:
     return f"`{v}`" if v not in (None, "") else ""
+
+
+def overlay_mark(o: dict[str, Any] | None) -> str:
+    """One cell of the feature × state table: ● required, 🔒 read only, ○ hidden, {a, b} the allowed literals."""
+    if not o:
+        return ""
+    parts = []
+    if o.get("lower") == 1:
+        parts.append("●")
+    if o.get("hidden"):
+        parts.append("○")
+    elif o.get("readonly"):
+        parts.append("🔒")
+    if o.get("in") is not None:
+        parts.append("{" + ", ".join(o["in"]) + "}")
+    return " ".join(parts)
 
 
 def mermaid_workflow(w: dict[str, Any], lang: str) -> str:
@@ -1150,9 +1322,14 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
             rem = s.get("reminder")
             rem_text = t["reminder_text"].format(after=rem["after"], template=rem.get("template") or f"{sn}_reminder") if rem else ""
             rows.append([_code(sn), _lbl(s, sn, lang), kind, ", ".join(_code(p) for p in s["owner"]),
-                         ", ".join(_code(p) for p in s["editable_by"]), ", ".join(_code(f) for f in s["requires"]), rem_text])
+                         ", ".join(_code(p) for p in s["editable_by"]), ", ".join(_code(f) for f in required_features(s)), rem_text])
         out += [f"### {t['states']}", ""] + E._table(
             [t["state"], t["label"], t["kind"], t["owner"], t["editable_by"], t["requires"], t["reminder"]], rows) + [""]
+        matrix = state_matrix(b, e, cname)
+        if matrix:
+            out += [f"### {t['state_model']}", "", t["state_model_note"], ""] + E._table(
+                [t["feature"]] + [_lbl(s, sn, lang) for sn, s in w["states"].items()],
+                [[_code(row["feature"])] + [overlay_mark(row["states"].get(sn)) for sn in w["states"]] for row in matrix]) + [""]
         rows = []
         named = transition_reactions(b, e, cname)                  # who is notified on the state change, per transition
         by_name = {r.get("name"): r for r in b["reactions"]}
@@ -1226,7 +1403,8 @@ def _typed(text: Any, ctx: X.Context, sql_ctx: X.SqlContext, expect: str | None 
 def uses(b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
     """Which features of which classes the behaviour reads or points to:
     {Class: {attributes: {name: [{kind, of}]}, references: {name: [{kind, of}]}, class: [{kind: "scope", of: role}]}}.
-    `kind` says how (derivation, when, guard, at, by, owner, editable_by, requires, revert, notify, scope), `of` where
+    `kind` says how (derivation, when, guard, at, by, owner, editable_by, requires, allowed, readonly, hidden, revert,
+    notify, scope), `of` where
     (Class.attribute, Class.transition, Class.state, reaction name, role). Computed on the typed trees, so every hop
     of a path is attributed to the class that owns the feature; an expression that does not type-check contributes
     nothing (validate() reports it). Only classes with at least one entry appear."""
@@ -1292,14 +1470,24 @@ def uses(b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
         if cname not in e["classes"]:
             continue
         ctx = X.Context(e, cname)
-        attrs, _ = E.features(e, cname)
+        attrs, refs = E.features(e, cname)
         for sn, s in w["states"].items():
             for p in s["owner"]:
                 principal(p, cname, "owner", f"{cname}.{sn}")
             for p in s["editable_by"]:
                 principal(p, cname, "editable_by", f"{cname}.{sn}")
-            for f, _text in requires_tests(e, cname, s):
-                add(cname, "attributes" if f in attrs else "references", f, "requires", f"{cname}.{sn}")
+            for f, o in state_overlay(s).items():
+                if f not in attrs and f not in refs:
+                    continue
+                group = "attributes" if f in attrs else "references"
+                if o["lower"] == 1:
+                    add(cname, group, f, "requires", f"{cname}.{sn}")
+                if o["in"] is not None:
+                    add(cname, group, f, "allowed", f"{cname}.{sn}")
+                if o["hidden"]:
+                    add(cname, group, f, "hidden", f"{cname}.{sn}")
+                elif o["readonly"]:
+                    add(cname, group, f, "readonly", f"{cname}.{sn}")
         for tn, t in w["transitions"].items():
             of = f"{cname}.{tn}"
             for p in t["by"]:
@@ -1470,7 +1658,8 @@ def engine_version(raw: dict[str, Any], metamodel: dict[str, Any], cname: str) -
         states.append({"key": sn, "labels": s.get("label") if isinstance(s.get("label"), dict) else {},
                        "kind": "initial" if s["initial"] else "final" if s["final"] else "normal",
                        "color": s.get("color") or "#64748b", "owner": [principal_key(p) for p in s["owner"]],
-                       "editable_by": [principal_key(p) for p in s["editable_by"]], "requires": list(s["requires"]),
+                       "editable_by": [principal_key(p) for p in s["editable_by"]], "requires": required_features(s),
+                       "model": state_overlay(s),
                        "reminder_days": days, "reminder_template": (rem or {}).get("template"), "sort": i})
     notify: dict[str, list[dict[str, Any]]] = {}
     for r in b["reactions"]:
@@ -1577,6 +1766,23 @@ def _clause_key(c: dict[str, Any]) -> str:
     return f"{c.get('field')} {c.get('op')} {sorted(map(str, v)) if isinstance(v, list) else v}"
 
 
+def _sql_lit(v: str) -> str:
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def state_columns(e: dict[str, Any], cname: str, s: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
+    """The single-valued features a state's overlay touches, with their stored column: [(feature, column, overlay)]
+    (collections are checked only on entering, through `requires_tests`; unknown features are skipped)."""
+    attrs, refs = E.features(e, cname)
+    out = []
+    for f, o in state_overlay(s).items():
+        spec = attrs.get(f) or refs.get(f)
+        if spec is None or spec.get("upper", 1) != 1 or spec.get("derived"):
+            continue
+        out.append((f, E.field_key(f, spec), o))
+    return out
+
+
 def sql_view(raw: dict[str, Any], metamodel: dict[str, Any]) -> str:
     """Derivations, guards, conditions and reaction conditions as PostgreSQL on a row `r` of each class: a preview
     of what the engine evaluates (to paste into functions, triggers or generated columns)."""
@@ -1602,14 +1808,23 @@ def sql_view(raw: dict[str, Any], metamodel: dict[str, Any]) -> str:
                     node, _ = X.check(str(tr[key]), ctx, X.BOOL)
                     out.append(f"--   {tn}.{key}: {X.to_text(node)}")
                     out.append(f"coalesce({X.to_sql(node, sql_ctx)}, false)")
+        attrs, refs = E.features(e, cname)
         for sn, s in w["states"].items():
             tests = requires_tests(e, cname, s)
-            if not tests:
-                continue
-            out.append(f"--   {sn}.requires: {', '.join(f for f, _ in tests)} (to enter the state, and while the record is there)")
+            if tests:
+                out.append(f"--   {sn}.requires: {', '.join(f for f, _ in tests)} (to enter the state, and while the record is there)")
             for f, text in tests:
                 node, _ = X.check(text, ctx, X.BOOL)
                 out.append(f"coalesce({X.to_sql(node, sql_ctx)}, false)  -- {f}")
+            for f, col, o in state_columns(e, cname, s):
+                if o["in"] is not None:
+                    out.append(f"--   {sn}.{f} in: {', '.join(o['in'])} (to enter the state, and while the record is there)")
+                    out.append(f"coalesce(r.{col} is null or r.{col} in ({', '.join(_sql_lit(E.literal_key(x)) for x in o['in'])}), false)  -- {f}")
+            ro = [(f, col) for f, col, o in state_columns(e, cname, s) if o["readonly"]]
+            if ro:
+                out.append(f"--   {sn}: read only: {', '.join(f for f, _ in ro)} (an update that changes them is refused while the record is there)")
+            for f, col in ro:
+                out.append(f"new.{col} is distinct from old.{col}  -- {f}")
         out.append("")
     if b["reactions"]:
         out.append("-- reactions (p_extra: the event's data)")
