@@ -57,7 +57,9 @@ metamodelli `.ecore`/Emfatic nei progetti MDE). Se il progetto non ha un modello
 AskUserQuestion se adottarlo (`/modeler:install` per le app Next.js + Supabase: ricava il metamodello dal database e
 installa il modellatore; opzione "No, sviluppo diretto sul codice"). Con il no, la sezione contiene solo
 "Nessun modello: sviluppo diretto sul codice" (niente righe sul modello o sui comandi `model:*`): le sessioni
-successive non lo ripropongono. Personalizzazioni e `CUSTOM(<id>)` servono solo nei progetti con modello. Se esiste codice
+successive non lo ripropongono. In un'app con modello e più ruoli per utente (`roles` in `behavior.yaml`, o una
+tabella `user_roles`) senza `view_as` nel modello, chiedi **una volta** se vuole «Vedi come» (`view_as: {users_by:
+[admin]}`, skill `modeler:behavior`); con il no, scrivi in CLAUDE.md "Senza «Vedi come»" così non si ripropone. Personalizzazioni e `CUSTOM(<id>)` servono solo nei progetti con modello. Se esiste codice
 scritto a mano che il modello non esprime e manca `docs/customizations.md`, crealo elencando le personalizzazioni
 trovate (identificativo, motivo, elementi del modello coinvolti, file, verifica) e chiedi conferma all'utente.
 

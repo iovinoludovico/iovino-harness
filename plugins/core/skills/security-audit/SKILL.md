@@ -49,6 +49,13 @@ Mai scrivere segreti nel rapporto, in file o in chat: se un comando ne mostra un
 - Tabelle di dominio leggibili da `anon`: `select table_name from information_schema.tables where table_schema='public' and has_table_privilege('anon', format('%I.%I', table_schema, table_name), 'SELECT')`.
 - Viste senza `security_invoker`: `select c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='v' and coalesce(array_to_string(c.reloptions,','),'') not like '%security_invoker=true%'`.
 - Storage: `select id, public from storage.buckets`; policy su `storage.objects` (`select policyname, cmd, roles from pg_policies where schemaname='storage'`).
+- «Vedi come» (se esiste `public.view_as_profile_id()`): chi può impersonare sono solo i principali di `view_as.users_by`
+  di `behavior.yaml` (o, a mano, gli admin): `select prosrc from pg_proc where proname in ('view_as_can_impersonate','view_as_profile_id')`
+  non deve leggere il ruolo dall'intestazione né da `current_profile_id()`; `view_as_allowed(uuid)` esclude utenti inattivi o non
+  approvati (se l'app li ha); `workflow_history`/`record_history` hanno `impersonated_by` con default `impersonator_id()`;
+  `view_as_log(…)` risponde vuoto a un utente che non può impersonare; come `anon` le intestazioni `x-view-as` /
+  `x-view-as-user` non cambiano nulla (`curl … -H "x-view-as-user: <uuid>"` → stesso risultato di prima); il client server
+  manda le intestazioni solo dai cookie `httpOnly` (`src/lib/modeler/view-as.ts`), mai da parametri della richiesta.
 - Prova pratica come anonimo (solo letture e un `POST` che deve fallire):
   `curl -s "https://<ref>.supabase.co/rest/v1/<tabella>?select=*&limit=1" -H "apikey: <pub>"` → `[]` o errore
   `42501`; `curl -s -X POST … -d '{}'` → violazione RLS; `curl -s -X POST https://<ref>.supabase.co/storage/v1/object/list/<bucket> -H "apikey: <pub>" -H 'Content-Type: application/json' -d '{"prefix":""}'`
