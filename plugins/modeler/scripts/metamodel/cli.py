@@ -196,7 +196,21 @@ def cmd_validate(a) -> int:
 
 
 def cmd_show(a) -> int:
-    meta = E.load(find_metamodel(a.path))
+    meta_path = find_metamodel(a.path)
+    meta = E.load(meta_path)
+    if getattr(a, "state", None):
+        # the class as seen from a workflow state: the metamodel with the state's `requires`/`model` applied
+        cname, _, state = str(a.state).partition(".")
+        bpath = behavior_file(meta_path, getattr(a, "behavior", None))
+        if bpath is None:
+            print(f"no {B.BEHAVIOR_FILE} next to {meta_path}", file=sys.stderr)
+            return 1
+        w = B.expand(B.load(bpath))["workflows"].get(cname)
+        if not w or state not in w["states"]:
+            print(f"--state: <Class>.<state> of a workflow in {bpath.name} "
+                  f"({', '.join(f'{c}.{s}' for c, x in B.expand(B.load(bpath))['workflows'].items() for s in x['states']) or 'none'})", file=sys.stderr)
+            return 1
+        meta = B.refine(meta, cname, w["states"][state])
     if a.format == "emfatic":
         print(E.to_emfatic(meta), end="")
     elif a.format == "mermaid":
@@ -1039,7 +1053,7 @@ def docs_status(root: Path, raw: dict[str, Any] | None = None) -> dict[str, Any]
     if not path.exists():
         return {"state": "missing", "sections": []}
     raw = raw if raw is not None else E.load(root / E.METAMODEL_FILE)
-    generated = E.markdown_document(raw)
+    generated = E.markdown_document(raw, states=domain_states(root, raw))
     actual = path.read_text(encoding="utf-8-sig")
     norm = E.markdown_normalize
     if norm(actual) == norm(generated):
@@ -1058,9 +1072,24 @@ def docs_status(root: Path, raw: dict[str, Any] | None = None) -> dict[str, Any]
             "metamodel_changed": previous is not None and norm(previous) != norm(generated)}
 
 
+def domain_states(root: Path, raw: dict[str, Any]) -> dict[str, Any] | None:
+    """What the workflow states say of the features (`requires`, `model` of behavior.yaml) for docs/DOMAIN.md: from a
+    valid behaviour model next to the metamodel, else None (a change of the overlay makes DOMAIN.md stale)."""
+    bpath = root / B.BEHAVIOR_FILE
+    if not bpath.exists():
+        return None
+    try:
+        braw = B.load(bpath)
+        if not E.validate(raw).ok or not B.validate(braw, raw).ok:
+            return None
+        return B.domain_annotations(braw, raw) or None
+    except Exception:            # a malformed behaviour: DOMAIN.md stays the metamodel's (validate reports it)
+        return None
+
+
 def write_docs(root: Path, raw: dict[str, Any]) -> Path:
     path = root / DOMAIN_MD
-    text = E.markdown_document(raw)
+    text = E.markdown_document(raw, states=domain_states(root, raw))
     for p in (path, root / DOMAIN_COPY):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text, encoding="utf-8")
@@ -1344,6 +1373,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("show", help="print the metamodel")
     s.add_argument("path", nargs="?")
     s.add_argument("--format", choices=["yaml", "emfatic", "mermaid", "markdown", "json", "storage"], default="emfatic")
+    s.add_argument("--state", metavar="CLASS.STATE", help=f"the metamodel as seen from a workflow state of {B.BEHAVIOR_FILE} (requires, model)")
+    s.add_argument("--behavior", help=f"the behaviour model (default: {B.BEHAVIOR_FILE} next to the metamodel)")
     s.set_defaults(fn=cmd_show)
 
     s = sub.add_parser("behavior", help=f"print the behaviour model ({B.BEHAVIOR_FILE}) in a view")

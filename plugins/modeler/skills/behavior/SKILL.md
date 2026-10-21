@@ -60,6 +60,16 @@ mantieni nomi e lingua dell'utente.
   mancanti, `missing` in `_available_transitions`) e finché il record vi resta (campi singoli, trigger); nessuna
   ereditarietà, ogni stato elenca i suoi; `npm run model:behavior -- --format sql` dà i frammenti per un motore a
   mano. `validate` avvisa se il metamodello lo richiede già, se lo richiede lo stato iniziale o se una guardia lo ripete.
+- Più in generale **la classe come appare in uno stato** («dopo l'emissione il CIG non si tocca più», «in bozza la
+  data di consegna non compare», «in istruttoria il tipo può essere solo a o b») è `model:` dello stato:
+  `model: {cig: {lower: 1, readonly: true}, deliveryDate: {hidden: true}, kind: {in: [a, b]}}`, un overlay che può
+  solo stringere il metamodello (`requires` è l'abbreviazione di `lower: 1`; `hidden` = non mostrato e in sola
+  lettura, il valore resta; nessuna ereditarietà fra stati). Il motore impone tutto sui campi singoli (invarianti nel
+  trigger, controllo in ingresso) ed espone `<entità>_field_policy(r)` (`{campo: {required, readonly, hidden, in}}`)
+  per i form, così `STATE_REQUIRES`/`STATE_EDITORS` scritti a mano spariscono; su una collezione impone solo
+  `lower: 1`. `npm run model:show -- --state <Classe>.<stato>` mostra il metamodello come visto da quello stato;
+  `BEHAVIOR.md` e il modellatore hanno la tabella feature × stato. `validate` avvisa anche lungo il percorso (campo in
+  sola lettura in uno stato ma richiesto nel successivo: va impostato prima o dalla transizione).
 - Una reazione o un sollecito con `notify` ha i suoi testi nel modello: `templates: {<chiave>: {it: {subject, body},
   en: {…}}}` con i segnaposto `{{self.<path>}}`, `{{transition.label}}`, `{{actor.name}}`, `{{comment}}`, `{{url}}`,
   `{{reminder.days}}` (riferimento, «Events, reactions, subscriptions»); se i testi usano `{{url}}` l'app definisce
@@ -88,7 +98,8 @@ risolti, `model:drift`). Mai un `behavior.yaml` che cita feature che il metamode
 
 ## 4. Allineare l'applicazione (nella stessa modifica, su un branch)
 1. `npm run model:validate`: zero errori, e leggi i warning (minimo senza guardia, campo di `requires` già
-   obbligatorio nel metamodello o ripetuto da una guardia, template mancante o in una lingua sola, reazione che
+   obbligatorio nel metamodello o ripetuto da una guardia, `model` che ripete il metamodello o non impostabile lungo
+   il percorso, template mancante o in una lingua sola, reazione che
    nessuna sottoscrizione riceve, destinatari su un evento secondario, doppi destinatari); `npm run model:drift`
    segnala anche i testi con `{{url}}` quando il database non ha `record_url`.
 2. `npm run model:sync` rigenera `docs/BEHAVIOR.md` e `src/lib/modeler/behavior.json` (il modellatore web in

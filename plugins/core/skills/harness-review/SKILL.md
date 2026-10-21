@@ -25,7 +25,8 @@ Ogni voce di `NOTES.md` ha una riga `- **Stato**: …` (le voci senza valgono "d
 | `rinviata il <data>: <motivo e condizione per riprenderla>` | in attesa | no, ma si ricorda |
 
 Le voci restano nel file: `NOTES.md` è anche lo storico delle decisioni. Non cancellarle e non riscriverne
-il contenuto, cambia solo la riga **Stato** (e aggiungi un caso nuovo se emerge).
+il contenuto, cambia solo la riga **Stato** (e aggiungi un caso nuovo se emerge). Una nota con più righe Stato (una
+parte applicata prima, poi `- **Stato (parte rimasta)**: …`) vale per l'ultima riga: è quella che l'hook di avvio conta.
 
 ## 1. Leggi e raggruppa
 

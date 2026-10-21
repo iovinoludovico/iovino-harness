@@ -90,19 +90,20 @@ def detect_stack(root: Path) -> list[str]:
     return found
 
 
-NOTE_STATE_RE = re.compile(r"^- \*\*Stato\*\*:\s*(.*)$", re.MULTILINE)
+NOTE_STATE_RE = re.compile(r"^- \*\*Stato[^*\n]*\*\*:\s*(.*)$", re.MULTILINE)
 
 
 def note_states(notes: Path) -> dict[str, int]:
-    """Count the NOTES.md entries by state: a note without a final decision is still to be reviewed."""
+    """Count the NOTES.md entries by state: a note without a final decision is still to be reviewed. A note with
+    several Stato lines (`**Stato (parte rimasta)**` after a partial application) is judged by the last one."""
     counts = {"open": 0, "deferred": 0, "closed": 0}
     try:
         text = notes.read_text(encoding="utf-8")
     except OSError:
         return counts
     for entry in re.split(r"^## ", text, flags=re.MULTILINE)[1:]:
-        m = NOTE_STATE_RE.search(entry)
-        state = m.group(1).strip().lower() if m else ""
+        found = NOTE_STATE_RE.findall(entry)
+        state = found[-1].strip().lower() if found else ""
         if state.startswith(("applicata", "scartata")):
             counts["closed"] += 1
         elif state.startswith("rinviata"):

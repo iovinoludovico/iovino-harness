@@ -38,6 +38,7 @@ test("behaviorDiff: the lines a reviewer reads, as the CLI prints them", () => {
   const w = b.workflows.Invitation;
   w.states.paused = { label: { it: "Sospeso" }, owner: ["office"] };
   w.states.payment.requires = ["hours"];
+  w.states.rejected.model = { flatAmount: { lower: null, readonly: true, hidden: false, in: null }, notes: { lower: null, readonly: true, hidden: true, in: null } };
   w.transitions.pause = { from: ["in_management"], to: "paused", by: ["office"], when: null, guard: null, comment: null, at: null, emits: [] };
   w.transitions.submit.guard = { text: "dataComplete and hours > 0" };
   b.reactions.splice(0, 1);
@@ -45,9 +46,12 @@ test("behaviorDiff: the lines a reviewer reads, as the CLI prints them", () => {
   b.derivations.Invitation.fundsTotal = { text: "invitationFunds.amount.sum() + 1" };
   assert.deepEqual(Layout.behaviorDiff(a, b), [
     "+ role boss", "~ derivation Invitation.fundsTotal = invitationFunds.amount.sum() + 1",
-    "~ state Invitation.payment: requires", "+ state Invitation.paused", "~ transition Invitation.submit: guard",
+    "~ state Invitation.rejected: model", "~ state Invitation.payment: requires", "+ state Invitation.paused", "~ transition Invitation.submit: guard",
     "+ transition Invitation.pause: in_management -> paused", "- reaction notify_submitted",
   ]);
+  // the proposal writes `model` as the notation does: only what the state changes
+  assert.deepEqual(Layout.behaviorSource(b).workflows.Invitation.states.rejected.model, { flatAmount: { readonly: true }, notes: { hidden: true } });
+  assert.ok(!("model" in Layout.behaviorSource(b).workflows.Invitation.states.draft));
   assert.deepEqual(Layout.behaviorDiff(a, a), []);
   assert.deepEqual(Layout.behaviorDiff(a, structuredClone(a)), []);
   assert.ok(Layout.behaviorDiff(null, b).includes("+ workflow Invitation on state: 12 states, 16 transitions"));

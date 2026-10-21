@@ -11,9 +11,10 @@ import type { ReactNode } from "react";
 
 type Label = string | Record<string, string> | null | undefined;
 type Typed = { text: string; type?: string } | null | undefined;
+type Overlay = { lower?: number | null; readonly?: boolean; hidden?: boolean; in?: string[] | null };   // `model` of a state on one feature
 type State = {
   initial?: boolean; final?: boolean; label?: Label; color?: string; owner?: string[]; editable_by?: string[];
-  requires?: string[]; reminder?: { after?: string; template?: string } | null;
+  requires?: string[]; model?: Record<string, Overlay>; reminder?: { after?: string; template?: string } | null;
 };
 type Transition = {
   from?: string[]; to?: string | null; by?: string[]; when?: Typed; guard?: Typed; comment?: string | null;
@@ -54,13 +55,15 @@ const TEXT = {
     workflow: (c: string) => `Workflow di ${c}`, stateAttr: (a: string) => `Lo stato è l'attributo ${a}.`,
     states: "Stati", state: "Stato", kind: "Tipo", initial: "iniziale", final: "finale", owner: "In attesa di", editableBy: "Modificabile da",
     reminder: "Sollecito", requires: "Richiede", after: (d: string, t: string) => `dopo ${d} (${t})`,
+    stateModel: "Il metamodello per stato",
+    stateModelNote: "Come la classe appare in ogni stato (model dello stato): ● richiesto, 🔒 sola lettura, ○ assente (non mostrato né modificabile, il valore resta), {a, b} valori ammessi; vuoto: come nel metamodello.",
     transitions: "Transizioni", transition: "Transizione", fromTo: "Da → A", by: "Chi", when: "Condizione", guard: "Requisito",
     comment: "Commento", required: "obbligatorio", optional: "facoltativo", emits: "Eventi", system: (at: string) => `sistema: ${at}`,
     revert: (by: string, finalBy: string, c: string) => `Ritorno a uno stato precedente: ${by}; da uno stato finale: ${finalBy}; commento ${c}.`,
     derivations: "Attributi calcolati", cls: "Classe", attribute: "Attributo", formula: "Formula", inCode: "calcolato nel codice",
     involved: "Classi coinvolte nel comportamento", feature: "Attributo o riferimento", usedBy: "Usato da",
     involvedNote: "Classi senza workflow di cui il comportamento legge o usa attributi e riferimenti (formule, condizioni, destinatari, ambiti dei ruoli).",
-    kinds: { derivation: "derivazione", guard: "requisito", when: "condizione", at: "scadenza", by: "chi", owner: "in attesa di", editable_by: "modificabile da", requires: "richiesto nello stato", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo" } as Record<string, string>,
+    kinds: { derivation: "derivazione", guard: "requisito", when: "condizione", at: "scadenza", by: "chi", owner: "in attesa di", editable_by: "modificabile da", requires: "richiesto nello stato", allowed: "valori ammessi nello stato", readonly: "sola lettura nello stato", hidden: "assente nello stato", notify: "destinatario", revert: "ritorno", scope: "ambito del ruolo" } as Record<string, string>,
     events: "Eventi", event: "Evento", description: "Descrizione",
     lifecycle: "Ogni classe emette created, updated, deleted; una classe con workflow anche transitioned, completed, reverted, reminder.",
     reactions: "Reazioni", name: "Nome", recipients: "Destinatari", template: "Template",
@@ -73,13 +76,15 @@ const TEXT = {
     workflow: (c: string) => `Workflow of ${c}`, stateAttr: (a: string) => `The state is the attribute ${a}.`,
     states: "States", state: "State", kind: "Kind", initial: "initial", final: "final", owner: "Waiting for", editableBy: "Editable by",
     reminder: "Reminder", requires: "Requires", after: (d: string, t: string) => `after ${d} (${t})`,
+    stateModel: "The class as seen from each state",
+    stateModelNote: "What the class looks like in every state (model of the state): ● required, 🔒 read only, ○ hidden (not shown nor editable, the value stays), {a, b} the allowed literals; empty: as in the metamodel.",
     transitions: "Transitions", transition: "Transition", fromTo: "From → To", by: "Who", when: "Condition", guard: "Requirement",
     comment: "Comment", required: "required", optional: "optional", emits: "Events", system: (at: string) => `system: ${at}`,
     revert: (by: string, finalBy: string, c: string) => `Back to a previous state: ${by}; from a final state: ${finalBy}; comment ${c}.`,
     derivations: "Derived attributes", cls: "Class", attribute: "Attribute", formula: "Formula", inCode: "computed in code",
     involved: "Classes involved in the behaviour", feature: "Attribute or reference", usedBy: "Used by",
     involvedNote: "Classes without a workflow whose attributes and references the behaviour reads or points to (formulas, conditions, recipients, role scopes).",
-    kinds: { derivation: "derivation", guard: "requirement", when: "condition", at: "due", by: "who", owner: "waiting for", editable_by: "editable by", requires: "required in state", notify: "recipient", revert: "revert", scope: "role scope" } as Record<string, string>,
+    kinds: { derivation: "derivation", guard: "requirement", when: "condition", at: "due", by: "who", owner: "waiting for", editable_by: "editable by", requires: "required in state", allowed: "allowed in state", readonly: "read only in state", hidden: "hidden in state", notify: "recipient", revert: "revert", scope: "role scope" } as Record<string, string>,
     events: "Events", event: "Event", description: "Description",
     lifecycle: "Every class emits created, updated, deleted; a class with a workflow also transitioned, completed, reverted, reminder.",
     reactions: "Reactions", name: "Name", recipients: "Recipients", template: "Template",
@@ -88,6 +93,19 @@ const TEXT = {
 };
 
 const label = (spec: Label, key: string, lang: string) => (typeof spec === "string" ? spec : spec?.[lang]) || key;
+
+// the class as seen from a state: `model` merged with `requires` (its shorthand for lower: 1), per feature
+const overlayOf = (s: State): Record<string, Overlay> => {
+  const out: Record<string, Overlay> = {};
+  for (const f of s.requires ?? []) out[f] = { ...(out[f] ?? {}), lower: 1 };
+  for (const [f, o] of Object.entries(s.model ?? {})) {
+    const cur = out[f] ?? {};
+    out[f] = { lower: o?.lower ?? cur.lower ?? null, readonly: !!(cur.readonly || o?.readonly || o?.hidden), hidden: !!(cur.hidden || o?.hidden), in: o?.in ?? cur.in ?? null };
+  }
+  return out;
+};
+const requiredOf = (s: State) => Object.entries(overlayOf(s)).filter(([, o]) => o.lower === 1).map(([f]) => f);
+const mark = (o?: Overlay) => (o ? [o.lower === 1 ? "●" : "", o.hidden ? "○" : o.readonly ? "🔒" : "", o.in ? `{${o.in.join(", ")}}` : ""].filter(Boolean).join(" ") : "");
 
 function Code({ children }: { children?: string | null }) {
   if (!children) return null;
@@ -185,6 +203,11 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
         const states = Object.entries(w.states ?? {});
         const transitions = Object.entries(w.transitions ?? {});
         const rv = w.revert;
+        // feature × state: the features at least one state requires, locks, hides or narrows, in the class's order when known
+        const overlays = states.map(([sn, s]) => [sn, overlayOf(s)] as const);
+        const touched = new Set(overlays.flatMap(([, ov]) => Object.keys(ov)));
+        const order = Object.keys(mm.classes?.[cn]?.attributes ?? {});
+        const features = [...order.filter((f) => touched.has(f)), ...[...touched].filter((f) => !order.includes(f))];
         return (
           <div key={cn} className={`space-y-2 rounded-md border p-3 ${cn === selected ? "border-sky-400 ring-1 ring-sky-400" : ""}`}>
             <h3 className="font-medium">{t.workflow(cn)}</h3>
@@ -205,10 +228,20 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
                 s.initial ? t.initial : s.final ? t.final : "",
                 <Codes key="o" items={s.owner} />,
                 <Codes key="e" items={s.editable_by} />,
-                <Codes key="r" items={s.requires} />,
+                <Codes key="r" items={requiredOf(s)} />,
                 s.reminder?.after ? t.after(s.reminder.after, s.reminder.template ?? `${sn}_reminder`) : "",
               ])}
             />
+            {features.length > 0 && (
+              <>
+                <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t.stateModel}</h4>
+                <p className="text-xs text-muted-foreground">{t.stateModelNote}</p>
+                <Table
+                  head={[t.feature, ...states.map(([sn, s]) => label(s.label, sn, l))]}
+                  rows={features.map((f) => [<Code key="f">{f}</Code>, ...overlays.map(([, ov]) => mark(ov[f]))])}
+                />
+              </>
+            )}
             <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t.transitions}</h4>
             <Table
               head={[t.transition, t.label, t.fromTo, t.by, t.when, t.guard, t.comment, t.emits]}

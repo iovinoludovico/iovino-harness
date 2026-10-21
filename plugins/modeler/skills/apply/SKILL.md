@@ -48,7 +48,8 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    della transizione bloccata (skill `behavior`, punto 2); `validate` lo segnala finché manca. Se la proposta rende
    obbligatorio (`lower: 1`) un attributo o un riferimento di una classe con workflow, chiedi prima «dalla creazione
    o da quale stato?»: nel secondo caso il metamodello resta `[0..1]` e il campo entra nel `requires` di quello
-   stato in `behavior.yaml` (skill `behavior`, punto 2).
+   stato in `behavior.yaml` (skill `behavior`, punto 2); lo stesso se rende un campo `changeable: false` perché «non
+   si tocca più dopo …»: resta modificabile nel metamodello ed è `readonly` nel `model` di quello stato.
 5. Prosegui come la skill `metamodel`, sezione "Applicare": `npm run model:migrate -- --name <nome>
    --write` (bozza dal metamodello committato a quello appena scritto), TODO risolti, codice, migrazione
    applicata in locale, `npm run model:drift` → "aligned", typecheck, lint e test.

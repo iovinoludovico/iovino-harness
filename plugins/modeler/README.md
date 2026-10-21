@@ -39,8 +39,10 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   pending proposal (`author: claude`, «from the prompt»), so the modeler shows it before it is applied.
 - `drift` compares the metamodel with a live database (local Supabase by default): "aligned" is the invariant.
 - Behaviour is the second model, **`behavior.yaml`** next to the metamodel: roles, derivations of the attributes
-  marked `derived: true`, workflows (states with the fields they `require` from then on, transitions, guards, timed
-  transitions), events, reactions (who is
+  marked `derived: true`, workflows (states with the fields they `require` and, through `model`, **the class as seen
+  from the state**: an overlay that locks, hides or narrows features per state, enforced by the engine, shown as a
+  feature × state table in `BEHAVIOR.md` and the modeler, printed by `model:show -- --state Class.state`, annotated
+  «1 from <state>» in `DOMAIN.md`; transitions, guards, timed transitions), events, reactions (who is
   notified when, with the texts of the notifications in `templates:` per language and placeholders on the record and
   the event: rendered by the engine for every recipient, overridable per key and language from the admin matrix
   page `<NotificationTemplates>`), reactions (who is

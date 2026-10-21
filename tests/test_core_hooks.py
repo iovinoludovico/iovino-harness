@@ -142,7 +142,9 @@ class SessionTests(unittest.TestCase):
                              "## 2026-01-01 — b\n- **Stato**: scartata il 2026-01-02: y\n\n"
                              "## 2026-01-01 — c\n- **Stato**: rinviata il 2026-01-02: z\n\n"
                              "## 2026-01-01 — d\n- **Stato**: in parte applicata: w\n\n"
-                             "## 2026-01-01 — e\n- **Plugin**: core\n")
+                             "## 2026-01-01 — e\n- **Plugin**: core\n\n"
+                             "## 2026-01-01 — f\n- **Stato**: in parte applicata: v\n"
+                             "- **Stato (parte rimasta)**: applicata il 2026-01-03: v\n")
             res = run("session", {"cwd": d}, {"CLAUDE_PLUGIN_OPTION_HARNESS_REPO": ""})
             self.assertIn("2 note da valutare in NOTES.md (più 1 rinviate)", res.stdout)
             self.assertIn("/core:harness-review", res.stdout)

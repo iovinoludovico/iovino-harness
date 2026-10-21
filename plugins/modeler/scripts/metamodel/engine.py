@@ -36,10 +36,12 @@ MESSAGES = {
     "it": {"not_found": "Record non trovato", "unknown": "Transizione sconosciuta: %", "unavailable": "Transizione non disponibile: %",
            "forbidden": "Operazione non consentita", "timed": "Transizione automatica: non eseguibile a mano",
            "guard": "Requisiti non soddisfatti: %", "required": "Campi richiesti nello stato %: %", "comment": "Commento obbligatorio",
+           "readonly": "Sola lettura nello stato %: %", "allowed": "Valore non ammesso nello stato %: %",
            "state": "Lo stato cambia solo con le transizioni (%_perform_transition)", "revert": "Stato non raggiungibile: %"},
     "en": {"not_found": "Record not found", "unknown": "Unknown transition: %", "unavailable": "Transition not available: %",
            "forbidden": "Operation not allowed", "timed": "Automatic transition: it cannot be performed by hand",
            "guard": "Requirements not met: %", "required": "Required in state %: %", "comment": "Comment required",
+           "readonly": "Read only in state %: %", "allowed": "Not allowed in state %: %",
            "state": "The state changes only through the transitions (%_perform_transition)", "revert": "State not reachable: %"},
 }
 
@@ -497,6 +499,35 @@ def _requires(cls: _Class, state: dict[str, Any], alias: str) -> list[tuple[str,
     return out
 
 
+def _allowed(cls: _Class, state: dict[str, Any], alias: str) -> list[tuple[str, str, str]]:
+    """The enum attributes a state narrows (`model: {f: {in: […]}}`): [(feature, column, sql list of the stored literals)]."""
+    return [(f, col, ", ".join(_lit(E.literal_key(x)) for x in o["in"]))
+            for f, col, o in B.state_columns(cls.e, cls.cname, state) if o["in"] is not None]
+
+
+def _field_policy(cls: _Class) -> str:
+    """`<entity>_field_policy(r)`: what the forms show for the record in its state, {feature: {required, readonly,
+    hidden, in}} for every feature the state's `requires`/`model` touches (collections included: the engine cannot
+    enforce readonly/hidden on them, the application does)."""
+    k, tbl, sc = cls.key, cls.table, cls.state_col
+    cases = []
+    for sn, spec in cls.w["states"].items():
+        items = []
+        for f, o in B.state_overlay(spec).items():
+            if f not in cls.attrs and f not in cls.refs:
+                continue
+            keys = [f"'required', {'true' if o['lower'] == 1 else 'false'}", f"'readonly', {'true' if o['readonly'] else 'false'}",
+                    f"'hidden', {'true' if o['hidden'] else 'false'}"]
+            if o["in"] is not None:
+                keys.append(f"'in', array[{', '.join(_lit(x) for x in o['in'])}]::text[]")
+            items.append(f"{_lit(f)}, jsonb_build_object({', '.join(keys)})")
+        if items:
+            cases.append(f"    when {_lit(sn)} then jsonb_build_object({', '.join(items)})")
+    body = (f"  select case r.{sc}\n{chr(10).join(cases)}\n    else '{{}}'::jsonb end;" if cases
+            else "  select '{}'::jsonb;")
+    return _fn(f"{k}_field_policy", f"r {tbl}", "jsonb", body, "sql", stable=True)
+
+
 def _workflow(cls: _Class, msgs: dict[str, str], notes: list[str]) -> str:
     w = cls.w
     assert w is not None
@@ -506,12 +537,19 @@ def _workflow(cls: _Class, msgs: dict[str, str], notes: list[str]) -> str:
     ctx = X.Context(cls.e, cls.cname)
     out = f"-- ---- {cls.cname}: workflow ----\n"
     # the state is set on insert and changes only through the transitions
-    required: list[str] = []                                   # fields a state requires while the record is there
+    required: list[str] = []                                   # the state's model while the record is there
     for sn, s in w["states"].items():
         for f, sql_new in _requires(cls, s, "new"):
             if cls.attrs.get(f, cls.refs.get(f, {})).get("upper", 1) == 1:
                 required.append(f"  if new.{sc} = {_lit(sn)} and not coalesce({sql_new}, false) then\n"
                                 f"    raise exception {_lit(msgs['required'])}, {_lit(sn)}, {_lit(f)} using errcode = '23514';\n  end if;")
+        for f, col, lits in _allowed(cls, s, "new"):
+            required.append(f"  if new.{sc} = {_lit(sn)} and new.{col} is not null and new.{col} not in ({lits}) then\n"
+                            f"    raise exception {_lit(msgs['allowed'])}, {_lit(sn)}, {_lit(f)} using errcode = '23514';\n  end if;")
+        for f, col, o in B.state_columns(cls.e, cls.cname, s):
+            if o["readonly"]:
+                required.append(f"  if tg_op = 'UPDATE' and new.{sc} = {_lit(sn)} and old.{sc} = {_lit(sn)} and new.{col} is distinct from old.{col} then\n"
+                                f"    raise exception {_lit(msgs['readonly'])}, {_lit(sn)}, {_lit(f)} using errcode = '23514';\n  end if;")
     out += _fn(f"{k}_workflow_guard", "", "trigger", f"""begin
   if tg_op = 'INSERT' then
     if new.{sc} is null then new.{sc} := {_lit(initial)}; end if;
@@ -526,6 +564,7 @@ end;""")
     cases = "\n".join(f"    when {_lit(s)} then {_arr([B.principal_key(p) for p in spec['editable_by']])}" for s, spec in w["states"].items())
     out += _fn(f"{k}_can_edit", f"r {tbl}", "boolean",
                f"  select public.{k}_principals(r) && (array['admin'] || case r.{sc}\n{cases}\n    else '{{}}'::text[] end);", "sql", stable=True)
+    out += _field_policy(cls)                                   # what the forms show in the record's state
     # one block per transition
     blocks: list[str] = []
     avail: list[str] = []
@@ -540,6 +579,7 @@ end;""")
             guard = f"coalesce({X.to_sql(node, cls.ctx())}, false)"
         timed = t.get("at") is not None
         req = _requires(cls, w["states"].get(t["to"]) or {}, "r")     # the fields the target state requires
+        req += [(f, f"(r.{col} is null or r.{col} in ({lits}))") for f, col, lits in _allowed(cls, w["states"].get(t["to"]) or {}, "r")]
         missing = ("array_remove(array[" + ", ".join(f"case when not coalesce({sql}, false) then {_lit(f)} end" for f, sql in req)
                    + "]::text[], null)") if req else "'{}'::text[]"
         blocks.append(f"""  {'if' if not blocks else 'elsif'} p_key = {_lit(tn)} then
@@ -716,7 +756,8 @@ def engine_sql(raw: dict[str, Any], metamodel: dict[str, Any], schema: str = "pu
     head = (f"-- Behaviour engine generated from {B.BEHAVIOR_FILE} by the modeler ({dt.date.today():%Y-%m-%d}).\n"
             "-- Idempotent: regenerate it with `modeler engine --write` after every change of the behaviour; do not edit by hand.\n"
             "-- Functions: <entity>_perform_transition, _available_transitions, _revert, _run_timed_transitions, _run_reminders,\n"
-            "-- _principals, _can_edit, _template_vars, _recipients (subject and body of the notification texts rendered), _emit;\n"
+            "-- _principals, _can_edit, _field_policy (what the forms show in the record's state), _template_vars,\n"
+            "-- _recipients (subject and body of the notification texts rendered), _emit;\n"
             "-- triggers: state and derived attributes before insert/update, lifecycle events after.\n\n")
     parts = [head, _contract(schema), RENDER_TEMPLATE]
     events: list[str] = []
@@ -732,6 +773,8 @@ def engine_sql(raw: dict[str, Any], metamodel: dict[str, Any], schema: str = "pu
     tail.append(f"-- {TODO}: if the application keeps a catalogue of event types (table event_types), register: {', '.join(events)}")
     tail.append(f"-- {TODO}: row level security: the engine gives <entity>_can_edit(r) for the update policies; read, create and delete "
                 "are not modelled")
+    tail.append(f"-- {TODO}: forms: <entity>_field_policy(r) says which fields are required, read only, hidden or limited to some values "
+                "in the record's state (the state's `requires`/`model`): read it instead of keeping the lists by hand")
     for cls in classes:
         if cls.w:
             tail.append(f"-- {TODO}: scheduling (pg_cron):")

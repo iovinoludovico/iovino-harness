@@ -325,6 +325,59 @@ test("rows: involved features are marked and the workflow head adds the stereoty
   assert.equal(Layout.boxSize(mm, "Guest", {}).h, Layout.boxSize(mm, "Guest", { uses: bh.uses.Guest }).h);
 });
 
+test("the class as seen from a state: «1 da <stato>» on rows and connectors, the view of one state", () => {
+  const mm = Layout.normalize(fixture("invitations.ecore.yaml"));
+  const bh = behaviorFixture("invitations.ecore.yaml", "invitations.behavior.yaml");
+  const w = structuredClone(bh.workflows.Invitation);
+  w.states.pending_director.requires = ["hours", "issuer"];
+  w.states.pending_director.model = { flatAmount: { lower: 1, readonly: true }, notes: { hidden: true }, travelMethod: { in: ["agency", "receipts"] }, reason: { lower: 1 } };
+  w.states.payment.model = { flatAmount: { readonly: true } };
+  // stateView merges requires and model; stateOverlay indexes the states by feature, with the labels
+  const view = Layout.stateView(w.states.pending_director);
+  assert.deepEqual(view.hours, { lower: 1, readonly: false, hidden: false, in: null });
+  assert.deepEqual(view.flatAmount, { lower: 1, readonly: true, hidden: false, in: null });
+  assert.deepEqual(view.notes, { lower: null, readonly: true, hidden: true, in: null });
+  assert.deepEqual(Layout.stateView(w.states.draft), {});
+  const overlay = Layout.stateOverlay(w, "it");
+  assert.deepEqual(overlay.flatAmount.map((x) => [x.state, x.label, x.lower, x.readonly]),
+    [["pending_director", "In attesa di approvazione", 1, true], ["payment", "Pagamenti in corso", null, true]]);
+  assert.equal(Layout.viewMark(view.flatAmount), "● 🔒");
+  assert.equal(Layout.viewMark(view.notes), "○");
+  assert.equal(Layout.viewMark(view.travelMethod), "{agency, receipts}");
+  assert.equal(Layout.viewMark(undefined), "");
+  // the rows: the multiplicity carries the states that require the feature; nothing else changes
+  const rows = Layout.rowItems(mm.classes.Invitation, true, "more", "state", null, { overlay, from: "da" });
+  assert.equal(rows.find((r) => r.attr === "hours").text, "hours: EBigDecimal [1 da In attesa di approvazione]");
+  assert.equal(rows.find((r) => r.attr === "flatAmount").text, "flatAmount: EBigDecimal [1 da In attesa di approvazione]");
+  assert.equal(rows.find((r) => r.attr === "notes").text, "notes: Text");                         // hidden: only in the view
+  assert.equal(rows.find((r) => r.ref === "issuer").text, "↗ issuer: User [1 da In attesa di approvazione]");
+  assert.ok(!rows.some((r) => r.hidden));
+  const plain = Layout.rowItems(mm.classes.Invitation, true, "more", "state");
+  assert.deepEqual(plain.map((r) => r.text), Layout.rowItems(mm.classes.Invitation, true, "more", "state", null, {}).map((r) => r.text));
+  // a multiplicity that is not the default keeps it: `[0..* · 1 da …]`
+  const c2 = structuredClone(mm.classes.Invitation);
+  c2.attributes.hours.upper = -1;
+  assert.equal(Layout.rowItems(c2, true, "more", "state", null, { overlay, from: "from" }).find((r) => r.attr === "hours").text, "hours: EBigDecimal [0..* · 1 from In attesa di approvazione]");
+  // the view of one state: required `[1]`, 🔒 read only, hidden rows flagged, `∈ {…}` for the allowed literals
+  const seen = Layout.rowItems(mm.classes.Invitation, true, "more", "state", null, { overlay, view, from: "da" });
+  assert.equal(seen.find((r) => r.attr === "hours").text, "hours: EBigDecimal [1]");
+  assert.equal(seen.find((r) => r.attr === "flatAmount").text, "🔒 flatAmount: EBigDecimal [1]");
+  assert.equal(seen.find((r) => r.attr === "travelMethod").text, "travelMethod: TravelMethod [1] ∈ {agency, receipts}");
+  const notes = seen.find((r) => r.attr === "notes");
+  assert.ok(notes.hidden && notes.text === "notes: Text");
+  assert.equal(seen.find((r) => r.attr === "code").text, "code: EString [1]");                    // untouched by the state
+  assert.equal(Layout.rowsOf(mm.classes.Invitation, true, "more", "state", null, { overlay, view, from: "da" }).length, seen.length);
+  // the connectors: the label of a required reference carries the state
+  const diagram = Object.fromEntries([...Object.keys(mm.classes), ...Object.keys(mm.enums)].map((n) => [n, { x: 0, y: 0 }]));
+  const edges = Layout.edgesOf({ ...mm, diagram }, null, { Invitation: overlay }, "da");
+  assert.equal(edges.find((e) => e.key === "Invitation.reason").labelB, "reason 1 · 1 da In attesa di approvazione");
+  assert.equal(edges.find((e) => e.key === "Invitation.department").labelB, "department 1");
+  assert.equal(Layout.edgesOf({ ...mm, diagram }).find((e) => e.key === "Invitation.reason").labelB, "reason 1");
+  // the box grows in width only: the view never changes the height
+  const h0 = Layout.boxSize(mm, "Invitation", { allAttrs: true, workflow: true }).h;
+  assert.equal(Layout.boxSize(mm, "Invitation", { allAttrs: true, workflow: true, overlay, view, from: "da" }).h, h0);
+});
+
 test("fitView fills the canvas with the diagram; zoomView scales around a point that stays put", () => {
   const bounds = { x0: 100, y0: 50, x1: 900, y1: 450 };          // 800 × 400
   const v = Layout.fitView(bounds, { w: 1000, h: 600 }, 24);
