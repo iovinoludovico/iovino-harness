@@ -11,6 +11,8 @@ Harness personale per Claude Code: un marketplace di plugin da installare su ogn
 
 In arrivo: `research`, `mde`.
 
+`docs/research/` raccoglie le note di ricerca dietro le funzionalità dei plugin (oggi: il raffinamento del metamodello indicizzato dallo stato, `states.<key>.model`).
+
 ## Installazione su un nuovo computer
 
 Requisiti: Claude Code, `git`, `python3` (≥ 3.10 per `modeler`). Il repository è
