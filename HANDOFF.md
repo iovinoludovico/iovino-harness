@@ -1,74 +1,95 @@
-# Handoff — harness review del 2026-10-21 unita in main: `requires` per stato, immagini del worker, zoom a pulsanti
-_Aggiornato: 2026-10-21 · branch `main` (`0a9b9a9`, PR #29), albero pulito_
+# Handoff — metamodello dipendente dallo stato (`states.<key>.model`) unito in main
+_Aggiornato: 2026-10-21 (sera) · branch `main` (`061696f`, PR #30), albero pulito_
 
 ## Obiettivo
-Marketplace personale di plugin per Claude Code (`core`, `modeler`). Questa sessione: revisione delle 4 note aperte
-di `NOTES.md` con `/core:harness-review` (tutte chiuse), più la richiesta sull'editor web (zoom solo con pulsanti,
-diagramma che riempie l'editor). Tutto rilasciato: **core 0.19.0, modeler 0.30.0** su `origin/main`.
+Marketplace personale di plugin per Claude Code (`core`, `modeler`). Seconda revisione delle note del 2026-10-21:
+la nota «Metamodello dipendente dagli stati» è applicata come **overlay restrittivo per stato** (`states.<key>.model`
+in `behavior.yaml`), non come più metamodelli: un solo metamodello e un solo schema, le versioni `MM_s ⊑ MM` sono
+derivate. Rilasciato: **core 0.19.1, modeler 0.31.0** su `origin/main`. Nessuna nota aperta in `NOTES.md`
+(1 rinviata: collezioni con `upper` finito).
 
 ## Stato
-- Fatto (PR #29, squash di 6 commit):
-  - `core:deploy` «2b. Immagini» (worker con stage proprio: `src/` intero o test import ↔ `COPY`, `docker build
-    --target` prima del merge), flag di Watchtower `--include-restarting` (§4), Redeploy/Restart (§7), «Un solo
-    container resta indietro» (§8); `core:ship` §2 e §5 (attesa che il worker riparta); riga Web di
-    `conventions.md`; voce «Immagini» nel `code-reviewer`; riga in `modeler:install`.
-  - Modeler `states.<key>.requires` (`behavior.py`: `STATE_KEYS`, `_check_requires`, `requires_tests`, `uses` kind
-    `requires`, `diff`, colonna «Richiede» in `BEHAVIOR.md`, `engine_version`, `sql_view`; `engine.py`:
-    `_requires`, `v_missing` in `perform_transition`, `missing`/`guard_ok` in `_available_transitions`, controllo
-    nel trigger `<k>_workflow_guard` con errcode `23514`; kit: pannello degli stati, diff e lint JS,
-    `behavior-view.tsx`; skill `behavior`, `metamodel`, `apply`, notazione, README).
-  - `model:drift` segnala `RECORD_URL …` quando i testi usano `{{url}}` e il database non ha
-    `public.record_url(text, uuid)` (`B.uses_url`, `D.has_record_url`, `cli.cmd_drift`).
-  - Editor web: niente zoom con la rotella (scorre la pagina), pulsanti «+»/«−» accanto ad «Adatta», fit
-    all'apertura e al ridimensionamento finché l'utente non zooma; `Layout.fitView`/`zoomView` pure; regola in
-    `core:diagrams`.
-  - `NOTES.md`: 2026-10-20 worker applicata; 2026-10-21 requires applicata (rinviati: rilevamento in `reverse`,
-    annotazione «1 da <stato>» nel diagramma e in `<WorkflowView>`); 2026-10-19 link negli eventi chiusa (motore
-    scartato); 2026-10-19 collezioni rinviata (primo progetto con `upper` finito). Nessuna nota aperta.
+- Fatto (PR #30, squash di 6 commit):
+  - Notazione `model: {feature: {lower: 1, readonly, hidden, in: [a, b]}}` sullo stato, `requires` = abbreviazione di
+    `lower: 1`; `hidden` = sola lettura e non mostrato, valore conservato; nessuna ereditarietà fra stati
+    (`behavior-notation.md`, bullet dopo `requires`; `ecore-notation.md` Multiplicity; skill `behavior`, `metamodel`,
+    `apply`, `install`; README).
+  - `behavior.py`: `MODEL_KEYS`, `_model_spec`, `state_overlay`, `required_features`, `refine` (il metamodello come visto
+    da uno stato), `state_matrix`, `domain_annotations`, `state_columns`, `overlay_mark`, `_check_state_model` (al posto
+    di `_check_requires`: raffinamento, `in` solo su enum singolo, controllo lungo il percorso), `uses` con i kind
+    `allowed`/`readonly`/`hidden`, `diff`, `engine_version` (`model`), BEHAVIOR.md con «Il metamodello per stato»,
+    `sql_view` con i frammenti `in` e sola lettura.
+  - `ecore.py`: `to_markdown(raw, lang, states)` e `markdown_document(…, states)`: DOMAIN.md con «0..1 · 1 da <stato>»
+    nella molteplicità e sola lettura/assente/valori nelle note; `to_emfatic` stampa `// in: a, b`. `cli.py`:
+    `domain_states(root, raw)` letto da `docs_status` e `write_docs` (un cambio dell'overlay rende DOMAIN.md «stale»),
+    `show --state Classe.stato [--behavior]`.
+  - `engine.py`: messaggi `readonly`/`allowed`, `_allowed`, `_field_policy`; trigger `<e>_workflow_guard` con gli
+    invarianti (richiesto, «Read only in state %: %», «Not allowed in state %: %», errcode 23514), `in` fra i `missing`
+    di `perform_transition`/`_available_transitions`, nuova `<e>_field_policy(r)` → `{campo: {required, readonly,
+    hidden, in}}` (`{}` senza overlay), TODO in coda per i form.
+  - Kit: `metamodel-editor.js` (`Layout.stateView`, `stateOverlay`, `viewMark`, `wfLabel` esportati; `rowItems`/
+    `rowsOf`/`boxSize` con `opts {overlay, view, from}`; `edgesOf`/`routeEdges`/`autoLayout` con `overlay`; elemento:
+    `_overlay`, `_overlays`, `_stateViewOf`, `_rowOpts`, `_wfView` impostato da `mouseenter`/`mouseleave` sui
+    `[data-state]` del pannello e `_renderDiagram()`; stereotipo «workflow · <stato>», CSS `.box text.hidden`,
+    `.box.viewed`; colonna «Modello» in sola lettura nel pannello degli stati; lint; `behaviorDiff` con `model`;
+    `behaviorSource` scrive `model` compatto), `behavior-view.tsx` (`Overlay`, `overlayOf`, `requiredOf`, `mark`,
+    tabella feature × stato).
+  - `core`: `hook.py` `note_states` legge l'ultima riga `**Stato…**` di una voce (test in `tests/test_core_hooks.py`);
+    frase nella skill `harness-review`.
+  - `NOTES.md`: la nota 2026-10-21 «Metamodello dipendente dagli stati» è applicata, con i rinvii (sotto).
 - Verificato: `python3 -m unittest discover -s tests` → 23 OK; `python3 -m unittest discover -s plugins/modeler/tests`
-  → 104 OK (anche con `MODELER_PG` su Postgres 16 in Docker: `requires` fine a fine in `test_workflow_end_to_end`);
-  `node --test` dei 4 file `.mjs` → 181 OK; `claude plugin validate .` OK; editor provato in Chrome (headless e
-  reale, pagina di prova con il kit e la fixture `invitations`): fit all'apertura (k 0,683, margine 24), rotella
-  senza effetto sulla vista e pagina che scorre, «+» ×1,25 attorno al centro, «−», «Adatta», refit a 900 px.
-- Non committato: nulla (la cartella `help/` non è tracciata: decidere se versionarla o ignorarla).
-- Plugin ricaricati in questa sessione (`/reload-plugins`: core 0.19.0, modeler 0.30.0).
+  → 106 OK, anche con `MODELER_PG` su Postgres 16 in Docker (fine a fine: update rifiutato nello stato, `in` in
+  ingresso, `field_policy`); `node --test` dei 4 `.mjs` → 182 OK; `claude plugin validate .` OK; editor provato in
+  Chrome headless e reale (pagina di prova con la fixture `invitations` e un overlay su `pending_director`: righe e
+  connettori con «1 da In attesa di approvazione», colonna «Modello», hover sullo stato → `🔒 flatAmount [1]`,
+  `travelMethod [1] ∈ {agency, receipts}`, `notes` barrato, ritorno alla vista statica al `mouseleave`).
+- Non committato: nulla. I plugin in questa sessione sono ancora core 0.14.0 nella cache (il harness si carica dal
+  clone: `/reload-plugins` per le versioni nuove).
 
 ## Decisioni
-- `requires` è una chiave dello stato, non una guardia ripetuta né `lower: 1`: il metamodello resta `[0..1]`
-  (`lower: 1` = dalla creazione); l'invariante nello stato vale solo per i campi singoli (una parte cancellata non
-  è intercettabile dal trigger del container); nessuna ereditarietà fra stati (modello leggibile).
-- `missing` compare in `_available_transitions` solo per le transizioni verso stati con `requires`, così i frammenti
-  SQL del motore già testati restano uguali.
-- `record_url` non viene generata dal motore: la mappa delle viste sostituite è dell'app (convenzione sui link ai
-  record); il promemoria sta in `drift`, non in `validate` (un warning permanente sulla fixture avrebbe rotto
-  7 test e disturbato ogni app con la funzione già definita).
-- Zoom solo con pulsanti: la rotella sulla tela faceva zoom accidentale mentre si scorreva la pagina.
+- Overlay restrittivo, non più metamodelli — n copie sarebbero da co-evolvere e darebbero uno schema per stato;
+  l'overlay stringe soltanto (`validate` rifiuta un `lower` più basso dello statico), così il database resta unico e
+  le «versioni» sono viste (`refine`). È una riclassificazione dinamica disciplinata (typestate per i modelli), non
+  una sottoclasse per stato.
+- `hidden` conserva il valore — la migrazione fra stati non perde dati; `hidden` implica `readonly`.
+- `readonly`/`hidden` su una collezione sono solo segnalati (avviso di `validate`, `field_policy`) — il trigger del
+  container non vede le parti.
+- `in` solo su attributi enum singoli; violazioni elencate fra i `missing` (stesso meccanismo di `requires`).
+- DOMAIN.md dipende anche da `behavior.yaml` — l'annotazione «1 da <stato>» deve stare dove si legge la struttura;
+  `docs_status` rigenera con lo stesso overlay, quindi lo stato «edited» non scatta per questo.
+- Editing dell'overlay dal modellatore web rinviato — nel pannello degli stati `model` è una colonna in sola lettura
+  (una sintassi testuale per `{lower, readonly, hidden, in}` in un input sarebbe fragile); si scrive in `behavior.yaml`.
+- Conteggio delle note: decide l'ultima riga Stato — la convenzione «Stato (parte rimasta)» è già nel file.
 
 ## Problemi aperti
-- Un rilascio vero dal web (`modeler-release`, PR #28) e un run vero di `modeler-apply` restano non provati
-  (servono order-management con i secrets e una proposta innocua); il costo per run (`total_cost_usd`) tara
-  `MODELER_APPLY_BUDGET` (skill `install` §7).
-- Ereditati: `psql` assente sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto
-  cloud (formato di `supabase db query` da verificare al primo uso); `guard_harness_edit` solo Edit/Write.
-- La prova in Chrome con la scheda in secondo piano dà la vista non adattata: i `requestAnimationFrame` sono sospesi
-  finché la scheda non è visibile. Non è un difetto dell'editor, ma va ricordato quando si prova con l'estensione.
+- Nessun progetto usa ancora `model`: `field_policy` e i form per stato sono da provare su order-management
+  (`STATE_REQUIRES`/`STATE_EDITORS` scritti a mano) e nella sandbox.
+- Ereditati: un rilascio vero dal web (`modeler-release`, PR #28) e un run vero di `modeler-apply` non provati;
+  `psql` assente sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto cloud;
+  `guard_harness_edit` solo Edit/Write; la cartella `help/` non è tracciata (decidere se versionarla o ignorarla).
+- Prova in Chrome con l'estensione: con la scheda in secondo piano i `requestAnimationFrame` sono sospesi; e un
+  metodo nuovo dell'elemento non può chiamarsi `_view` (è la vista della tela): errore scoperto solo nel browser.
+- Parte di ricerca della nota (overlay = raffinamento indicizzato dallo stato, transizione = migrazione dell'istanza,
+  legami con typestate, Fickle/riclassificazione dinamica, co-evoluzione, EVL): fuori dal plugin, da scrivere con il
+  caso degli ordini.
 
 ## Prossimi passi
-1. Sugli altri computer: `claude plugin marketplace update iovino-harness && claude plugin update
-   core@iovino-harness modeler@iovino-harness`.
-2. In order-management: `/modeler:install` (0.30.0, segue da solo il punto 6 della skill), poi `/modeler:behavior`
-   per portare in `behavior.yaml` i campi obbligatori per stato come `requires` (`supplier`, `cig`, `orderNumber`,
-   `orderDate` da `ordered`; `rupAssistants` da `procurement`; `deliveryDate` da `delivered`): motore a mano, quindi
-   `npm run model:behavior -- --format sql` dà i frammenti da riportare nelle clausole `unmet` e nel trigger, la mappa
-   `STATE_REQUIRES` in TypeScript legge `behavior.json`; ridurre `CUSTOM(order-workflow)` in `docs/customizations.md`.
-   Con questo si riprendono i rinvii della nota 2026-10-21 (annotazione «1 da <stato>» nel diagramma e in
-   `<WorkflowView>`).
-3. In order-management: `npm run model:drift` dopo l'aggiornamento: se segnala `RECORD_URL`, migrazione con
-   `record_url(entity, id)` e le `<e>_json` che la usano (convenzione sui link, nota 2026-10-19).
-4. Prova nella sandbox (`~/Documents/GitHub/modeler-sandbox`): reinstallare il kit (0.30.0), `requires: [assignee]`
-   su uno stato di `Task`, `npm run model:validate`, `model:sync`, `model:engine -- --write`, migrazione locale,
-   transizione bloccata e `update` rifiutato; in `/admin/model` la colonna «Richiede» e i pulsanti di zoom.
-5. Facoltativo: typecheck dei TSX del kit (`behavior-view.tsx` con `requires`) come descritto sotto.
+1. Qui: `/reload-plugins` (core 0.19.1, modeler 0.31.0). Sugli altri computer: `claude plugin marketplace update
+   iovino-harness && claude plugin update core@iovino-harness modeler@iovino-harness`.
+2. In order-management: `/modeler:install` (0.31.0), poi `/modeler:behavior` per portare in `behavior.yaml` i campi
+   per stato come `requires`/`model` (`supplier`, `cig`, `orderNumber`, `orderDate` da `ordered`, con `readonly` dopo
+   l'ordine; `rupAssistants` da `procurement`; `deliveryDate` da `delivered`); motore a mano: i frammenti da
+   `npm run model:behavior -- --format sql`, `field_policy` scritta a mano sullo stesso schema, i form leggono
+   `order_field_policy(record)` e spariscono `STATE_REQUIRES`/`STATE_EDITORS`; `CUSTOM(order-workflow)` ridotta in
+   `docs/customizations.md`; `npm run model:sync` (DOMAIN.md con «1 da In istruttoria»).
+3. Prova nella sandbox (`~/Documents/GitHub/modeler-sandbox`): reinstallare il kit (0.31.0), `model: {assignee:
+   {lower: 1, readonly: true}, notes: {hidden: true}}` su uno stato di `Task`, `npm run model:validate`, `model:sync`,
+   `model:engine -- --write`, migrazione locale, update rifiutato nello stato, `select task_field_policy(t) from
+   tasks t`; in `/admin/model` la colonna «Modello» e l'hover sugli stati.
+4. Facoltativo: typecheck dei TSX del kit (`behavior-view.tsx` con `Overlay`) come descritto sotto; `npm run
+   model:show -- --state Task.done` nella sandbox.
+5. Se il caso degli ordini conferma il disegno: `/core:harness-note` per l'editing dell'overlay dal web e per la
+   bozza dell'articolo (le note della ricerca sono nella voce 2026-10-21 di `NOTES.md`).
 
 ## Per riprendere
 `cd <clone> && claude` — i plugin si caricano da questa cartella: dopo una modifica usa `/reload-plugins`.
@@ -86,13 +107,19 @@ chmod +x /tmp/pgbin/psql
 PATH=/tmp/pgbin:$PATH MODELER_PG=postgresql://postgres:pg@localhost:55499/postgres python3 -m unittest discover -s plugins/modeler/tests
 docker stop modeler-pg-test
 ```
-Prova dell'editor in Chrome senza app: una pagina HTML con `<metamodel-editor lang="it">` in un `div` di 1200×700,
-il kit inlineato e `ed.metamodel = <runtime_json del metamodello>` (`E.runtime_json(E.load(fixture))`), servita con
-`python3 -m http.server`; da JS si leggono `ed._view`, `ed._autoFit` e i pulsanti in `ed.shadowRoot.querySelectorAll(".bar button")`.
+Prova dell'editor in Chrome senza app: una pagina HTML con `<metamodel-editor lang="it">` in un `div` di 1200×760, il kit
+inlineato in uno `<script>`, `ed.metamodel = <E.runtime_json(E.load(fixture))>`, `ed._allAttrs = true`,
+`ed.behavior = <B.runtime_json(b, meta)>` con `requires`/`model` aggiunti a uno stato; selezione con
+`ed._sel = {kind: "class", name: "Invitation"}; ed._render()`; dal pannello `panel.querySelector('[data-state="…"]')` e
+`dispatchEvent(new MouseEvent("mouseenter"))`; righe in `ed.shadowRoot.querySelectorAll('.box[data-name="Invitation"] text')`.
+Headless: `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --virtual-time-budget=15000 --dump-dom file://…`
+(con `fetch`/`requestAnimationFrame` l'output resta vuoto: usare `setTimeout` e tutto inline); reale: `python3 -m http.server`
+e l'estensione, con la scheda visibile.
 Sandbox: `cd ~/Documents/GitHub/modeler-sandbox && npm run db:start && PORT=3077 npm run dev` (se il DB è nuovo: `npm run db:reset`);
 reinstallare il modellatore dal clone: `python3 plugins/modeler/scripts/modeler.py install ~/Documents/GitHub/modeler-sandbox --no-migration`.
 Typecheck dei TSX del kit: cartella fuori dal repository con `npm i --legacy-peer-deps typescript @types/react react react-dom next`,
 copia di `kit/next/*.tsx` in `src/`, stub di `@/lib/modeler/metamodel-actions` via `paths`, `tsc --noEmit`.
-File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultime due note), `plugins/modeler/scripts/metamodel/behavior.py`
-(`_check_requires`, `requires_tests`, `sql_view`), `plugins/modeler/scripts/metamodel/engine.py` (`_requires`, `_workflow`),
-`plugins/modeler/kit/metamodel-editor.js` (`fitView`, `zoomView`, `_zoom`, pannello degli stati), `plugins/core/skills/deploy/SKILL.md` (2b, §8).
+File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultima voce: disegno e rinvii), `plugins/modeler/skills/notation/references/behavior-notation.md`
+(Workflows, `model`), `plugins/modeler/scripts/metamodel/behavior.py` (`state_overlay`, `_check_state_model`, `refine`),
+`plugins/modeler/scripts/metamodel/engine.py` (`_field_policy`, `_workflow`), `plugins/modeler/kit/metamodel-editor.js`
+(`stateView`, `rowItems`, `_renderWorkflowPanel`).
