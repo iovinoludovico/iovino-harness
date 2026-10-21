@@ -50,6 +50,22 @@ predefinito stanno in `deploy/.env.production.example`, solo come documentazione
 - Pacchetti GHCR privati: lasciarli come li crea il primo push (mai «Change visibility»); nell'organizzazione
   conviene Settings → Packages → Package creation solo «Private».
 
+## 2b. Immagini
+- Un worker (dispatcher, cron) ha uno stage proprio nel `Dockerfile`. Se lo stage copia a mano una lista di cartelle
+  (`COPY worker/ src/lib/events/ …`) si rompe in silenzio quando un import nuovo esce dalla lista: build e deploy
+  verdi, in produzione il container muore all'avvio con `Cannot find module '@/lib/…'` e Docker lo riavvia in loop
+  (la build di Next vede tutto `src/`, l'immagine del worker no). Due scelte:
+  - lo stage copia `src/` intero (semplice, immagine un po' più grande);
+  - un test dell'app segue gli import del punto d'ingresso del worker (relativi e `@/`, ricorsivamente) e pretende
+    che ogni file sia coperto da una riga `COPY` dello stage (`tests/<worker>-image.test.ts`): legge il
+    `Dockerfile`, prende le `COPY` fra `FROM … AS <stage>` e il `FROM` successivo, risolve gli import con una regex
+    su `from "…"` / `import("…")` e fallisce elencando i file scoperti.
+- Prima del merge di una PR che tocca il worker o il suo stage: `docker build --target <stage> -t <app>-worker:test .`
+  e un avvio contro il database locale (`docker run --rm -e DATABASE_URL=… <app>-worker:test`) fino al primo log di
+  polling.
+- Con il modellatore: quando il dispatcher rende i testi delle notifiche legge `behavior.json` e la cartella dei
+  template (`modeler:install`): quei file entrano nell'immagine.
+
 ## 3. DNS
 Record A `<app>.iovino-systems.cloud` → IP del VPS. Un errore del certificato in NPM = DNS non ancora propagato.
 
@@ -63,7 +79,10 @@ Record A `<app>.iovino-systems.cloud` → IP del VPS. Un errore del certificato 
    avvierebbe un secondo gruppo di container invece di sostituire questi; i file stanno in `/docker/<app>/`, i
    container si chiamano `<app>-web-1`, `<app>-watchtower-1`, …):
    - **Compose**: il contenuto di `deploy/docker-compose.prod.yml`, incollato invariato (un eventuale `name:` è
-     ignorato: il nome lo dà il pannello; Watchtower filtra per etichetta di scope);
+     ignorato: il nome lo dà il pannello; Watchtower filtra per etichetta di scope). Il servizio `watchtower` gira
+     con `--scope <app> --interval 120 --cleanup --include-restarting`: senza `--include-restarting` aggiorna solo
+     i container `running`, e un container in crash loop (quasi sempre `restarting`) resta sull'immagine vecchia
+     anche quando quella corretta è pubblicata;
    - **Variabili**: `DATABASE_URL` (session pooler, con la password) è l'unica senza predefinito ed è un segreto:
      solo qui. Le altre (`deploy/.env.production.example`) solo per cambiare i predefiniti del compose.
      Con il modellatore e l'applicazione dal web (skill `modeler:install`, sezione 7) anche `MODELER_APPLY_REPO`
@@ -101,8 +120,9 @@ NPM inoltra `X-Forwarded-Proto` e `X-Forwarded-For`, che servono a Next per i co
 1. Migrazioni sul cloud con `/core:db-push` **prima** del push del codice (le immagini non applicano migrazioni;
    le migrazioni restano additive, così la versione in esercizio continua a funzionare).
 2. Merge su `main` (`/core:ship`): Actions pubblica `latest`, Watchtower ricrea i container entro ~2 minuti.
-   Nessun clic sul pannello; il **Redeploy** manuale serve solo per cambiare variabili, compose o immagini che
-   Watchtower non segue.
+   Nessun clic sul pannello; il **Redeploy** del progetto (ricrea i container dall'immagine pubblicata) serve
+   solo per cambiare variabili, compose o immagini che Watchtower non segue; il «Restart» di un container riavvia
+   la stessa immagine.
 3. Rollback: variabile `APP_TAG=sha-<commit>` (o il nome usato dal compose) nel progetto del pannello e Redeploy;
    fermare Watchtower (`docker stop <app>-watchtower-1`) finché non c'è un `latest` buono, altrimenti torna a
    `latest`. Lo schema non torna indietro.
@@ -140,6 +160,14 @@ dell'immagine (collaudato in invitations-af, customizzazione `build-badge`).
   sostituisce, quindi il container continua a leggere la versione vecchia. Verifica:
   `docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' <app>-web-1` = ultimo commit
   di `main`. Un PAT senza scadenza, o con scadenza annotata, evita che si ripeta.
+- **Un solo container resta indietro** (`web` aggiornato, il worker no): è in crash loop, stato `restarting`
+  (`docker inspect -f '{{.State.Status}}' <app>-dispatcher-1`, o la lista del pannello), e Watchtower senza
+  `--include-restarting` lo ignora. Segnali dall'app: righe della coda che restano `pending` con `attempts 0` e
+  nessun `locked_at`, nessuna sessione del ruolo del worker in `pg_stat_activity`
+  (`select count(*) from pg_stat_activity where usename = '<ruolo>'` con `supabase db query --linked`), log del
+  container nel pannello con `Cannot find module` o lo stack dell'avvio. Rimedio: **Redeploy** del progetto dal
+  Docker Manager (non «Restart»), poi `--include-restarting` nel compose così non si ripete; se l'immagine è
+  rotta, correggerla e ripubblicarla (sezione 2b).
 - **Progetto sparito dal pannello** (`/docker/<app>` rimossa): i container restano accesi ma `docker compose` non li
   gestisce più e Watchtower non si ricrea. Variabili dai container ancora attivi
   (`docker inspect <app>-web-1 --format '{{range .Config.Env}}{{println .}}{{end}}'`, senza incollare
@@ -149,5 +177,6 @@ dell'immagine (collaudato in invitations-af, customizzazione `build-badge`).
 
 ## Scrivere `docs/deploy.md` di un'app
 Tabella dei valori (dominio, URL, repository, immagini, rete del proxy e alias, progetto Supabase con ref, chiave
-publishable, progetto del Docker Manager), poi le sezioni 1–8 con i valori dell'app al posto dei segnaposto.
+publishable, progetto del Docker Manager), poi le sezioni 1–8 (con 2b se l'app ha un worker) con i valori dell'app
+al posto dei segnaposto.
 Nel resoconto di `/core:ship` e `/core:db-push` rimanda a queste sezioni invece di inventare istruzioni.

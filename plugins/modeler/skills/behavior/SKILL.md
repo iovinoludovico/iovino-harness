@@ -53,9 +53,18 @@ mantieni nomi e lingua dell'utente.
   Quando una modifica (anche una proposta del modellatore) porta una collezione a `lower > 0` o a un `upper` finito,
   proponi subito la guardia (chiedi su quale transizione) o la regola, con un test della transizione bloccata;
   `validate` lo segnala finché manca.
+- Un campo che diventa obbligatorio **da uno stato in poi** («il fornitore va indicato dall'ordine in avanti», «X è
+  obbligatorio dopo l'approvazione», anche una collezione non vuota «da pending») è `requires: [x, …]` sullo stato
+  in `behavior.yaml`: non `lower: 1` nel metamodello (che lo richiederebbe già alla creazione) né `x.isSet()`
+  ripetuto nelle guardie delle transizioni d'ingresso. Il motore lo verifica entrando nello stato (elenca i campi
+  mancanti, `missing` in `_available_transitions`) e finché il record vi resta (campi singoli, trigger); nessuna
+  ereditarietà, ogni stato elenca i suoi; `npm run model:behavior -- --format sql` dà i frammenti per un motore a
+  mano. `validate` avvisa se il metamodello lo richiede già, se lo richiede lo stato iniziale o se una guardia lo ripete.
 - Una reazione o un sollecito con `notify` ha i suoi testi nel modello: `templates: {<chiave>: {it: {subject, body},
   en: {…}}}` con i segnaposto `{{self.<path>}}`, `{{transition.label}}`, `{{actor.name}}`, `{{comment}}`, `{{url}}`,
-  `{{reminder.days}}` (riferimento, «Events, reactions, subscriptions»). Chiedi i testi insieme alle altre
+  `{{reminder.days}}` (riferimento, «Events, reactions, subscriptions»); se i testi usano `{{url}}` l'app definisce
+  `public.record_url(entity text, id uuid)`, l'unica mappa SQL delle sue pagine (convenzione di `core` sui link ai
+  record), che il motore chiama se esiste (`drift` segnala quando manca). Chiedi i testi insieme alle altre
   ambiguità, o proponine di provvisori da far correggere all'utente; mai lasciarli al sottoscrittore (n8n spedisce,
   non scrive). Il motore li rende per destinatario; l'app li corregge dalla pagina admin a matrice
   (`<NotificationTemplates>`, tabella `notification_templates` che `install` aggiunge quando il modello ha testi).
@@ -78,8 +87,10 @@ seguendo `/modeler:metamodel` (sezioni 3 e 4: ambiguità della struttura, migraz
 risolti, `model:drift`). Mai un `behavior.yaml` che cita feature che il metamodello non ha: l'hook lo blocca.
 
 ## 4. Allineare l'applicazione (nella stessa modifica, su un branch)
-1. `npm run model:validate`: zero errori, e leggi i warning (minimo senza guardia, template mancante o in una lingua
-   sola, reazione che nessuna sottoscrizione riceve, destinatari su un evento secondario, doppi destinatari).
+1. `npm run model:validate`: zero errori, e leggi i warning (minimo senza guardia, campo di `requires` già
+   obbligatorio nel metamodello o ripetuto da una guardia, template mancante o in una lingua sola, reazione che
+   nessuna sottoscrizione riceve, destinatari su un evento secondario, doppi destinatari); `npm run model:drift`
+   segnala anche i testi con `{{url}}` quando il database non ha `record_url`.
 2. `npm run model:sync` rigenera `docs/BEHAVIOR.md` e `src/lib/modeler/behavior.json` (il modellatore web in
    `/admin/model` mostra il workflow nuovo).
 3. Il motore SQL, in uno dei due modi:
@@ -96,9 +107,10 @@ risolti, `model:drift`). Mai un `behavior.yaml` che cita feature che il metamode
      hanno gli stessi nomi di quelle a mano e le sostituirebbero. `npm run model:behavior -- --format sql|engine` dà
      l'SQL delle espressioni e la versione del workflow da riportare nel codice; `drift` confronta i workflow con
      la versione pubblicata; con `templates:` il dispatcher dell'app rende i testi da `behavior.json` e gli
-     override dalla tabella `notification_templates` (skill `install`, punto 4). Resta CUSTOM (in
-     `docs/customizations.md`) ciò che il modello non esprime: grant per gruppo, valori passati alla transizione,
-     campi obbligatori per stato.
+     override dalla tabella `notification_templates` (skill `install`, punto 4); i campi richiesti da uno stato
+     (`requires`) si riportano nelle clausole `unmet` delle transizioni d'ingresso e nel trigger della tabella
+     (`--format sql` li stampa). Resta CUSTOM (in `docs/customizations.md`) ciò che il modello non esprime: grant
+     per gruppo, valori passati alla transizione.
 4. Codice che segue il comportamento: pagine che mostrano stati e transizioni (`<WorkflowView>` in schede accanto a
    una vista scritta a mano, skill `install` punto 4), pagina admin dei testi quando compaiono `templates:` (`install`
    punto 4), sottoscrittori (n8n spedisce `recipients[].subject/body`, non compone testi).

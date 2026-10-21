@@ -208,6 +208,13 @@ class BehaviorTests(unittest.TestCase):
                          [("Invitation", "transitioned", "reaction notify_submitted")])
         self.assertIn("reminder.days", B.template_variables(B.expand(b), "Invitation", "reminder"))
         self.assertNotIn("transition.label", B.template_variables(B.expand(b), "Invitation", "reverted"))
+        # the texts use {{url}}: the app defines record_url (drift checks the database for it)
+        self.assertTrue(B.uses_url(b))
+        for langs in b["templates"].values():
+            for tx in langs.values():
+                tx["body"] = tx["body"].replace("{{url}}", "")
+        self.assertFalse(B.uses_url(b))
+        b = behavior()
         # a template a reaction names but no texts for it
         b["templates"].pop("invitation_closed")
         w = [x for x in B.validate(b, meta()).warnings if "invitation_closed" in x]
@@ -273,6 +280,69 @@ class BehaviorTests(unittest.TestCase):
         w = [x for x in B.validate(behavior(), m).warnings if x.startswith("Department.guests")]
         self.assertEqual(len(w), 1)
         self.assertIn("no workflow", w[0])
+
+    def test_fields_required_from_a_state(self):
+        # `requires` on a state: set (a collection: not empty) to enter the state and while the record is there
+        b = behavior()
+        m = meta()
+        m["classes"]["Invitation"]["references"]["reason"]["lower"] = 0            # optional in the metamodel …
+        b["workflows"]["Invitation"]["states"]["pending_director"]["requires"] = ["reason", "hours"]  # … required from here
+        rep = B.validate(b, m)
+        self.assertEqual((rep.errors, rep.warnings), ([], []))
+        x = B.expand(b)["workflows"]["Invitation"]["states"]
+        self.assertEqual(x["pending_director"]["requires"], ["reason", "hours"])
+        self.assertEqual(x["draft"]["requires"], [])
+        self.assertEqual(B.requires_tests(E.expand(m), "Invitation", x["pending_director"]), [("reason", "reason.isSet()"), ("hours", "hours.isSet()")])
+        u = B.uses(B.expand(b), E.expand(m))["Invitation"]
+        self.assertIn({"kind": "requires", "of": "Invitation.pending_director"}, u["references"]["reason"])
+        self.assertIn({"kind": "requires", "of": "Invitation.pending_director"}, u["attributes"]["hours"])
+        v = B.engine_version(b, m, "Invitation")
+        self.assertEqual(next(st["requires"] for st in v["states"] if st["key"] == "pending_director"), ["reason", "hours"])
+        self.assertEqual(next(st["requires"] for st in v["states"] if st["key"] == "draft"), [])
+        md = B.to_markdown(b, m, "en")
+        self.assertIn("| State | Label | Kind | Waiting for | Editable by | Requires | Reminder |", md)
+        self.assertIn("| `pending_director` | Awaiting approval |  | `director` |  | `reason`, `hours` |  |", md)
+        sql = B.sql_view(b, m)
+        self.assertIn("--   pending_director.requires: reason, hours (to enter the state, and while the record is there)", sql)
+        self.assertIn("coalesce(r.reason is not null, false)  -- reason", sql)
+        self.assertIn("coalesce(r.hours is not null, false)  -- hours", sql)
+        self.assertEqual(B.diff(behavior(), b), ["~ state Invitation.pending_director: requires"])
+        # a collection: the state requires it not empty, which also enforces its minimum (no guard needed)
+        b = behavior()
+        b["derivations"]["Invitation"]["dataComplete"] = "reason.isSet()"
+        b["workflows"]["Invitation"]["states"]["pending_director"]["requires"] = ["invitationFunds"]
+        w = [x for x in B.validate(b, meta()).warnings if "invitationFunds" in x]
+        self.assertEqual(w, ["workflows.Invitation.states.pending_director.requires: 'invitationFunds' is already required by the metamodel (lower 1): the state adds nothing"])
+        m = meta()
+        m["classes"]["Invitation"]["references"]["invitationFunds"]["lower"] = 0
+        self.assertEqual([x for x in B.validate(b, m).warnings if "invitationFunds" in x], [])
+        self.assertEqual(B.requires_tests(E.expand(m), "Invitation", B.expand(b)["workflows"]["Invitation"]["states"]["pending_director"]),
+                         [("invitationFunds", "invitationFunds.notEmpty()")])
+        # errors: unknown feature, the state attribute, a derived attribute, a name listed twice
+        b = behavior()
+        b["workflows"]["Invitation"]["states"]["payment"]["requires"] = ["ghost", "state", "dataComplete", "hours", "hours"]
+        errs = errors(b)
+        where = "workflows.Invitation.states.payment.requires"
+        self.assertIn(f"{where}: 'ghost' is not a feature of Invitation", errs)
+        self.assertIn(f"{where}: 'state' is the state attribute", errs)
+        self.assertTrue(any(x.startswith(f"{where}: 'dataComplete' is derived") for x in errs), errs)
+        self.assertIn(f"{where}: 'hours' listed twice", errs)
+        # warnings: required from the initial state (that is lower: 1), a guard that repeats the test
+        b = behavior()
+        b["workflows"]["Invitation"]["states"]["draft"]["requires"] = ["hours"]
+        b["workflows"]["Invitation"]["states"]["payment"]["requires"] = ["hours"]
+        b["workflows"]["Invitation"]["transitions"]["director_confirm"]["guard"] = "dataComplete and hours.isSet()"
+        rep = B.validate(b, meta())
+        self.assertEqual(rep.errors, [])
+        self.assertIn("workflows.Invitation.states.draft.requires: 'hours' required from the initial state: that is `lower: 1` in the metamodel (required from creation)", rep.warnings)
+        self.assertIn("workflows.Invitation.states.payment.requires: the guard of `director_confirm` repeats hours: `requires` already checks them on entering payment", rep.warnings)
+        # a single name is accepted as a list; dumps writes the key back
+        b = behavior()
+        b["workflows"]["Invitation"]["states"]["payment"]["requires"] = "hours"
+        self.assertEqual(errors(b), [])
+        self.assertIn("requires: hours}", B.dumps(b))
+        b["workflows"]["Invitation"]["states"]["payment"]["requires"] = ["hours", "flatAmount"]
+        self.assertIn("requires: [hours, flatAmount]}", B.dumps(b))
 
     def test_workflow_rules(self):
         b = behavior()
@@ -670,7 +740,7 @@ class GenerationTests(unittest.TestCase):
         for frag in ["## Roles", "| director | Department director | per Department |", "## Workflow of Invitation",
                      "The state is the attribute `state`.", "```mermaid\nstateDiagram-v2\n  draft: Draft", "  [*] --> draft", "  closed --> [*]",
                      "  in_management --> awaiting_confirmation: Visit ended (auto)", "  draft --> cancelled: Cancel",
-                     "| `awaiting_confirmation` | Awaiting visit confirmation |  | `self.issuer` | `self.issuer`, `office` | after 7d (`visit_confirmation_reminder`) |",
+                     "| `awaiting_confirmation` | Awaiting visit confirmation |  | `self.issuer` | `self.issuer`, `office` |  | after 7d (`visit_confirmation_reminder`) |",
                      "| `approve` | Approve | pending_director → in_management | `director` | `not agencyBookingRequired` | `dataComplete` |  |  | `office` (`invitation_to_manage`); `self.issuer` (`invitation_approved`) |",
                      "| `submit` | Submit | draft → pending_director | `self.issuer` |  | `dataComplete` |  |  | `director` (`invitation_submitted`) |",
                      "| `visit_ended` | Visit ended | in_management → awaiting_confirmation | system: `endDate + 1d` |  |  |  | `visit_ended` |",
@@ -1053,6 +1123,9 @@ class WorkflowDatabaseTests(unittest.TestCase):
                                   f"{der['agencyBookingRequired']['sql']}, {der['fundsTotal']['sql']} from public.invitations r"],
                                  capture_output=True, text=True)
             self.assertEqual(out.stdout.strip(), "hourly|100.00|20.00|f|0", out.stderr)
+            self.assertFalse(D.has_record_url(self.dsn))                                # drift reports it: the texts use {{url}}
+            self.psql(self.dsn, "create function public.record_url(entity text, id uuid) returns text language sql as $$ select '/x/' || entity || '/' || id $$;")
+            self.assertTrue(D.has_record_url(self.dsn))
             cat = D.workflow_catalog(self.dsn)
             self.assertEqual(cat["versions"][0]["entity"], "invitation")
             self.assertEqual(B.workflow_drift(behavior(), meta(), cat), [])
@@ -1117,6 +1190,23 @@ class EngineTests(unittest.TestCase):
         m["language"] = "it"
         sql_it, _ = N.engine_sql(behavior(), m)
         self.assertIn("raise exception 'Requisiti non soddisfatti: %', v_guard_text;", sql_it)
+        # a state that requires fields: the entering transitions list what is missing, the trigger keeps the invariant
+        b = behavior()
+        b["workflows"]["Invitation"]["states"]["pending_director"]["requires"] = ["hours", "invitationFunds"]
+        sql, _ = N.engine_sql(b, meta())
+        for frag in ["v_cond boolean; v_guard boolean; v_guard_text text; v_missing text[];",
+                     "v_missing := array_remove(array[case when not coalesce(r.hours is not null, false) then 'hours' end, "
+                     "case when not coalesce(exists (select 1 from public.invitation_funds x1 where x1.invitation = r.id), false) then 'invitationFunds' end]::text[], null);",
+                     "if cardinality(v_missing) > 0 then raise exception 'Required in state %: %', v_to, array_to_string(v_missing, ', ') using errcode = '23514'; end if;",
+                     "'guard_ok', (coalesce(r.data_complete, false) and cardinality(array_remove(array[case when not coalesce(r.hours is not null, false) then 'hours' end",
+                     "'guard', 'dataComplete', 'missing', to_jsonb(array_remove(array[",
+                     "  if new.state = 'pending_director' and not coalesce(new.hours is not null, false) then\n"
+                     "    raise exception 'Required in state %: %', 'pending_director', 'hours' using errcode = '23514';\n  end if;",
+                     "elsif new.state is distinct from old.state and coalesce(current_setting('app.in_transition', true), '') <> 'on' then"]:
+            self.assertIn(frag, sql, frag)
+        self.assertNotIn("new.state = 'pending_director' and not coalesce(exists", sql)   # a collection is checked only on entering
+        self.assertIn("v_missing := '{}'::text[];", sql)                                   # transitions to states without requires
+        self.assertIn("raise exception 'Campi richiesti nello stato %: %'", N.engine_sql(b, m)[0])
         self.assertTrue(any("schedule public.invitation_run_timed_transitions()" in n for n in notes))
         # a class with derivations but no workflow still gets its derive trigger, nothing else of the workflow
         b = behavior()
@@ -1238,10 +1328,20 @@ class EngineDatabaseTests(WorkflowDatabaseTests):
                              "from public.invitations i, f;")
         self.assertEqual(self.ok(self.ISSUER, "select funds_total || '|' || data_complete from public.invitations;"), "180|true")
         self.assertIn('"guard_ok": true', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
+        # a field required from pending_director: submit names it among the missing ones; once there it cannot be cleared
+        req = behavior()
+        req["workflows"]["Invitation"]["states"]["pending_director"]["requires"] = ["flatAmount"]   # not read by dataComplete (hourly)
+        self.psql(self.dsn, N.engine_sql(req, meta())[0])
+        self.assertIn('"missing": ["flatAmount"]', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
+        self.fails(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');", "Required in state pending_director: flatAmount")
+        self.ok(self.ISSUER, "update public.invitations set flat_amount = 10;")
+        self.assertIn('"missing": [], "guard_ok": true', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
         self.fails(self.OTHER, f"select public.invitation_perform_transition({inv}, 'submit');", "Operation not allowed")
         self.assertEqual(self.ok(self.OTHER, f"select public.invitation_available_transitions({inv});"), "[]")
         self.ok(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');")
         self.assertEqual(self.ok(self.ISSUER, "select state from public.invitations;"), "pending_director")
+        self.fails(self.ISSUER, "update public.invitations set flat_amount = null;", "Required in state pending_director: flatAmount")
+        self.psql(self.dsn, engine)                                                      # back to the fixture's engine
         self.assertEqual(self.ok(self.ISSUER, "select transition || '|' || from_state || '|' || to_state || '|' || actor_id from public.workflow_history;"),
                          f"submit|draft|pending_director|{self.ISSUER}")
         ev = self.ok(self.ISSUER, "select data from public.events where type = 'invitation.transitioned';")

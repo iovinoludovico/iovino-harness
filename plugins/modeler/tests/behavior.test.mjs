@@ -37,6 +37,7 @@ test("behaviorDiff: the lines a reviewer reads, as the CLI prints them", () => {
   const b = structuredClone(a);
   const w = b.workflows.Invitation;
   w.states.paused = { label: { it: "Sospeso" }, owner: ["office"] };
+  w.states.payment.requires = ["hours"];
   w.transitions.pause = { from: ["in_management"], to: "paused", by: ["office"], when: null, guard: null, comment: null, at: null, emits: [] };
   w.transitions.submit.guard = { text: "dataComplete and hours > 0" };
   b.reactions.splice(0, 1);
@@ -44,7 +45,7 @@ test("behaviorDiff: the lines a reviewer reads, as the CLI prints them", () => {
   b.derivations.Invitation.fundsTotal = { text: "invitationFunds.amount.sum() + 1" };
   assert.deepEqual(Layout.behaviorDiff(a, b), [
     "+ role boss", "~ derivation Invitation.fundsTotal = invitationFunds.amount.sum() + 1",
-    "+ state Invitation.paused", "~ transition Invitation.submit: guard",
+    "~ state Invitation.payment: requires", "+ state Invitation.paused", "~ transition Invitation.submit: guard",
     "+ transition Invitation.pause: in_management -> paused", "- reaction notify_submitted",
   ]);
   assert.deepEqual(Layout.behaviorDiff(a, a), []);

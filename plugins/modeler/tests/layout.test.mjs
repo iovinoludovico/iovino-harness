@@ -324,3 +324,23 @@ test("rows: involved features are marked and the workflow head adds the stereoty
   assert.equal(Layout.boxSize(mm, "Invitation", { allAttrs: true, workflow: true }).h, plain.h + Layout.STEREO_H);
   assert.equal(Layout.boxSize(mm, "Guest", {}).h, Layout.boxSize(mm, "Guest", { uses: bh.uses.Guest }).h);
 });
+
+test("fitView fills the canvas with the diagram; zoomView scales around a point that stays put", () => {
+  const bounds = { x0: 100, y0: 50, x1: 900, y1: 450 };          // 800 × 400
+  const v = Layout.fitView(bounds, { w: 1000, h: 600 }, 24);
+  assert.equal(v.k, Math.min((1000 - 48) / 800, (600 - 48) / 400));
+  // centred: the bounds map to the middle of the canvas
+  assert.ok(Math.abs((bounds.x0 + bounds.x1) / 2 * v.k + v.x - 500) < 1e-9);
+  assert.ok(Math.abs((bounds.y0 + bounds.y1) / 2 * v.k + v.y - 300) < 1e-9);
+  // a small diagram is enlarged up to the maximum scale, a huge one shrunk down to the minimum
+  assert.equal(Layout.fitView({ x0: 0, y0: 0, x1: 50, y1: 20 }, { w: 1000, h: 600 }).k, 2);
+  assert.equal(Layout.fitView({ x0: 0, y0: 0, x1: 50000, y1: 20 }, { w: 1000, h: 600 }).k, 0.25);
+  const at = { x: 500, y: 300 };
+  const z = Layout.zoomView(v, 1.25, at);
+  assert.ok(Math.abs(z.k - v.k * 1.25) < 1e-12);
+  const before = { x: (at.x - v.x) / v.k, y: (at.y - v.y) / v.k };   // the diagram point under the centre of the canvas …
+  const after = { x: (at.x - z.x) / z.k, y: (at.y - z.y) / z.k };
+  assert.ok(Math.abs(before.x - after.x) < 1e-9 && Math.abs(before.y - after.y) < 1e-9);   // … is the same after the zoom
+  assert.equal(Layout.zoomView({ k: 2, x: 0, y: 0 }, 10, at).k, 2);                        // clamped
+  assert.equal(Layout.zoomView({ k: 0.25, x: 0, y: 0 }, 0.1, at).k, 0.25);
+});

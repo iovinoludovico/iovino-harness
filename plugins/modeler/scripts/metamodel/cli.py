@@ -960,6 +960,12 @@ def cmd_drift(a) -> int:
             wfound = B.workflow_drift(B.load(bpath), meta, wcat)
             print("\n".join(wfound) if wfound else f"{bpath.name}: workflows aligned with the published versions")
             found += wfound
+    if bpath is not None and B.uses_url(B.load(bpath)) and not D.has_record_url(dsn, a.schema):
+        line = (f"RECORD_URL: the notification texts of {bpath.name} use {{{{url}}}} but {a.schema}.record_url(entity text, id uuid) "
+                "is not defined: the application defines it (one SQL map of its pages, as the convention on record links "
+                "says); until then {{url}} renders empty")
+        print(line)
+        found.append(line)
     return 1 if found else 0
 
 

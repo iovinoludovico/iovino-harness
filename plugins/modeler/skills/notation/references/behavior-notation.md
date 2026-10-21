@@ -32,7 +32,7 @@ workflows:
     state: state                        # the attribute holding the state: EString, or an enum whose literals are the states
     states:
       draft:    {initial: true, owner: [self.issuer], editable_by: [self.issuer, office], label: {it: Bozza, en: Draft}}
-      pending:  {owner: [director], reminder: {after: 7d, template: approval_reminder}}
+      pending:  {owner: [director], reminder: {after: 7d, template: approval_reminder}, requires: [reason, hours]}
       closed:   {final: true}
     transitions:
       submit:   {from: draft, to: pending, by: [self.issuer], guard: dataComplete, label: {it: Emetti, en: Submit}}
@@ -102,6 +102,15 @@ A principal path always starts with `self.`: this tells the reference `issuer` a
   through the transitions; keys are lowercase identifiers. `owner` is who the record waits for (desk,
   reminders), `editable_by` who may edit it while it is there; `reminder: {after: 7d, template}` reminds the
   owners (durations: `7d`, `12h`, `2w`). `label`, `doc`, `color` are presentation.
+- `requires: [feature, …]`: attributes or references of the class that must be set (a collection: not empty) **from
+  that state on**: an implicit guard of every transition entering the state (the engine names the missing fields:
+  "Required in state pending: reason, hours"; `_available_transitions` lists them as `missing`), and an invariant
+  while the record is there (an update that clears a single-valued one is refused, SQLSTATE `23514`; a collection
+  is checked only on entering: a deleted part is not seen by the container). Nothing is inherited: each state lists
+  its own. The metamodel keeps the feature optional (`[0..1]`): `lower: 1` means required from creation, `requires`
+  means required from a state. Not for derived attributes (computed after the check: test them in a guard) nor the
+  state attribute; `validate` warns when the metamodel already requires the feature, when the initial state requires
+  one (that is `lower: 1`) and when a guard of an entering transition repeats `x.isSet()`.
 - Transitions: `from` (one state or a list), `to`, and either `by` (principals) or `at` (a `Date`/`DateTime`
   attribute with an optional offset: `endDate + 1d`, run by the scheduler). `when` hides the transition when
   false (a condition), `guard` blocks it explaining what is missing (a requirement); `comment: required|optional`;
@@ -132,8 +141,9 @@ A principal path always starts with `self.`: this tells the reference `issuer` a
 - The texts of the notifications live in the model, not in the subscriber: `templates:` maps every `template` key
   of the reactions and reminders to its subject and body per language. Placeholders `{{…}}` are the record's own
   paths (`{{self.code}}`, `{{self.guest.email}}`, `{{self.id}}`; `{{order.code}}` with the entity key reads the
-  same) and the event's variables: `actor.name`, `actor.email`, `comment`, `url` (`public.record_url(entity, id)`
-  when the app has it), on a state change `transition.key|label|from|to` and `state.key|label` (labels in the
+  same) and the event's variables: `actor.name`, `actor.email`, `comment`, `url` (`public.record_url(entity, id)`:
+  the application defines it, one SQL map of its pages as the `core` convention on record links says; the engine
+  calls it when it exists, otherwise `{{url}}` renders empty and `drift` reports the missing function), on a state change `transition.key|label|from|to` and `state.key|label` (labels in the
   language of the metamodel), on a reminder `reminder.days|count|state`. `validate` checks that every template a
   reaction or reminder names has texts in the metamodel's language and that every placeholder exists; without the
   section the subscriber renders the texts (an explicit choice: say so in the app). The engine renders
@@ -192,7 +202,9 @@ workflow, derivations or reactions (`<entity>` = the snake_case of the class, `i
   output).
 - Workflow: the state is set to the initial one on insert and **changes only through
   `<entity>_perform_transition(id, key, comment)`**, which checks the current state, who performs it, the `when`
-  (hidden: "not available"), the `guard` (blocked: "requirements not met: <guard>"), the comment, writes
+  (hidden: "not available"), the `guard` (blocked: "requirements not met: <guard>"), the fields the target state
+  `requires` (blocked: "required in state <state>: <fields>"; the before-update trigger keeps them set while the
+  record stays there), the comment, writes
   `workflow_history`, emits `<entity>.transitioned` (`.completed` in a final state, plus the transition's
   `emits`). `<entity>_available_transitions(id)` lists what the current user may do now, each with `guard_ok`.
   `<entity>_revert(id, state, comment)` goes back to a state in the record's history (`revert.by`,
