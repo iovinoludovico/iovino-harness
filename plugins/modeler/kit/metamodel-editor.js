@@ -95,13 +95,15 @@
     };
     // The application users are built in (`User`, table profiles) and their roles are the enum `app_role` (`roles:` of
     // the metamodel, `admin` first). When the metamodel declares roles, or a reference to User marked `role: true`
-    // (a record role), the diagram has the two built-in boxes `User «built-in»` and `Role «enumeration»`, linked by
-    // `roles 0..*`; a record role is a connector from its class to User. Without them, nothing is drawn.
+    // (a record role), the diagram has the two built-in boxes `User «built-in»` (rows `email` and `roles: Role [0..*]`:
+    // an enum-typed attribute is a row, no connector, as in Ecore Tools) and `Role «enumeration»`; a record role is a
+    // connector from its class to User. Without them, nothing is drawn.
     const recordRoles = (mm) => Object.entries(mm.classes).flatMap(([cn, c]) =>
       Object.entries(c.references || {}).filter(([, r]) => r.type === USER && r.role).map(([rn, r]) => ({ cn, rn, r })));
     const builtinNodes = (mm) => (Object.keys(mm.roles || {}).length || recordRoles(mm).length ? [USER, ROLE] : []);
     const nodeNames = (mm) => [...Object.keys(mm.classes), ...Object.keys(mm.enums), ...builtinNodes(mm)];
     const roleLiterals = (mm) => [ADMIN, ...Object.entries(mm.roles || {}).map(([rn, r]) => (r?.scope ? `${rn} (${r.scope})` : rn))];
+    const userRows = () => ["email", `roles: ${ROLE} [0..*]`];
 
     const rowItems = (c, allAttrs = false, more = "more", state = null, uses = null, opts = {}) => {
       // attribute lines of a class box: all of them, or the first ones plus "+N more". `🔑` marks the id,
@@ -144,7 +146,7 @@
         // a class with a workflow has a «workflow» stereotype line in its head, like an enum has «enumeration»
         return { w: width([name, ...rows], 160), h: HEAD_H + (opts.workflow ? STEREO_H : 0) + Math.max(1, rows.length) * ROW_H + PAD };
       }
-      if (name === USER) return { w: width([name, "email"], 120), h: HEAD_H + STEREO_H + ROW_H + PAD };
+      if (name === USER) return { w: width([name, ...userRows()], 120), h: HEAD_H + STEREO_H + userRows().length * ROW_H + PAD };
       if (name === ROLE) {
         const lits = roleLiterals(mm);
         return { w: width([name, ...lits], 120), h: HEAD_H + STEREO_H + lits.length * ROW_H + PAD };
@@ -758,7 +760,6 @@
           });
         }
       }
-      if (userBox && mm.diagram[ROLE]) list.push({ key: `${USER}.roles`, a: USER, b: ROLE, cls: "edge", start: null, end: "url(#arrow)", labelB: "roles 0..*", labelA: null });
       return list;
     };
 
@@ -1004,7 +1005,7 @@
       return { k, x: at.x - ((at.x - view.x) * k) / view.k, y: at.y - ((at.y - view.y) * k) / view.k };
     };
     return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, fitView, zoomView, workflowModel, workflowLayout, workflowFocus,
-             stateView, stateOverlay, viewMark, wfLabel, WF, STEREO_H, recordRoles, builtinNodes, nodeNames, roleLiterals, USER, ROLE };
+             stateView, stateOverlay, viewMark, wfLabel, WF, STEREO_H, recordRoles, builtinNodes, nodeNames, roleLiterals, userRows, USER, ROLE };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -1014,7 +1015,12 @@
     : Array.isArray(v) ? `[${v.map((x) => (typeof x === "string" ? `'${x}'` : pyRepr(x))).join(", ")}]` : String(v);
   const multSuffix = (lo, up) => lo === 0 && up === 1 ? "" : lo === 0 && up === -1 ? "[*]" : lo === 1 && up === -1 ? "[+]"
     : lo === up ? `[${lo}]` : `[${lo}..${up === -1 ? "*" : up}]`;
-  const sameGroup = (g, h) => JSON.stringify(g) === JSON.stringify(h);
+  // Structural equality with the object keys sorted: a proposal read back from Postgres (`model_change_requests`,
+  // jsonb columns) has the keys of every object reordered ({it, en} comes back as {en, it}), and must not differ from
+  // the model it was saved from. Arrays keep their order (supertypes, unique groups, lists of principals).
+  const stableJson = (x) => JSON.stringify(x, (k, v) => (v && typeof v === "object" && !Array.isArray(v)
+    ? Object.fromEntries(Object.keys(v).sort().map((key) => [key, v[key]])) : v));
+  const same = (x, y) => stableJson(x ?? null) === stableJson(y ?? null);
   // domain rules ({id, text} on the package or a class): the same lines as ecore.diff
   const ruleLines = (prefix, old, neu) => {
     const o = Object.fromEntries((old || []).map((r) => [r.id, r.text])), n = Object.fromEntries((neu || []).map((r) => [r.id, r.text]));
@@ -1029,7 +1035,7 @@
     const out = [];
     for (const [rn, r] of Object.entries(b.roles || {})) {
       if (!a.roles?.[rn]) { out.push(`+ role ${rn}${r.scope ? ` (per ${r.scope})` : ""}`); continue; }
-      const ks = ["scope", "label", "doc"].filter((k) => JSON.stringify(a.roles[rn][k] ?? null) !== JSON.stringify(r[k] ?? null));
+      const ks = ["scope", "label", "doc"].filter((k) => !same(a.roles[rn][k], r[k]));
       if (ks.length) out.push(`~ role ${rn}: ${ks.join(", ")}`);
     }
     for (const rn of Object.keys(a.roles || {})) if (!b.roles?.[rn]) out.push(`- role ${rn}`);
@@ -1054,9 +1060,9 @@
         continue;
       }
       if (oc.abstract !== c.abstract) out.push(`~ class ${cn}: abstract ${pyRepr(oc.abstract)} -> ${pyRepr(c.abstract)}`);
-      if (!sameGroup(oc.supertypes, c.supertypes)) out.push(`~ class ${cn}: supertypes ${pyRepr(oc.supertypes)} -> ${pyRepr(c.supertypes)}`);
-      for (const g of c.unique || []) if (!(oc.unique || []).some((h) => sameGroup(g, h))) out.push(`+ ${cn}: unique (${g.join(", ")})`);
-      for (const g of oc.unique || []) if (!(c.unique || []).some((h) => sameGroup(g, h))) out.push(`- ${cn}: unique (${g.join(", ")})`);
+      if (!same(oc.supertypes, c.supertypes)) out.push(`~ class ${cn}: supertypes ${pyRepr(oc.supertypes)} -> ${pyRepr(c.supertypes)}`);
+      for (const g of c.unique || []) if (!(oc.unique || []).some((h) => same(g, h))) out.push(`+ ${cn}: unique (${g.join(", ")})`);
+      for (const g of oc.unique || []) if (!(c.unique || []).some((h) => same(g, h))) out.push(`- ${cn}: unique (${g.join(", ")})`);
       out.push(...ruleLines(`${cn}: `, oc.rules, c.rules));
       for (const kind of ["attributes", "references"]) {
         for (const [fn, f] of Object.entries(c[kind])) {
@@ -1065,7 +1071,7 @@
           if (!of) { out.push(`+ ${cn}.${fn}: ${f.type}${multSuffix(f.lower, f.upper)}`); continue; }
           if (renamed && !oc[kind][fn]) out.push(`~ ${cn}.${renamed} renamed to ${fn}`);
           for (const k of ["type", "lower", "upper", "containment", "opposite", "default", "id", "changeable", "derived", "role"]) {
-            if (JSON.stringify(of[k] ?? null) !== JSON.stringify(f[k] ?? null)) out.push(`~ ${cn}.${fn}: ${k} ${pyRepr(of[k])} -> ${pyRepr(f[k])}`);
+            if (!same(of[k], f[k])) out.push(`~ ${cn}.${fn}: ${k} ${pyRepr(of[k])} -> ${pyRepr(f[k])}`);
           }
         }
         for (const fn of Object.keys(oc[kind])) {
@@ -1077,6 +1083,8 @@
     return out;
   };
   Layout.diff = diff;
+  Layout.same = same;
+  Layout.stableJson = stableJson;
 
   /* ------------------------------------------------------------------ the behaviour as a proposal
    * The editor holds behavior.json (typed expressions {text, type, ast, sql}, runtime keys). A proposal carries the
@@ -1117,7 +1125,6 @@
   const behaviorDiff = (oldBh, newBh) => {
     const a = behaviorSource(oldBh) || {}, b = behaviorSource(newBh) || {};
     const out = [];
-    const same = (x, y) => JSON.stringify(x ?? null) === JSON.stringify(y ?? null);
     const norm = (x) => (typeof x === "string" ? x.split(/\s+/).join(" ") : x);
     const keysChanged = (x, y, keys) => keys.filter((k) => !same(norm(x?.[k]), norm(y?.[k])));
     const ar = a.roles || {}, br = b.roles || {};
@@ -1216,8 +1223,9 @@
       rolesHint: "i ruoli degli utenti dell'applicazione, dichiarati nel metamodello (roles: di domain.ecore.yaml), oltre ad admin; chi li ha è in user_roles",
       inBehavior: "in behavior.yaml", roleReserved: "ruolo predefinito", recordRole: "ruolo", recordRoles: "ruoli di record",
       recordRoleHint: "ruolo di record (role: true): chi lo ricopre lo dice il record stesso (self.<riferimento> nel comportamento)",
-      builtinHint: "predefinito: gli utenti dell'applicazione (User, con email) e l'enum dei loro ruoli (Role: admin più roles: del metamodello). Si disegna quando il metamodello ha ruoli o ruoli di record.",
+      builtinHint: "predefinito: gli utenti dell'applicazione (User, con email e roles: Role [0..*]) e l'enum dei loro ruoli (Role: admin più roles: del metamodello). Si disegna quando il metamodello ha ruoli o ruoli di record.",
       builtinName: "nome predefinito (User, Role): non si dichiara",
+      saveNoChanges: "Nessuna modifica al modello (solo posizioni dei riquadri): salvare comunque la proposta?",
       roleOnlyUser: "role: true solo su un riferimento a User",
       wfNotifyTemplate: "destinatari senza template", wfTemplateNotify: "template senza destinatari",
     },
@@ -1258,8 +1266,9 @@
       rolesHint: "the roles of the application users, declared in the metamodel (roles: of domain.ecore.yaml), besides admin; who holds them is in user_roles",
       inBehavior: "in behavior.yaml", roleReserved: "built-in role", recordRole: "role", recordRoles: "record roles",
       recordRoleHint: "record role (role: true): the record itself says who holds it (self.<reference> in the behaviour)",
-      builtinHint: "built in: the application users (User, with an email) and the enum of their roles (Role: admin plus the roles: of the metamodel). Drawn when the metamodel has roles or record roles.",
+      builtinHint: "built in: the application users (User, with an email and roles: Role [0..*]) and the enum of their roles (Role: admin plus the roles: of the metamodel). Drawn when the metamodel has roles or record roles.",
       builtinName: "built-in name (User, Role): not declared",
+      saveNoChanges: "No change to the model (box positions only): save the proposal anyway?",
       roleOnlyUser: "role: true only on a reference to User",
       wfNotifyTemplate: "recipients without a template", wfTemplateNotify: "template without recipients",
     },
@@ -1950,7 +1959,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         this.readonly ? null : el("input", { class: "note", placeholder: t.note, size: 24, value: this._note || "", oninput: (e) => { this._note = e.target.value; } }),
         this.readonly ? null : el("button", {
           class: "primary", disabled: issues.length > 0,
-          onclick: () => this.dispatchEvent(new CustomEvent("save", { detail: { metamodel: this.metamodel, behavior: this.behaviorProposal(), note: this._note || "" } })),
+          onclick: () => {
+            // only the box positions moved: apply drops them, so the proposal would stay open in production for nothing
+            const lines = this.changesTo(this.metamodel, this._bh ? this.behaviorProposal() : undefined);
+            if (!lines.length && !confirm(t.saveNoChanges)) return;
+            this.dispatchEvent(new CustomEvent("save", { detail: { metamodel: this.metamodel, behavior: this.behaviorProposal(), note: this._note || "" } }));
+          },
         }, this.getAttribute("save-label") || t.save),
         VERSION.startsWith("__") ? null : el("span", { class: "hint", title: `${t.modeler} ${VERSION}` }, `v${VERSION}`),
       ].filter(Boolean));
@@ -2125,7 +2139,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         if (!p) continue;
         const s = this._boxSize(n);
         const sel = this._sel?.name === n;
-        const rows = n === ROLE ? Layout.roleLiterals(mm) : ["email"];
+        const rows = n === ROLE ? Layout.roleLiterals(mm) : Layout.userRows();
         const b = svg("g", { class: `box builtin${n === ROLE ? " enum" : ""}${sel ? " sel" : ""}`, "data-name": n, transform: `translate(${p.x},${p.y})` },
           svg("rect", { class: "body", width: s.w, height: s.h, rx: 6 }),
           svg("rect", { class: "head", width: s.w - 2, x: 1, y: 1, height: HEAD_H + 10, rx: 5 }),

@@ -402,20 +402,19 @@ test("fitView fills the canvas with the diagram; zoomView scales around a point 
   assert.equal(Layout.zoomView({ k: 0.25, x: 0, y: 0 }, 0.1, at).k, 0.25);
 });
 
-test("built-in User and Role boxes: drawn when the metamodel has roles or a record role, linked by roles 0..*", () => {
+test("built-in User and Role boxes: drawn when the metamodel has roles or a record role; roles is a row of User, not a connector", () => {
   for (const [w, h] of [[400, 480], [1280, 720], [1900, 900]]) {
     const { mm, edges, boxes } = laidOut(fixture("invitations.ecore.yaml"), w, h);
     assert.deepEqual(Layout.builtinNodes(mm), ["User", "Role"]);
     assert.ok(boxes.User && boxes.Role, `User and Role boxes at ${w}x${h}`);
     assert.deepEqual(Layout.roleLiterals(mm), ["admin", "office", "issuer (Department)", "director (Department)"]);
-    assert.equal(Layout.boxSize(mm, "Role").h, Layout.boxSize(mm, "User").h + 3 * 19);   // one row per literal, one row (email) for User
+    assert.deepEqual(Layout.userRows(), ["email", "roles: Role [0..*]"]);
+    assert.equal(Layout.boxSize(mm, "Role").h, Layout.boxSize(mm, "User").h + 2 * 19);   // four literals against the two rows of User
     const issuer = edges.find((e) => e.key === "Invitation.issuer");
     assert.ok(issuer, "the record role Invitation.issuer is a connector");
     assert.equal(issuer.b, "User"); assert.equal(issuer.end, "url(#arrow)"); assert.equal(issuer.start, null);
     assert.ok(issuer.labels.some((l) => l.text.startsWith("issuer 0..1")), JSON.stringify(issuer.labels));
-    const roles = edges.find((e) => e.key === "User.roles");
-    assert.equal(roles.a, "User"); assert.equal(roles.b, "Role");
-    assert.ok(roles.labels.some((l) => l.text === "roles 0..*"));
+    assert.ok(!edges.some((e) => e.key === "User.roles"), "an enum-typed attribute is a row, not a connector (EMF notation)");
     assert.ok(!edges.some((e) => e.key === "Invitation.createdBy"), "createdBy stays a row in the box");
     checkDiagram(edges, boxes);
   }

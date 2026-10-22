@@ -267,7 +267,8 @@ class RolesTests(unittest.TestCase):
         self.assertIn("enum Role { admin = 0; rup = 1; area_director = 2; }", E.to_emfatic(m))
         self.assertIn("// roles of the application users (User.roles, one row per user x role x scope): area_director per Department", E.to_emfatic(m))
         self.assertIn("ref User[*] rupAssistants;  // role", E.to_emfatic(m))
-        self.assertIn('  User --> "0..*" Role : roles', E.to_mermaid(m))
+        self.assertIn("  class User {\n    <<built-in>>\n    email\n    roles: Role [0..*]\n  }", E.to_mermaid(m))
+        self.assertNotIn("User -->", E.to_mermaid(m))                         # the roles are an attribute row, as Order.state: OrderState
         only_record = {"package": "t", "classes": {"Fund": {"references": {"manager": {"type": "User", "role": True}}}}}
         self.assertIn("  class Role {", E.to_mermaid(only_record))          # a record role alone draws the users and their roles
         self.assertNotIn("class Role", E.to_mermaid({"package": "t", "classes": {"Fund": {"references": {"createdBy": "User"}}}}))

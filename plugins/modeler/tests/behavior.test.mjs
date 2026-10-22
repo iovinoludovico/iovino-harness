@@ -58,6 +58,14 @@ test("behaviorDiff: the lines a reviewer reads, as the CLI prints them", () => {
   assert.deepEqual(Layout.behaviorDiff(va, a), ["- view_as"]);
   assert.deepEqual(Layout.behaviorDiff(a, a), []);
   assert.deepEqual(Layout.behaviorDiff(a, structuredClone(a)), []);
+  // read back from a jsonb column: every object with its keys reordered (labels {it, en}, notify {to, template, when},
+  // templates {subject, body}) is still the same behaviour, and the real changes read the same
+  const jsonbOrder = (x) => Array.isArray(x) ? x.map(jsonbOrder)
+    : x && typeof x === "object" ? Object.fromEntries(Object.keys(x).sort((p, q) => p.length - q.length || (p < q ? -1 : p > q ? 1 : 0)).map((k) => [k, jsonbOrder(x[k])])) : x;
+  assert.notEqual(JSON.stringify(jsonbOrder(a).workflows.Invitation.states.draft.label), JSON.stringify(a.workflows.Invitation.states.draft.label));
+  assert.deepEqual(Layout.behaviorDiff(a, jsonbOrder(a)), []);
+  assert.deepEqual(Layout.behaviorDiff(jsonbOrder(a), a), []);
+  assert.deepEqual([...Layout.behaviorDiff(a, jsonbOrder(b))].sort(), [...Layout.behaviorDiff(a, b)].sort());   // same lines, in the order of the keys read
   assert.ok(Layout.behaviorDiff(null, b).includes("+ workflow Invitation on state: 12 states, 16 transitions"));
   const cli = py("a, b = json.loads(sys.argv[2]), json.loads(sys.argv[3]); print(json.dumps(B.diff(B.from_editor(a), B.from_editor(b))))",
     JSON.stringify(Layout.behaviorSource(a)), JSON.stringify(Layout.behaviorSource(b)));

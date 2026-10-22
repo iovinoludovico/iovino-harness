@@ -42,8 +42,9 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   the ones held per instance; `admin` built in), stored as the enum `app_role` and the table `user_roles` that `migrate`
   creates when missing and `drift` compares (`reverse` writes them from an existing database); a reference to `User`
   marked `role: true` is a record role (`Fund.manager`). `DOMAIN.md` has the «Roles» section; the diagrams (web
-  modeler, Mermaid) draw the built-in boxes `Role «enumeration»` and `User «built-in»` linked by `roles 0..*`, with
-  the record roles as connectors to `User` (the web modeler edits the roles from the `Role` box or the side panel);
+  modeler, Mermaid) draw the built-in boxes `Role «enumeration»` and `User «built-in»` (rows `email` and
+  `roles: Role [0..*]`: an enum-typed attribute is a row, no connector, as in Ecore Tools), with the record roles as
+  connectors to `User` (the web modeler edits the roles from the `Role` box or the side panel);
   the behaviour resolves `by`/`notify`/`view_as` against them (its own `roles:` is optional).
 - Behaviour is the second model, **`behavior.yaml`** next to the metamodel: roles, derivations of the attributes
   marked `derived: true`, workflows (states with the fields they `require` and, through `model`, **the class as seen

@@ -47,7 +47,8 @@ il client lo supporta); `--format storage` mostra tabelle e colonne.
    come enum `app_role` e tabella `user_roles` (la migrazione li crea se mancano; `drift` li confronta); un utente
    nominato dal record («il responsabile del fondo», «gli assistenti dell'ordine») è un `ref` a `User` con `role: true`
    (ruolo di record). Nel diagramma compaiono come riquadri predefiniti `Role «enumeration»` e `User «built-in»`
-   (i ruoli di record sono connettori verso `User`; `Role` e `User` non si dichiarano). Chi fa cosa con quei ruoli
+   (`User` ha la riga `roles: Role [0..*]`, come ogni attributo tipato con un enum: riga, niente connettore; i ruoli di
+   record sono connettori verso `User`; `Role` e `User` non si dichiarano). Chi fa cosa con quei ruoli
    (`by`, `notify`, `view_as`) va poi in `behavior.yaml`.
 2. **Elenca le ambiguità che cambiano la struttura** (molteplicità, containment o riferimento, opposite,
    attributo o classe, enum o classe, `User` o una classe persona, ruolo dell'app o ruolo di record, ereditarietà o enum di tipo). Chiedile in
