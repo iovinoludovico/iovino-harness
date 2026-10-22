@@ -1058,7 +1058,7 @@
     const b = JSON.parse(JSON.stringify(bh));   // (clone is defined after this module's early return for Node)
     delete b.entities; delete b.uses; delete b.behavior_roles;
     b.roles = Object.fromEntries(Object.entries(b.roles || {}).filter(([, r]) => r?.source !== "metamodel")
-      .map(([rn, r]) => { const { source, ...rest } = r || {}; return [rn, rest]; }));   // eslint-disable-line no-unused-vars
+      .map(([rn, r]) => { const rest = { ...(r || {}) }; delete rest.source; return [rn, rest]; }));
     if (!Object.keys(b.roles).length) delete b.roles;
     for (const ders of Object.values(b.derivations || {})) for (const an of Object.keys(ders)) ders[an] = exprText(ders[an]);
     for (const w of Object.values(b.workflows || {})) {
