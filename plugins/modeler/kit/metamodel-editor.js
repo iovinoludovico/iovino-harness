@@ -12,7 +12,7 @@
  *   el.readonly = false;
  *   el.addEventListener("change", (e) => { e.detail.metamodel; e.detail.behavior; });
  *   el.addEventListener("save", (e) => { e.detail.metamodel; e.detail.behavior; e.detail.note; });   // behavior: for behavior.yaml
- *   el.addEventListener("select", (e) => e.detail.name);   // the class or enum selected (null: none)
+ *   el.addEventListener("select", (e) => e.detail.name);   // the box selected: kind class | enum | user | roles (null: none)
  *
  * Attributes: lang="it|en", save-label="…", readonly.
  * The diagram positions are kept in metamodel.diagram ({Class: {x, y}}).
@@ -42,6 +42,7 @@
   const RESERVED = ["id", "createdAt", "updatedAt", "created_at", "updated_at"];
   const HEAD_H = 32, ROW_H = 19, PAD = 8, CHAR_W = 7.4;
   const MAX_ROWS = 12;                     // attributes shown in a box before "+N" (all of them with "Tutti")
+  const USER = "User", ROLE = "Role", ADMIN = "admin";   // built in: the application users, the enum of their roles, the administrators
   const GAP_X = 110, GAP_Y = 56, MARGIN = 24, K_MIN = 0.25, K_MAX = 2;
 
   /* ------------------------------------------------------------------ pure layout (no DOM)
@@ -92,6 +93,16 @@
       if (!req.length) return base ? ` [${base}]` : "";
       return ` [${base ? base + " · " : ""}1 ${from} ${req.join(", ")}]`;
     };
+    // The application users are built in (`User`, table profiles) and their roles are the enum `app_role` (`roles:` of
+    // the metamodel, `admin` first). When the metamodel declares roles, or a reference to User marked `role: true`
+    // (a record role), the diagram has the two built-in boxes `User «built-in»` and `Role «enumeration»`, linked by
+    // `roles 0..*`; a record role is a connector from its class to User. Without them, nothing is drawn.
+    const recordRoles = (mm) => Object.entries(mm.classes).flatMap(([cn, c]) =>
+      Object.entries(c.references || {}).filter(([, r]) => r.type === USER && r.role).map(([rn, r]) => ({ cn, rn, r })));
+    const builtinNodes = (mm) => (Object.keys(mm.roles || {}).length || recordRoles(mm).length ? [USER, ROLE] : []);
+    const nodeNames = (mm) => [...Object.keys(mm.classes), ...Object.keys(mm.enums), ...builtinNodes(mm)];
+    const roleLiterals = (mm) => [ADMIN, ...Object.entries(mm.roles || {}).map(([rn, r]) => (r?.scope ? `${rn} (${r.scope})` : rn))];
+
     const rowItems = (c, allAttrs = false, more = "more", state = null, uses = null, opts = {}) => {
       // attribute lines of a class box: all of them, or the first ones plus "+N more". `🔑` marks the id,
       // `/name` a derived attribute (UML), `⟳` the state attribute of the workflow (`state` of behavior.yaml),
@@ -112,12 +123,13 @@
         const used = uses?.attributes?.[an] || null;
         return { text: `${v.pre}${mark}${a.derived ? "/" : ""}${an}: ${a.type}${v.m}${v.post}${used ? " ·ƒ" : ""}`, attr: an, derived: !!a.derived, state: an === state, used, hidden: v.hidden };
       });
-      // references to the application users have no box to point to: listed in the class, dimmed
+      // references to the application users are listed in the class, dimmed (no connector to the built-in User box,
+      // which every class would reach through createdBy); a record role (`role: true`) is a connector instead
       for (const [rn, r] of Object.entries(c.references)) {
-        if (r.type !== "User") continue;
+        if (r.type !== USER || r.role) continue;
         const v = seen(rn, r);
         const used = uses?.references?.[rn] || null;
-        items.push({ text: `${v.pre}↗ ${rn}: User${v.m}${r.role ? " «role»" : ""}${used ? " ·ƒ" : ""}`, ref: rn, muted: true, used, hidden: v.hidden });
+        items.push({ text: `${v.pre}↗ ${rn}: ${USER}${v.m}${used ? " ·ƒ" : ""}`, ref: rn, muted: true, used, hidden: v.hidden });
       }
       if (allAttrs || items.length <= MAX_ROWS) return items;
       return [...items.slice(0, MAX_ROWS - 1), { text: `… +${items.length - MAX_ROWS + 1} ${more}`, muted: true }];
@@ -131,6 +143,11 @@
         const rows = rowsOf(c, opts.allAttrs, opts.more, opts.state, opts.uses, opts);
         // a class with a workflow has a «workflow» stereotype line in its head, like an enum has «enumeration»
         return { w: width([name, ...rows], 160), h: HEAD_H + (opts.workflow ? STEREO_H : 0) + Math.max(1, rows.length) * ROW_H + PAD };
+      }
+      if (name === USER) return { w: width([name, "email"], 120), h: HEAD_H + STEREO_H + ROW_H + PAD };
+      if (name === ROLE) {
+        const lits = roleLiterals(mm);
+        return { w: width([name, ...lits], 120), h: HEAD_H + STEREO_H + lits.length * ROW_H + PAD };
       }
       const e = mm.enums[name];
       return { w: width([name, ...e.literals.map((l) => l.name)], 120), h: HEAD_H + STEREO_H + Math.max(1, e.literals.length) * ROW_H + PAD };
@@ -167,10 +184,11 @@
       const classes = Object.keys(mm.classes);
       const enums = Object.keys(mm.enums);
       // the gap between columns holds the connectors and their labels: at least the widest reference label
-      const labelW = Math.max(0, ...edgesOf({ ...mm, diagram: Object.fromEntries([...classes, ...enums].map((n) => [n, { x: 0, y: 0 }])) }, null, opts.overlay, opts.from)
+      const builtin = builtinNodes(mm);
+      const labelW = Math.max(0, ...edgesOf({ ...mm, diagram: Object.fromEntries(nodeNames(mm).map((n) => [n, { x: 0, y: 0 }])) }, null, opts.overlay, opts.from)
         .flatMap((e) => [e.labelA, e.labelB]).filter(Boolean).map((t) => t.length * LABEL_CHAR_W + 4));
       const gapX = Math.max(GAP_X, Math.ceil(labelW) + 30);
-      const missing = [...classes, ...enums].filter((n) => force || !mm.diagram[n]);
+      const missing = [...classes, ...enums, ...builtin].filter((n) => force || !mm.diagram[n]);
       if (!missing.length) return {};
       const adj = Object.fromEntries(classes.map((n) => [n, new Set()]));
       for (const [cn, c] of Object.entries(mm.classes)) {
@@ -196,12 +214,17 @@
         }
       }
       for (const e of enums) if (!nodes.includes(e)) nodes.push(e);
+      nodes.push(...builtin);   // User, then Role next to it
       const place = force ? nodes : nodes.filter((n) => !mm.diagram[n]);
       const sizes = Object.fromEntries(place.map((n) => [n, size(n)]));
       // neighbours of every node (references, inheritance, enum attributes), to keep connected boxes close
       const near = Object.fromEntries(nodes.map((n) => [n, new Set(adj[n] || [])]));
       for (const [cn, c] of Object.entries(mm.classes)) {
         for (const a of Object.values(c.attributes)) if (near[a.type] && mm.enums[a.type]) { near[cn].add(a.type); near[a.type].add(cn); }
+      }
+      if (builtin.length) {
+        for (const { cn } of recordRoles(mm)) { near[USER].add(cn); near[cn].add(USER); }
+        near[ROLE].add(USER); near[USER].add(ROLE);
       }
       const avgH = place.reduce((a, n) => a + sizes[n].h, 0) / Math.max(1, place.length);
       const masonry = (cols) => {
@@ -230,7 +253,7 @@
       }
       if (!best) return {};
       // new nodes next to the existing diagram (on its right), all nodes from the origin when forced
-      const used = Object.entries(mm.diagram).filter(([n]) => !place.includes(n) && (mm.classes[n] || mm.enums[n]));
+      const used = Object.entries(mm.diagram).filter(([n]) => !place.includes(n) && nodeNames(mm).includes(n));
       const ox = used.length ? Math.max(...used.map(([n, p]) => p.x + size(n).w)) + gapX : 0;
       const colX = [];
       best.colW.reduce((x, w, i) => { colX[i] = x; return x + w + gapX; }, ox);
@@ -710,6 +733,8 @@
       };
       const list = [];
       const drawn = new Set();
+      // the built-in boxes exist only while the metamodel has roles: a stale diagram.User alone draws nothing
+      const userBox = builtinNodes(mm).length && mm.diagram[USER];
       for (const [cn, c] of Object.entries(mm.classes)) {
         if (!mm.diagram[cn]) continue;
         for (const s of c.supertypes) {
@@ -717,7 +742,11 @@
         }
         for (const [rn, r] of Object.entries(c.references)) {
           if (drawn.has(`${cn}.${rn}`)) continue;
-          if (r.type === "User" || !mm.diagram[r.type] || !mm.classes[r.type]) continue;   // User: a row in the box
+          if (r.type === USER) {   // a record role points to the User box; the other User references are rows in the box
+            if (r.role && userBox) list.push({ key: `${cn}.${rn}`, a: cn, b: USER, cls: "edge", start: null, end: "url(#arrow)", labelB: `${rn} ${mult(cn, rn, r)}${used(cn, rn)}`, labelA: null });
+            continue;
+          }
+          if (!mm.diagram[r.type] || !mm.classes[r.type]) continue;
           const o = r.opposite ? mm.classes[r.type]?.references?.[r.opposite] : null;
           if (o) drawn.add(`${r.type}.${r.opposite}`);
           list.push({
@@ -729,6 +758,7 @@
           });
         }
       }
+      if (userBox && mm.diagram[ROLE]) list.push({ key: `${USER}.roles`, a: USER, b: ROLE, cls: "edge", start: null, end: "url(#arrow)", labelB: "roles 0..*", labelA: null });
       return list;
     };
 
@@ -740,7 +770,7 @@
       // one label when the references read the same, else one at each source.
       // opts.uses: the `uses` map of behavior.json (marks the labels of the references the behaviour uses).
       const rects = {};
-      for (const n of [...Object.keys(mm.classes), ...Object.keys(mm.enums)]) {
+      for (const n of nodeNames(mm)) {
         const p = mm.diagram[n];
         if (p) { const s = size(n); rects[n] = { x: p.x, y: p.y, w: s.w, h: s.h }; }
       }
@@ -974,7 +1004,7 @@
       return { k, x: at.x - ((at.x - view.x) * k) / view.k, y: at.y - ((at.y - view.y) * k) / view.k };
     };
     return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, fitView, zoomView, workflowModel, workflowLayout, workflowFocus,
-             stateView, stateOverlay, viewMark, wfLabel, WF, STEREO_H };
+             stateView, stateOverlay, viewMark, wfLabel, WF, STEREO_H, recordRoles, builtinNodes, nodeNames, roleLiterals, USER, ROLE };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -1156,7 +1186,7 @@
       issues: "problemi", ok: "Metamodello valido", name: "Nome", abstract: "Astratta", supertypes: "Supertipi",
       doc: "Descrizione", label: "Etichetta", attributes: "Attributi", references: "Riferimenti", literals: "Letterali",
       add: "Aggiungi", del: "Elimina", type: "Tipo", mult: "Molt.", id: "ID", target: "Classe", containment: "Contiene",
-      opposite: "Opposto", none: "—", select: "Seleziona una classe o un'enum nel diagramma, oppure aggiungine una.",
+      opposite: "Opposto", none: "—", select: "Seleziona una classe, un'enum o un riquadro predefinito (User, Role) nel diagramma, oppure aggiungine una.",
       confirmDelete: "Eliminare", package: "Package", modeler: "Modellatore", readonly: "Sola lettura", users: "User = utenti dell'applicazione",
       dupName: "nome già usato", badName: "nome non valido", reserved: "colonna standard", noTarget: "classe di destinazione mancante",
       oppBroken: "opposto non coerente", bothCont: "entrambi i lati sono contenimenti", noLiterals: "nessun letterale",
@@ -1186,6 +1216,8 @@
       rolesHint: "i ruoli degli utenti dell'applicazione, dichiarati nel metamodello (roles: di domain.ecore.yaml), oltre ad admin; chi li ha è in user_roles",
       inBehavior: "in behavior.yaml", roleReserved: "ruolo predefinito", recordRole: "ruolo", recordRoles: "ruoli di record",
       recordRoleHint: "ruolo di record (role: true): chi lo ricopre lo dice il record stesso (self.<riferimento> nel comportamento)",
+      builtinHint: "predefinito: gli utenti dell'applicazione (User, con email) e l'enum dei loro ruoli (Role: admin più roles: del metamodello). Si disegna quando il metamodello ha ruoli o ruoli di record.",
+      builtinName: "nome predefinito (User, Role): non si dichiara",
       roleOnlyUser: "role: true solo su un riferimento a User",
       wfNotifyTemplate: "destinatari senza template", wfTemplateNotify: "template senza destinatari",
     },
@@ -1196,7 +1228,7 @@
       issues: "issues", ok: "Valid metamodel", name: "Name", abstract: "Abstract", supertypes: "Supertypes",
       doc: "Description", label: "Label", attributes: "Attributes", references: "References", literals: "Literals",
       add: "Add", del: "Delete", type: "Type", mult: "Mult.", id: "ID", target: "Class", containment: "Contains",
-      opposite: "Opposite", none: "—", select: "Select a class or an enum in the diagram, or add one.",
+      opposite: "Opposite", none: "—", select: "Select a class, an enum or a built-in box (User, Role) in the diagram, or add one.",
       confirmDelete: "Delete", package: "Package", modeler: "Modeler", readonly: "Read only", users: "User = the application users",
       dupName: "name already used", badName: "invalid name", reserved: "standard column", noTarget: "missing target class",
       oppBroken: "inconsistent opposite", bothCont: "both ends are containments", noLiterals: "no literals",
@@ -1226,6 +1258,8 @@
       rolesHint: "the roles of the application users, declared in the metamodel (roles: of domain.ecore.yaml), besides admin; who holds them is in user_roles",
       inBehavior: "in behavior.yaml", roleReserved: "built-in role", recordRole: "role", recordRoles: "record roles",
       recordRoleHint: "record role (role: true): the record itself says who holds it (self.<reference> in the behaviour)",
+      builtinHint: "built in: the application users (User, with an email) and the enum of their roles (Role: admin plus the roles: of the metamodel). Drawn when the metamodel has roles or record roles.",
+      builtinName: "built-in name (User, Role): not declared",
       roleOnlyUser: "role: true only on a reference to User",
       wfNotifyTemplate: "recipients without a template", wfTemplateNotify: "template without recipients",
     },
@@ -1344,6 +1378,7 @@ ${wfCss}
 .box.sel rect.body { stroke:var(--accent); stroke-width:2; }
 .box rect.head { fill:var(--head); }
 .box.enum rect.head { fill:var(--enum); }
+.box.builtin rect.body { stroke-dasharray:4 3; }
 .box text { fill:var(--fg); font-size:13px; }
 .box text.title { font-weight:600; font-size:14px; }
 .box text.abstract { font-style:italic; }
@@ -1552,7 +1587,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     }
 
     _uniqueName(base, taken) { let n = base, i = 2; while (taken.includes(n)) n = base + i++; return n; }
-    _allNames() { return [...Object.keys(this._mm.classes), ...Object.keys(this._mm.enums), "User"]; }
+    _allNames() { return [...Object.keys(this._mm.classes), ...Object.keys(this._mm.enums), USER, ROLE]; }
 
     _addClass() {
       const name = this._uniqueName(this.t.newClass, this._allNames());
@@ -1573,7 +1608,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     _freeSpot(name) {
       // the place of the box of `name` (just added to the model, not yet to the diagram): see Layout.freeSpot
       const mm = this._mm;
-      const occupied = Object.keys(mm.diagram).filter((n) => n !== name && (mm.classes[n] || mm.enums[n]))
+      const occupied = Object.keys(mm.diagram).filter((n) => n !== name && Layout.nodeNames(mm).includes(n))
         .map((n) => ({ ...mm.diagram[n], ...this._boxSize(n) }));
       const size = this._boxSize(name);
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
@@ -1592,6 +1627,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         c.supertypes = c.supertypes.map((s) => (s === old ? name : s));
         for (const r of Object.values(c.references)) if (r.type === old) r.type = name;
       }
+      for (const r of Object.values(mm.roles || {})) if (r?.scope === old) r.scope = name;
       if (mm.diagram[old]) { mm.diagram[name] = mm.diagram[old]; delete mm.diagram[old]; }
       this._sel = { kind: "class", name };
     }
@@ -1687,12 +1723,13 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       const names = [...Object.keys(mm.classes), ...Object.keys(mm.enums)];
       for (const n of names) {
         if (!CLASS_RE.test(n)) out.push(`${n}: ${t.badName}`);
-        if (names.filter((x) => x === n).length > 1 || n === "User") out.push(`${n}: ${t.dupName}`);
+        if (names.filter((x) => x === n).length > 1) out.push(`${n}: ${t.dupName}`);
+        if (n === USER || n === ROLE) out.push(`${n}: ${t.builtinName}`);
       }
       const ROLE_RE = /^[a-z][a-z0-9_]*$/;
       for (const [rn, r] of Object.entries(mm.roles || {})) {
         if (!ROLE_RE.test(rn)) out.push(`${rn}: ${t.badName}`);
-        if (rn === "admin" || rn === "creator") out.push(`${rn}: ${t.roleReserved}`);
+        if (rn === ADMIN || rn === "creator") out.push(`${rn}: ${t.roleReserved}`);
         if (r.scope && !mm.classes[r.scope]) out.push(`${rn}: ${t.noTarget}`);
       }
       for (const [en, e] of Object.entries(mm.enums)) {
@@ -1712,8 +1749,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           if (feats.filter((x) => x === f).length > 1) out.push(`${cn}.${f}: ${t.dupName}`);
         }
         for (const [rn, r] of Object.entries(c.references)) {
-          if (r.type !== "User" && !mm.classes[r.type]) { out.push(`${cn}.${rn}: ${t.noTarget}`); continue; }
-          if (r.role && r.type !== "User") out.push(`${cn}.${rn}: ${t.roleOnlyUser}`);
+          if (r.type !== USER && !mm.classes[r.type]) { out.push(`${cn}.${rn}: ${t.noTarget}`); continue; }
+          if (r.role && r.type !== USER) out.push(`${cn}.${rn}: ${t.roleOnlyUser}`);
           if (r.opposite) {
             const o = mm.classes[r.type]?.references?.[r.opposite];
             if (!o || o.opposite !== rn || (o.type !== cn && !this._ancestors(cn).includes(o.type))) out.push(`${cn}.${rn}: ${t.oppBroken}`);
@@ -1782,7 +1819,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     }
     _fit() {
       const r = this.shadowRoot.querySelector(".canvas")?.getBoundingClientRect();
-      const pos = Object.entries(this._mm.diagram).filter(([n]) => this._mm.classes[n] || this._mm.enums[n]);
+      const pos = Object.entries(this._mm.diagram).filter(([n]) => Layout.nodeNames(this._mm).includes(n));
       if (!r || r.width < 50 || r.height < 50 || !pos.length) return;
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (const [n, p] of pos) {
@@ -1808,7 +1845,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     _separate() {
       // boxes grew (all attributes shown): push down the ones that now overlap, keeping columns and order
       const mm = this._mm;
-      const names = Object.keys(mm.diagram).filter((n) => mm.classes[n] || mm.enums[n]).sort((a, b) => mm.diagram[a].y - mm.diagram[b].y);
+      const names = Object.keys(mm.diagram).filter((n) => Layout.nodeNames(mm).includes(n)).sort((a, b) => mm.diagram[a].y - mm.diagram[b].y);
       const done = [];
       for (const n of names) {
         const p = mm.diagram[n], s = this._boxSize(n);
@@ -1944,7 +1981,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         const p = { x: ev.clientX, y: ev.clientY };
         if (box) {
           const name = box.dataset.name;
-          this._sel = { kind: this._mm.classes[name] ? "class" : "enum", name };
+          this._sel = { kind: this._mm.classes[name] ? "class" : this._mm.enums[name] ? "enum" : name === USER ? "user" : "roles", name };
           this._panel = true;
           const start = { ...(this._mm.diagram[name] || { x: 0, y: 0 }) };
           drag = { kind: "box", name, p, start, moved: false };
@@ -1986,28 +2023,11 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       canvas.addEventListener("pointercancel", end);
     }
 
-    _anchor(name, toward) {
-      const p = this._mm.diagram[name] || { x: 0, y: 0 };
-      const s = this._boxSize(name);
-      const cx = p.x + s.w / 2, cy = p.y + s.h / 2;
-      const dx = toward.x - cx, dy = toward.y - cy;
-      if (!dx && !dy) return { x: cx, y: cy };
-      const sx = (s.w / 2) / Math.abs(dx || 1e-9), sy = (s.h / 2) / Math.abs(dy || 1e-9);
-      const f = Math.min(sx, sy);
-      return { x: cx + dx * f, y: cy + dy * f };
-    }
-    _center(name) {
-      if (name === "User") return null;
-      const p = this._mm.diagram[name];
-      if (!p) return null;
-      const s = this._boxSize(name);
-      return { x: p.x + s.w / 2, y: p.y + s.h / 2 };
-    }
-
     _renderDiagram() {
       const canvas = this.shadowRoot.querySelector(".canvas");
       if (!canvas) return;
       const mm = this._mm;
+      for (const n of Layout.builtinNodes(mm)) if (!mm.diagram[n]) mm.diagram[n] = this._freeSpot(n);   // the first role or record role added
       const defs = svg("defs", {},
         svg("marker", { id: "tri", viewBox: "0 0 12 12", refX: "11", refY: "6", markerWidth: "16", markerHeight: "16", orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" },
           svg("path", { d: "M1,1 L11,6 L1,11 z", class: "mk-open" })),
@@ -2097,6 +2117,22 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           svg("text", { x: s.w / 2, y: 30, "text-anchor": "middle", class: "title" }, en));
         let y = HEAD_H + 28;
         for (const l of e.literals) { b.append(svg("text", { x: 8, y }, l.name)); y += ROW_H; }
+        boxes.append(b);
+      }
+      // the built-in boxes: the application users and the enum of their roles (see Layout.builtinNodes)
+      for (const n of Layout.builtinNodes(mm)) {
+        const p = mm.diagram[n];
+        if (!p) continue;
+        const s = this._boxSize(n);
+        const sel = this._sel?.name === n;
+        const rows = n === ROLE ? Layout.roleLiterals(mm) : ["email"];
+        const b = svg("g", { class: `box builtin${n === ROLE ? " enum" : ""}${sel ? " sel" : ""}`, "data-name": n, transform: `translate(${p.x},${p.y})` },
+          svg("rect", { class: "body", width: s.w, height: s.h, rx: 6 }),
+          svg("rect", { class: "head", width: s.w - 2, x: 1, y: 1, height: HEAD_H + 10, rx: 5 }),
+          svg("text", { x: s.w / 2, y: 14, "text-anchor": "middle", class: "stereo" }, n === ROLE ? "«enumeration»" : "«built-in»"),
+          svg("text", { x: s.w / 2, y: 30, "text-anchor": "middle", class: "title" }, n, svg("title", {}, this.t.builtinHint)));
+        let y = HEAD_H + 28;
+        for (const r of rows) { b.append(svg("text", { x: 8, y, class: n === ROLE && r === ADMIN ? "muted" : null }, r)); y += ROW_H; }
         boxes.append(b);
       }
       this._ext = routed.ext;
@@ -2212,11 +2248,24 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       const t = this.t, mm = this._mm, ro = this.readonly;
       side.replaceChildren();
       const sel = this._sel;
-      if (!sel || (sel.kind === "class" && !mm.classes[sel.name]) || (sel.kind === "enum" && !mm.enums[sel.name])) {
+      const builtin = Layout.builtinNodes(mm);
+      if (!sel || (sel.kind === "class" && !mm.classes[sel.name]) || (sel.kind === "enum" && !mm.enums[sel.name]) || ((sel.kind === "user" || sel.kind === "roles") && !builtin.length)) {
         add(side, el("p", { class: "hint" }, t.select), el("p", { class: "hint" }, t.users), ...this._globalBehaviorPanel());
         return;
       }
       const commit = () => this._changed();
+      if (sel.kind === "roles") {
+        add(side, el("h3", {}, `${ROLE} «enumeration»`), el("p", { class: "hint" }, t.builtinHint), ...this._rolesPanel());
+        return;
+      }
+      if (sel.kind === "user") {
+        const record = Layout.recordRoles(mm).map(({ cn, rn }) => `${cn}.${rn}`);
+        add(side, el("h3", {}, `${USER} «built-in»`), el("p", { class: "hint" }, t.users), el("p", { class: "hint" }, t.builtinHint),
+          el("h3", {}, t.roles), el("ul", {}, ...Layout.roleLiterals(mm).map((r) => el("li", {}, r))),
+          el("h3", {}, t.recordRoles), record.length ? el("ul", {}, ...record.map((r) => el("li", {}, r))) : el("p", { class: "hint" }, t.none),
+          el("p", { class: "hint" }, t.recordRoleHint));
+        return;
+      }
       if (sel.kind === "enum") {
         const e = mm.enums[sel.name];
         add(side, 
@@ -2234,7 +2283,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       }
       const cn = sel.name, c = mm.classes[cn];
       const typeOptions = (cur) => [...DATATYPES, ...Object.keys(mm.enums)].map((d) => el("option", { value: d, selected: d === cur }, d));
-      const classOptions = (cur) => [...Object.keys(mm.classes), "User"].map((d) => el("option", { value: d, selected: d === cur }, d));
+      const classOptions = (cur) => [...Object.keys(mm.classes), USER].map((d) => el("option", { value: d, selected: d === cur }, d));
       const others = Object.keys(mm.classes).filter((n) => n !== cn && !this._ancestors(n).includes(cn));
       add(side, 
         el("h3", {}, "Class"),
@@ -2273,8 +2322,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
               el("select", { disabled: ro, onchange: (ev) => { this._setOpposite(cn, rn, null); r.type = ev.target.value; commit(); } }, classOptions(r.type)),
               this._multSelect(r, commit, ro)),
             el("div", { class: "row ref2" },
-              el("label", { style: "display:inline-flex;gap:3px" }, el("input", { type: "checkbox", checked: r.containment, disabled: ro || r.type === "User", onchange: (ev) => { r.containment = ev.target.checked; if (r.containment && r.opposite) { const o = mm.classes[r.type]?.references?.[r.opposite]; if (o) o.containment = false; } commit(); } }), t.containment),
-              r.type === "User" ? el("label", { style: "display:inline-flex;gap:3px", title: t.recordRoleHint }, el("input", { type: "checkbox", checked: !!r.role, disabled: ro, onchange: (ev) => { if (ev.target.checked) r.role = true; else delete r.role; commit(); } }), t.recordRole) : null,
+              el("label", { style: "display:inline-flex;gap:3px" }, el("input", { type: "checkbox", checked: r.containment, disabled: ro || r.type === USER, onchange: (ev) => { r.containment = ev.target.checked; if (r.containment && r.opposite) { const o = mm.classes[r.type]?.references?.[r.opposite]; if (o) o.containment = false; } commit(); } }), t.containment),
+              r.type === USER ? el("label", { style: "display:inline-flex;gap:3px", title: t.recordRoleHint }, el("input", { type: "checkbox", checked: !!r.role, disabled: ro, onchange: (ev) => { if (ev.target.checked) r.role = true; else delete r.role; commit(); } }), t.recordRole) : null,
               el("label", { style: "display:inline-flex;gap:4px;align-items:center" }, t.opposite,
                 el("select", { disabled: ro || !candidates.length, onchange: (ev) => { this._setOpposite(cn, rn, ev.target.value || null); commit(); } },
                   el("option", { value: "" }, t.none), candidates.map((on) => el("option", { value: on, selected: on === r.opposite }, on)))),
@@ -2331,7 +2380,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       return out;
     }
     // roles and reactions (global to the behaviour), when nothing is selected
-    _globalBehaviorPanel() {
+    _rolesPanel() {
       const bh = this._bh, t = this.t, ro = this.readonly, mm = this._mm;
       const lang = this._lang();
       const classes = Object.keys(mm.classes);
@@ -2347,14 +2396,19 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         el("td", {}, ro ? null : el("button", { class: "x", title: t.del, onclick: () => { delete roles[rn]; changed(); } }, "×")));
       const roleRows = [...Object.entries(mmRoles).map(([rn, r]) => roleRow(mmRoles, rn, r, () => this._changed(), "")),
                         ...Object.entries(bhRoles).map(([rn, r]) => roleRow(bh.roles, rn, r, () => this._bhChanged(), t.inBehavior))];
-      const recordRoles = Object.entries(mm.classes).flatMap(([cn, c]) => Object.entries(c.references).filter(([, r]) => r.role).map(([rn]) => `${cn}.${rn}`));
-      const rolesPanel = [
+      const recordRoles = Layout.recordRoles(mm).map(({ cn, rn }) => `${cn}.${rn}`);
+      return [
         el("h3", {}, t.roles),
         el("table", { class: "beh" }, el("tr", {}, el("th", {}, t.name), el("th", {}, t.label), el("th", {}, t.scope), el("th"), el("th")), ...roleRows),
         ro ? null : el("button", { onclick: () => { mmRoles[this._uniqueName("role", [...Object.keys(mmRoles), ...Object.keys(bh?.roles || {})])] = {}; this._changed(); } }, `+ ${t.add}`),
         el("p", { class: "hint" }, t.rolesHint + (recordRoles.length ? ` · ${t.recordRoles}: ${recordRoles.join(", ")}` : "")),
       ];
+    }
+    _globalBehaviorPanel() {
+      const bh = this._bh, t = this.t, ro = this.readonly, mm = this._mm;
+      const rolesPanel = this._rolesPanel();
       if (!bh) return rolesPanel;
+      const classes = Object.keys(mm.classes);
       const reactions = bh.reactions || [];
       const rxRows = reactions.map((r, i) => r._transition ? null : el("tr", {},
         el("td", {}, el("input", { value: r.name || "", disabled: ro, onchange: (ev) => { r.name = ev.target.value.trim(); this._bhChanged(); } })),

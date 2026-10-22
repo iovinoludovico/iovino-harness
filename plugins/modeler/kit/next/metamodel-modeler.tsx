@@ -28,7 +28,7 @@ type Props = {
 
 type EditorElement = HTMLElement & { metamodel: unknown; behavior: unknown; changesTo: (mm: unknown, bh?: unknown) => string[] };
 type SaveDetail = { metamodel: unknown; behavior: unknown | null; note: string };
-type SelectDetail = { kind: "class" | "enum" | null; name: string | null };
+type SelectDetail = { kind: "class" | "enum" | "user" | "roles" | null; name: string | null };
 type Pending = PendingProposal & { lines: string[] };
 
 const TEXT = {

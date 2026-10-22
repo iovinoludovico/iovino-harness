@@ -28,6 +28,7 @@ CLASS_NAME = re.compile(r"^[A-Z][A-Za-z0-9]{1,39}$")
 FEATURE_NAME = re.compile(r"^[a-z][A-Za-z0-9_]{0,39}$")
 LITERAL_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
 BUILTIN_CLASSES = {"User"}          # application users (table `profiles`): referenced, never declared
+BUILTIN_ENUMS = {"Role"}            # the enum of their roles (`roles:` of the metamodel): drawn, never declared
 BUILTIN_ROLES = ("admin",)          # every application has the administrators (`creator` is a principal, not a role)
 ROLE_KEYS = {"label", "doc", "scope"}   # `roles:` of the metamodel: who the users can be (scope: held per instance of a class)
 ROLE_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -530,6 +531,9 @@ def validate(raw: dict[str, Any]) -> M.Report:
         rep.error("classes", "the metamodel declares no classes")
     for en, espec in e["enums"].items():
         where = f"enums.{en}"
+        if en in BUILTIN_ENUMS or en in BUILTIN_CLASSES:
+            rep.error(where, f"{en} is built in (the roles of the application users: roles: of the metamodel): do not declare it")
+            continue
         if not CLASS_NAME.match(en):
             rep.error(where, "enum names are PascalCase")
         if en in e["classes"]:
@@ -544,8 +548,8 @@ def validate(raw: dict[str, Any]) -> M.Report:
             rep.error(where, "duplicate literals")
     for cname, c in e["classes"].items():
         where = f"classes.{cname}"
-        if cname in BUILTIN_CLASSES:
-            rep.error(where, f"{cname} is built in (the application users): reference it, do not declare it")
+        if cname in BUILTIN_CLASSES or cname in BUILTIN_ENUMS:
+            rep.error(where, f"{cname} is built in (the application users and the enum of their roles): reference User, do not declare either")
             continue
         if not CLASS_NAME.match(cname):
             rep.error(where, "class names are PascalCase (letters and digits, 2-40 characters)")
@@ -957,7 +961,8 @@ def _mermaid_mult(lower: int, upper: int) -> str:
 def to_mermaid(raw: dict[str, Any]) -> str:
     e = expand(raw)
     lines = ["classDiagram"]
-    if e["roles"]:
+    # the users and their roles, as the web modeler draws them: when the metamodel has roles or a record role
+    if e["roles"] or any(r.get("role") for c in e["classes"].values() for r in c["references"].values()):
         lines += ["  class Role {", "    <<enumeration>>"] + [f"    {rn}" for rn in [*BUILTIN_ROLES, *e["roles"]]] + ["  }",
                   "  class User {", "    <<built-in>>", "    email", "  }", '  User --> "0..*" Role : roles']
     for en, espec in e["enums"].items():
@@ -1263,6 +1268,7 @@ def runtime_json(raw: dict[str, Any]) -> dict[str, Any]:
     e = expand(raw)
     e["datatypes"] = list(DATATYPES)
     e["builtin"] = sorted(BUILTIN_CLASSES)
+    e["builtin_enums"] = sorted(BUILTIN_ENUMS)
     e["builtin_roles"] = list(BUILTIN_ROLES)
     return e
 
