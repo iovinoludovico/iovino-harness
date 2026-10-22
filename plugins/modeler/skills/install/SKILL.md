@@ -107,6 +107,9 @@ rivedilo **con l'utente**:
   `data-state-missing` sull'elemento);
   il diagramma si adatta alla larghezza del contenitore e sotto la larghezza minima scorre in orizzontale: con
   workflow lunghi (10+ stati) mettilo a tutta larghezza.
+  I colori di `<MetamodelModeler>` e `<WorkflowView>` seguono il tema della pagina (classe `dark` o `data-theme` su
+  `html`, altrimenti lo sfondo del `body`), non lo schema del sistema: non serve CSS nell'app, e la prop
+  `theme="light" | "dark"` lo forza quando l'app lo decide altrove.
   Se la pagina ha già una vista del workflow scritta a mano (un percorso degli stati, `StatePath` o simile), non
   metterle una sotto l'altra: due schede con il componente a schede dell'app (es. `Tabs` di shadcn), quella esistente
   predefinita («Percorso») e `<WorkflowView>` nella seconda («Diagramma»); la scheda scelta si ricorda per utente in

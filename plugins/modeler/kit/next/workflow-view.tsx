@@ -19,6 +19,7 @@ type Props = {
   entity: string;             // the class name (key of behavior.workflows)
   state: string | null;       // the current value of the state attribute of the record
   lang?: string;
+  theme?: "light" | "dark";   // omitted: the element follows the page (html.dark / data-theme / the body's background)
   className?: string;
   style?: CSSProperties;
 };
@@ -33,12 +34,13 @@ declare module "react" {
         lang?: string;
         name?: string;
         state?: string;
+        theme?: string;
       };
     }
   }
 }
 
-export function WorkflowView({ behavior, entity, state, lang = "it", className, style }: Props) {
+export function WorkflowView({ behavior, entity, state, lang = "it", theme, className, style }: Props) {
   const ref = useRef<ViewElement | null>(null);
   const [ready, setReady] = useState(false);
   const workflow = useMemo(() => (behavior as Behavior | null)?.workflows?.[entity] ?? null, [behavior, entity]);
@@ -64,6 +66,7 @@ export function WorkflowView({ behavior, entity, state, lang = "it", className, 
         lang={lang}
         name={entity}
         state={state ?? undefined}
+        theme={theme}
         className={className}
         style={{ display: "block", minHeight: 120, ...style }}
       />

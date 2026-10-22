@@ -431,3 +431,25 @@ test("built-in User and Role boxes: drawn when the metamodel has roles or a reco
   assert.deepEqual(Layout.edgesOf(stale), []);
   assert.deepEqual(Object.keys(Layout.routeEdges(stale, (n) => Layout.boxSize(stale, n)).boxes), ["Fund"]);
 });
+
+// ---- the colours of <metamodel-editor> and <workflow-view> follow the page, not the system (an app in light theme on
+// a dark Mac showed dark boxes): the elements set their `theme` attribute from these signals when the app sets none
+test("pageTheme: the page decides (html attributes, then the body's background), never the system", () => {
+  assert.equal(Layout.pageTheme(), "light");
+  assert.equal(Layout.pageTheme({ dataTheme: "dark" }), "dark");
+  assert.equal(Layout.pageTheme({ dataTheme: "dark", htmlClass: "light", bodyBg: "rgb(255, 255, 255)" }), "dark");
+  assert.equal(Layout.pageTheme({ htmlClass: "h-full dark antialiased" }), "dark");
+  assert.equal(Layout.pageTheme({ htmlClass: "light", bodyBg: "rgb(0, 0, 0)" }), "light");
+  assert.equal(Layout.pageTheme({ colorScheme: "dark" }), "dark");
+  assert.equal(Layout.pageTheme({ colorScheme: "light dark", bodyBg: "rgb(17, 24, 39)" }), "dark", "both schemes: the body decides");
+  assert.equal(Layout.pageTheme({ colorScheme: "normal", bodyBg: "rgb(255, 255, 255)" }), "light");
+  assert.equal(Layout.pageTheme({ bodyBg: "rgba(0, 0, 0, 0)" }), "light", "transparent: no signal");
+  assert.equal(Layout.pageTheme({ bodyBg: "rgba(10, 10, 20, 0.9)" }), "dark");
+  assert.equal(Layout.pageTheme({ bodyBg: "oklch(0.145 0 0)" }), "dark", "shadcn dark background");
+  assert.equal(Layout.pageTheme({ bodyBg: "oklch(1 0 0)" }), "light");
+  assert.equal(Layout.pageTheme({ bodyBg: "oklch(0.1 0 0 / 0)" }), "light", "transparent oklch: no signal");
+  assert.equal(Layout.pageTheme({ bodyBg: "lab(20 0 0)" }), "dark");
+  assert.equal(Layout.pageTheme({ bodyBg: "hsl(222.2 84% 4.9%)" }), "dark", "shadcn v3 dark background");
+  assert.equal(Layout.pageTheme({ bodyBg: "color(srgb 0.1 0.1 0.1)" }), "dark");
+  assert.equal(Layout.pageTheme({ bodyBg: "transparent" }), "light");
+});

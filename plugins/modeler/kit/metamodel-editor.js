@@ -14,7 +14,7 @@
  *   el.addEventListener("save", (e) => { e.detail.metamodel; e.detail.behavior; e.detail.note; });   // behavior: for behavior.yaml
  *   el.addEventListener("select", (e) => e.detail.name);   // the box selected: kind class | enum | user | roles (null: none)
  *
- * Attributes: lang="it|en", save-label="…", readonly.
+ * Attributes: lang="it|en", save-label="…", readonly, theme="light|dark" (omitted: follows the page, see pageTheme).
  * The diagram positions are kept in metamodel.diagram ({Class: {x, y}}).
  *
  * The same file defines <workflow-view>: the state diagram of one workflow with the state a record is in
@@ -26,7 +26,7 @@
  *                                            // the other states and connectors dimmed, the transitions leaving it at
  *                                            // full strength (also the `state` property; an unknown value sets
  *                                            // data-state-missing on the element and draws the diagram neutral)
- * Attributes: lang="it|en", name="Task" (for the accessible label), state="<key>".
+ * Attributes: lang="it|en", name="Task" (for the accessible label), state="<key>", theme="light|dark" (omitted: follows the page).
  */
 (() => {
 
@@ -104,6 +104,29 @@
     const nodeNames = (mm) => [...Object.keys(mm.classes), ...Object.keys(mm.enums), ...builtinNodes(mm)];
     const roleLiterals = (mm) => [ADMIN, ...Object.entries(mm.roles || {}).map(([rn, r]) => (r?.scope ? `${rn} (${r.scope})` : rn))];
     const userRows = () => ["email", `roles: ${ROLE} [0..*]`];
+    // The colours of the two elements follow the page they are in, not the system: an app in light theme on a Mac in
+    // dark mode showed dark boxes with unreadable labels. Signals, in order: html[data-theme], html.dark / .light, the
+    // computed `color-scheme` of html when it is one scheme, the luminance of the body's background (Tailwind in
+    // `media` mode sets no class); nothing says dark → light, the default of a page.
+    const pageTheme = ({ dataTheme = "", htmlClass = "", colorScheme = "", bodyBg = "" } = {}) => {
+      if (dataTheme === "dark" || dataTheme === "light") return dataTheme;
+      const cls = String(htmlClass).split(/\s+/);
+      if (cls.includes("dark")) return "dark";
+      if (cls.includes("light")) return "light";
+      const cs = String(colorScheme).trim();
+      if (cs === "dark" || cs === "light") return cs;
+      // the computed background: rgb()/rgba() for legacy colours, the notation of the stylesheet for the others (shadcn
+      // writes oklch); a transparent one says nothing
+      const bg = String(bodyBg).trim();
+      let m, lum = null;
+      if ((m = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)(?:[\s,/]+([\d.]+%?))?\s*\)$/.exec(bg)) && (m[4] === undefined || parseFloat(m[4]) > 0)) lum = (0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3]) / 255;
+      else if ((m = /^okl(?:ch|ab)\(\s*([\d.]+)(%?)/.exec(bg))) lum = m[2] ? m[1] / 100 : +m[1];
+      else if ((m = /^l(?:ch|ab)\(\s*([\d.]+)/.exec(bg))) lum = m[1] / 100;
+      else if ((m = /^hsla?\(\s*[\d.]+(?:deg)?[\s,]+[\d.]+%[\s,]+([\d.]+)%/.exec(bg))) lum = m[1] / 100;
+      else if ((m = /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(bg))) lum = 0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3];
+      if (lum !== null && !/^(?!rgb)[a-z]+\([^)]*\/\s*0*(?:\.0+)?%?\s*\)$/.test(bg)) return lum < 0.5 ? "dark" : "light";
+      return "light";
+    };
 
     const rowItems = (c, allAttrs = false, more = "more", state = null, uses = null, opts = {}) => {
       // attribute lines of a class box: all of them, or the first ones plus "+N more". `🔑` marks the id,
@@ -1005,7 +1028,7 @@
       return { k, x: at.x - ((at.x - view.x) * k) / view.k, y: at.y - ((at.y - view.y) * k) / view.k };
     };
     return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, fitView, zoomView, workflowModel, workflowLayout, workflowFocus,
-             stateView, stateOverlay, viewMark, wfLabel, WF, STEREO_H, recordRoles, builtinNodes, nodeNames, roleLiterals, userRows, USER, ROLE };
+             stateView, stateOverlay, viewMark, wfLabel, WF, STEREO_H, recordRoles, builtinNodes, nodeNames, roleLiterals, userRows, pageTheme, USER, ROLE };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -1274,13 +1297,11 @@
     },
   };
 
-  // colours of both elements (light, dark by the system or by the `theme` attribute)
+  // colours of both elements, by the `theme` attribute: set by the app, else computed from the page (followPageTheme).
+  // No prefers-color-scheme here: the page decides, not the system (an app in light theme on a dark Mac was unreadable)
   const hostCss = `
 :host { --bg:#fff; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --panel:#f9fafb; --accent:#2563eb; --head:#eef2ff;
   --enum:#fef3c7; --wf:#dcfce7; --inv:#b45309; --err:#dc2626; --ok:#16a34a; display:block; font:13px/1.4 system-ui,sans-serif; color:var(--fg); }
-@media (prefers-color-scheme: dark) { :host { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151;
-  --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --wf:#064e3b; --inv:#f59e0b; --accent:#60a5fa; } }
-:host([theme="light"]) { --bg:#fff; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --panel:#f9fafb; --head:#eef2ff; --enum:#fef3c7; --wf:#dcfce7; --inv:#b45309; --accent:#2563eb; }
 :host([theme="dark"]) { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151; --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --wf:#064e3b; --inv:#f59e0b; --accent:#60a5fa; }
 `;
   // the state diagram (the panel of the editor and <workflow-view>): states, connectors, labels, hover, and the
@@ -1451,6 +1472,39 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       return w;
     };
   };
+  // The `theme` attribute of an element the app did not set: computed from the page (Layout.pageTheme) and kept up to
+  // date while html changes (class, data-theme, style) or the system scheme changes (a page in `media` mode follows
+  // it). An attribute set by the app wins and stops the following; removing it starts it again.
+  const pageSignals = () => {
+    const html = document.documentElement;
+    return { dataTheme: html.dataset.theme || "", htmlClass: html.className || "", colorScheme: getComputedStyle(html).colorScheme || "",
+             bodyBg: document.body ? getComputedStyle(document.body).backgroundColor : "" };
+  };
+  const followPageTheme = (host) => {
+    if (host.hasAttribute("theme") && host.getAttribute("theme") !== host._autoTheme) return;   // the app's choice
+    const apply = () => {
+      const v = Layout.pageTheme(pageSignals());
+      if (host.getAttribute("theme") !== v) { host._autoTheme = v; host.setAttribute("theme", v); }
+    };
+    apply();
+    if (!host._themeObs) {
+      host._themeObs = new MutationObserver(apply);
+      host._themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
+      host._themeMq = window.matchMedia?.("(prefers-color-scheme: dark)") || null;
+      host._themeMq?.addEventListener("change", apply);
+      host._themeApply = apply;
+    }
+  };
+  const stopPageTheme = (host) => {
+    host._themeObs?.disconnect();
+    host._themeMq?.removeEventListener("change", host._themeApply);
+    host._themeObs = host._themeMq = null;
+  };
+  // the attribute changed: by us (the computed value) or by the app (its value wins); removed → follow the page again
+  const themeAttrChanged = (host, value) => {
+    if (value === null) { host._autoTheme = null; if (host.isConnected) followPageTheme(host); }
+    else if (value !== host._autoTheme) { host._autoTheme = null; stopPageTheme(host); }
+  };
   // the state diagram as SVG: states in their colour (thick border when final), connectors in the colour of the
   // target state (dashed when timed) with a filled arrow head, dots at bus junctions, labels on a background.
   // Every part carries data-edge="wf:<class>:<transition>" for the hover highlight.
@@ -1529,9 +1583,14 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this.attachShadow({ mode: "open" });
     }
 
-    static get observedAttributes() { return ["lang", "readonly", "save-label"]; }
-    attributeChangedCallback() { this._wfCache.clear(); if (this.isConnected) this._render(); }
-    connectedCallback() { this._render(); }
+    static get observedAttributes() { return ["lang", "readonly", "save-label", "theme"]; }
+    attributeChangedCallback(name, _old, value) {
+      if (name === "theme") { themeAttrChanged(this, value); return; }
+      this._wfCache.clear();
+      if (this.isConnected) this._render();
+    }
+    connectedCallback() { followPageTheme(this); this._render(); }
+    disconnectedCallback() { stopPageTheme(this); }
 
     get t() { return T[(this.getAttribute("lang") || "it").slice(0, 2)] || T.it; }
     get readonly() { return this.hasAttribute("readonly"); }
@@ -2459,9 +2518,13 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this._ro = null;
       this.attachShadow({ mode: "open" });
     }
-    static get observedAttributes() { return ["lang", "name", "state"]; }
-    attributeChangedCallback() { if (this.isConnected) this._render(); }
+    static get observedAttributes() { return ["lang", "name", "state", "theme"]; }
+    attributeChangedCallback(name, _old, value) {
+      if (name === "theme") { themeAttrChanged(this, value); return; }
+      if (this.isConnected) this._render();
+    }
     connectedCallback() {
+      followPageTheme(this);
       const root = this.shadowRoot;
       if (!root.querySelector(".wfview")) {
         root.append(el("style", {}, viewCss), el("div", { class: "wfview" }));
@@ -2480,7 +2543,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this._ro.observe(this);
       this._render();
     }
-    disconnectedCallback() { this._ro?.disconnect(); this._ro = null; }
+    disconnectedCallback() { this._ro?.disconnect(); this._ro = null; stopPageTheme(this); }
     get workflow() { return this._wf ? clone(this._wf) : null; }
     set workflow(w) {
       this._wf = w && typeof w === "object" ? clone(w) : null;
