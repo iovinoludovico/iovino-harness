@@ -19,11 +19,12 @@ type Props = {
   entity: string;             // the class name (key of behavior.workflows)
   state: string | null;       // the current value of the state attribute of the record
   lang?: string;
+  theme?: "light" | "dark";   // omitted: the element follows the page (html.dark / data-theme / the body's background)
   className?: string;
   style?: CSSProperties;
 };
 
-type ViewElement = HTMLElement & { workflow: unknown; state: string | null };
+type ViewElement = HTMLElement & { workflow: unknown; roles: unknown; state: string | null };
 
 declare module "react" {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -33,15 +34,17 @@ declare module "react" {
         lang?: string;
         name?: string;
         state?: string;
+        theme?: string;
       };
     }
   }
 }
 
-export function WorkflowView({ behavior, entity, state, lang = "it", className, style }: Props) {
+export function WorkflowView({ behavior, entity, state, lang = "it", theme, className, style }: Props) {
   const ref = useRef<ViewElement | null>(null);
   const [ready, setReady] = useState(false);
   const workflow = useMemo(() => (behavior as Behavior | null)?.workflows?.[entity] ?? null, [behavior, entity]);
+  const roles = useMemo(() => (behavior as Behavior | null)?.roles ?? null, [behavior]);
 
   useEffect(() => {
     let alive = true;
@@ -52,8 +55,11 @@ export function WorkflowView({ behavior, entity, state, lang = "it", className, 
   }, []);
 
   useEffect(() => {
-    if (ready && ref.current) ref.current.workflow = workflow;
-  }, [ready, workflow]);
+    if (ready && ref.current) {
+      ref.current.roles = roles;         // the recipients of the notifications with the labels of the roles
+      ref.current.workflow = workflow;
+    }
+  }, [ready, workflow, roles]);
 
   if (!workflow) return null;
   return (
@@ -64,6 +70,7 @@ export function WorkflowView({ behavior, entity, state, lang = "it", className, 
         lang={lang}
         name={entity}
         state={state ?? undefined}
+        theme={theme}
         className={className}
         style={{ display: "block", minHeight: 120, ...style }}
       />

@@ -431,3 +431,56 @@ test("built-in User and Role boxes: drawn when the metamodel has roles or a reco
   assert.deepEqual(Layout.edgesOf(stale), []);
   assert.deepEqual(Object.keys(Layout.routeEdges(stale, (n) => Layout.boxSize(stale, n)).boxes), ["Fund"]);
 });
+
+// ---- the colours of <metamodel-editor> and <workflow-view> follow the page, not the system (an app in light theme on
+// a dark Mac showed dark boxes): the elements set their `theme` attribute from these signals when the app sets none
+test("pageTheme: the page decides (html attributes, then the body's background), never the system", () => {
+  assert.equal(Layout.pageTheme(), "light");
+  assert.equal(Layout.pageTheme({ dataTheme: "dark" }), "dark");
+  assert.equal(Layout.pageTheme({ dataTheme: "dark", htmlClass: "light", bodyBg: "rgb(255, 255, 255)" }), "dark");
+  assert.equal(Layout.pageTheme({ htmlClass: "h-full dark antialiased" }), "dark");
+  assert.equal(Layout.pageTheme({ htmlClass: "light", bodyBg: "rgb(0, 0, 0)" }), "light");
+  assert.equal(Layout.pageTheme({ colorScheme: "dark" }), "dark");
+  assert.equal(Layout.pageTheme({ colorScheme: "light dark", bodyBg: "rgb(17, 24, 39)" }), "dark", "both schemes: the body decides");
+  assert.equal(Layout.pageTheme({ colorScheme: "normal", bodyBg: "rgb(255, 255, 255)" }), "light");
+  assert.equal(Layout.pageTheme({ bodyBg: "rgba(0, 0, 0, 0)" }), "light", "transparent: no signal");
+  assert.equal(Layout.pageTheme({ bodyBg: "rgba(10, 10, 20, 0.9)" }), "dark");
+  assert.equal(Layout.pageTheme({ bodyBg: "oklch(0.145 0 0)" }), "dark", "shadcn dark background");
+  assert.equal(Layout.pageTheme({ bodyBg: "oklch(1 0 0)" }), "light");
+  assert.equal(Layout.pageTheme({ bodyBg: "oklch(0.1 0 0 / 0)" }), "light", "transparent oklch: no signal");
+  assert.equal(Layout.pageTheme({ bodyBg: "lab(20 0 0)" }), "dark");
+  assert.equal(Layout.pageTheme({ bodyBg: "hsl(222.2 84% 4.9%)" }), "dark", "shadcn v3 dark background");
+  assert.equal(Layout.pageTheme({ bodyBg: "color(srgb 0.1 0.1 0.1)" }), "dark");
+  assert.equal(Layout.pageTheme({ bodyBg: "transparent" }), "light");
+});
+
+// ---- the recipients of a notification, as the envelope's tooltip and the panel show them: labels, not keys
+test("principalLabel / workflowModel: the recipients with the labels of the roles, the texts of creator and admin, the path of a self.ref", () => {
+  const bh = behaviorFixture("invitations.ecore.yaml", "invitations.behavior.yaml");
+  const mm = Layout.normalize(fixture("invitations.ecore.yaml"));
+  const texts = { creator: "chi ha creato il record", admin: "amministratore" };
+  const ctx = { roles: bh.roles, lang: "it", texts, mm, cn: "Invitation" };
+  assert.equal(Layout.principalLabel("director", ctx), "Direttore di dipartimento");
+  assert.equal(Layout.principalLabel("director", { ...ctx, lang: "en" }), "Department director");
+  assert.equal(Layout.principalLabel("creator", ctx), "chi ha creato il record");
+  assert.equal(Layout.principalLabel("admin", ctx), "amministratore");
+  assert.equal(Layout.principalLabel("self.issuer", ctx), "issuer", "a reference without a label: its name");
+  assert.equal(Layout.principalLabel("self.guest.email", ctx), "guest › email", "a path: the features joined");
+  assert.equal(Layout.principalLabel("self.nope.email", ctx), "self.nope.email", "an unknown feature: as written");
+  assert.equal(Layout.principalLabel("self.issuer", { roles: bh.roles, lang: "it" }), "self.issuer", "no metamodel (<workflow-view>): as written");
+  assert.equal(Layout.principalLabel("nobody", ctx), "nobody");
+  assert.equal(Layout.principalLabel("director", {}), "director", "no context: the key");
+  // every notification of a transition carries its text: the transition's own notify and the reactions naming it
+  const model = Layout.workflowModel(bh.workflows.Invitation, "it", ctx);
+  const confirm = model.transitions.find((t) => t.key === "confirm");
+  assert.deepEqual(confirm.notifies.map((n) => [n.text, n.template, !!n.own]), [["Direttore di dipartimento", "director_confirmation_requested", true]]);
+  const submit = model.transitions.find((t) => t.key === "submit");
+  assert.deepEqual(submit.notifies.map((n) => [n.text, n.template, !!n.own]), [["Direttore di dipartimento", "invitation_submitted", false]]);
+  const ret = model.transitions.find((t) => t.key === "director_return");
+  assert.equal(ret.notifies[0].text, "issuer");
+  assert.equal(Layout.workflowModel(bh.workflows.Invitation, "en").transitions.find((t) => t.key === "confirm").notifies[0].text, "director", "no context: the keys");
+  // the layout keeps the notifications on the edges (the envelope is drawn next to the label)
+  const L = Layout.workflowLayout(model.states, model.transitions, 800);
+  assert.equal(L.edges.find((e) => e.key === "confirm").notifies[0].text, "Direttore di dipartimento");
+  assert.ok(L.edges.find((e) => e.key === "cancel").notifies.length === 0);
+});

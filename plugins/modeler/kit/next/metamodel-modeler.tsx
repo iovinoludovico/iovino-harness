@@ -21,6 +21,7 @@ type Props = {
   behavior?: unknown;         // src/lib/modeler/behavior.json: optional, the page passes it when the app has a behavior.yaml
   canEdit: boolean;
   lang?: string;
+  theme?: "light" | "dark";   // omitted: the editor follows the page (html.dark / data-theme / the body's background)
   saveLabel?: string;
   downloadLabel?: string;
   onSave: (json: string, note: string, behaviorJson?: string | null) => Promise<ProposalResult>;
@@ -98,12 +99,13 @@ declare module "react" {
         lang?: string;
         "save-label"?: string;
         readonly?: string;
+        theme?: string;
       };
     }
   }
 }
 
-export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "it", saveLabel, downloadLabel = "Download", onSave }: Props) {
+export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "it", theme, saveLabel, downloadLabel = "Download", onSave }: Props) {
   const t = TEXT[lang.startsWith("en") ? "en" : "it"];
   const ref = useRef<EditorElement | null>(null);
   const [ready, setReady] = useState(false);
@@ -350,6 +352,7 @@ export function MetamodelModeler({ metamodel, behavior = null, canEdit, lang = "
       <metamodel-editor
         ref={ref as Ref<HTMLElement>}
         lang={lang}
+        theme={theme}
         save-label={saveLabel}
         readonly={canEdit ? undefined : ""}
         style={{ display: "block", height: "calc(100dvh - 12rem)", minHeight: 560 }}

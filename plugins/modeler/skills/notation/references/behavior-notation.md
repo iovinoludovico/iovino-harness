@@ -158,7 +158,8 @@ unknown role in `users_by`. Without `view_as` nothing changes: `impersonator_id(
   `notify_<key>`, is what the engine, `recipients`, `validate` (template present, principals resolvable, a
   subscription receiving it) and the subscribers see; the file keeps the short form (`dumps`, the proposals of the
   web modeler). `behavior.json` lists `notifies` on every transition, for both forms; the modeler and `<WorkflowView>`
-  mark the arrow with ✉ (recipients and template in the tooltip, the transition's row has «Notifies»), `BEHAVIOR.md`
+  mark the arrow with an envelope (the recipients, with the labels of their roles, and the template in a tooltip the
+  element draws; the transition's row has «Notifies», the labels under the keys), `BEHAVIOR.md`
   has the «Notifies» column. A reaction stays explicit for what is not bound to one transition: several transitions
   (`transition in [a, b]`), `reverted`, a timed or external event, a condition on the record only.
 - `revert`: who can bring a record back to a previous state (`by`), also from a final one (`final_by`).

@@ -80,6 +80,6 @@ modifica se riguarda una sola nota).
 ## 5. Chiudi
 
 - Riepilogo in poche righe: applicate, scartate, rinviate, ancora aperte.
-- Ricorda il rilascio: prima di un push `python3 scripts/release.py`, poi `--write`. Push, PR e merge solo su
+- Ricorda il rilascio: prima di un push `python3 scripts/release.py`, poi `--write` (`/core:release`). Push, PR e merge solo su
   richiesta esplicita.
 - Se la revisione cambia lo stato del lavoro sull'harness, proponi di aggiornare `HANDOFF.md` con `core:handoff`.

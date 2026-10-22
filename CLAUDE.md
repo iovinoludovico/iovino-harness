@@ -6,8 +6,8 @@ Marketplace personale di plugin per Claude Code (`core`, `modeler`), installato 
 ## Rilascio (ogni push che tocca un plugin)
 - Prima di proporre o fare un push: `python3 scripts/release.py` per vedere cosa cambia, poi
   `python3 scripts/release.py --write` (alza `version` dei plugin modificati, livello dedotto dai Conventional
-  Commits, e crea il commit `chore(release): …`). Senza versione nuova `claude plugin update` non arriva sugli
-  altri computer e le app non vedono il modellatore da aggiornare.
+  Commits, e crea il commit `chore(release): …`); `/core:release` fa i due passi. Senza versione nuova
+  `claude plugin update` non arriva sugli altri computer e le app non vedono il modellatore da aggiornare.
 - L'hook `.githooks/pre-push` (attivato da `install.sh`) blocca il push di un plugin modificato con la versione
   vecchia. Non aggirarlo con `--no-verify`.
 - `plugins/modeler/scripts/metamodel/__init__.py` ripete la versione del modeler: la aggiorna `release.py`, mai a mano.

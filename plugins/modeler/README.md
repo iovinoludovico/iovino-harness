@@ -51,7 +51,9 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   from the state**: an overlay that locks, hides or narrows features per state, enforced by the engine, shown as a
   feature × state table in `BEHAVIOR.md` and the modeler, printed by `model:show -- --state Class.state`, annotated
   «1 from <state>» in `DOMAIN.md`; transitions, guards, timed transitions; `notify`/`template` on a transition say who is told when it fires, shown on the
-  arrow ✉ in the modeler and in `<WorkflowView>` and in the «Notifies» column of `BEHAVIOR.md`), events, reactions (who is
+  arrow by an envelope in the modeler and in `<WorkflowView>` (the recipients with the labels of their roles in a
+  tooltip the element draws, and under the «Notifies» input of the panel) and in the «Notifies» column of
+  `BEHAVIOR.md`), events, reactions (who is
   notified when, with the texts of the notifications in `templates:` per language and placeholders on the record and
   the event: rendered by the engine for every recipient, overridable per key and language from the admin matrix
   page `<NotificationTemplates>`), reactions (who is
@@ -74,7 +76,9 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   reusable on the app's pages: `<WorkflowView behavior entity state>` of `workflow-view.tsx` wraps the
   `<workflow-view>` element of the same kit file and shows the workflow of a record with its current state filled
   with its colour (white text, a ring), the other states dimmed, the transitions leaving it at full strength and the
-  others dimmed, laid out at the width of its container), derived
+  others dimmed, laid out at the width of its container; both elements take their colours from the page's theme,
+  `html.dark` / `data-theme` / the body's background, never from the system scheme, with a `theme` prop to force
+  one), derived
   attributes are marked `/name` with the formula in the tooltip and in the panel, the state attribute `⟳`, and the
   features the behaviour uses (formulas, guards, principals, recipients, role scopes: the `uses` map of
   `behavior.json`) carry ` ·ƒ` with "used by" in the tooltip, a class without a workflow but involved has `ƒ` in its

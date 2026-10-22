@@ -14,7 +14,7 @@
  *   el.addEventListener("save", (e) => { e.detail.metamodel; e.detail.behavior; e.detail.note; });   // behavior: for behavior.yaml
  *   el.addEventListener("select", (e) => e.detail.name);   // the box selected: kind class | enum | user | roles (null: none)
  *
- * Attributes: lang="it|en", save-label="…", readonly.
+ * Attributes: lang="it|en", save-label="…", readonly, theme="light|dark" (omitted: follows the page, see pageTheme).
  * The diagram positions are kept in metamodel.diagram ({Class: {x, y}}).
  *
  * The same file defines <workflow-view>: the state diagram of one workflow with the state a record is in
@@ -22,11 +22,12 @@
  *
  *   const v = document.querySelector("workflow-view");
  *   v.workflow = behavior.workflows.Task;   // one workflow of behavior.json
+ *   v.roles = behavior.roles;               // optional: the recipients of the notifications show the labels of the roles
  *   v.setAttribute("state", "doing");       // the current state: its box filled with its colour (white text, a ring),
  *                                            // the other states and connectors dimmed, the transitions leaving it at
  *                                            // full strength (also the `state` property; an unknown value sets
  *                                            // data-state-missing on the element and draws the diagram neutral)
- * Attributes: lang="it|en", name="Task" (for the accessible label), state="<key>".
+ * Attributes: lang="it|en", name="Task" (for the accessible label), state="<key>", theme="light|dark" (omitted: follows the page).
  */
 (() => {
 
@@ -59,6 +60,7 @@
   const BUS_GAP = 28;                      // distance of the trunk of a bus from the side of the class
   const STEREO_H = 12;                     // extra head height of a box with a stereotype line («enumeration», «workflow»)
   const WF_PAD = 10, WF_HEAD = 30;         // padding of the workflow panel and height of its heading line
+  const WF_ENV = { w: 12, h: 9 };   // the envelope of a notified transition, drawn as a path
   // the state diagram of the selected workflow, drawn in the panel under the canvas
   const WF = { font: 11, keyFont: 9, labelFont: 10, minBox: 96, maxBox: 200, minGap: 56, maxLabel: 110, margin: 8,
     lane: 8, laneInset: 12, channel: 26, sinkSources: 3, pad: 6, arrow: 8, lOffset: 3.5, color: "#64748b", charW: 0.56 };
@@ -104,6 +106,29 @@
     const nodeNames = (mm) => [...Object.keys(mm.classes), ...Object.keys(mm.enums), ...builtinNodes(mm)];
     const roleLiterals = (mm) => [ADMIN, ...Object.entries(mm.roles || {}).map(([rn, r]) => (r?.scope ? `${rn} (${r.scope})` : rn))];
     const userRows = () => ["email", `roles: ${ROLE} [0..*]`];
+    // The colours of the two elements follow the page they are in, not the system: an app in light theme on a Mac in
+    // dark mode showed dark boxes with unreadable labels. Signals, in order: html[data-theme], html.dark / .light, the
+    // computed `color-scheme` of html when it is one scheme, the luminance of the body's background (Tailwind in
+    // `media` mode sets no class); nothing says dark → light, the default of a page.
+    const pageTheme = ({ dataTheme = "", htmlClass = "", colorScheme = "", bodyBg = "" } = {}) => {
+      if (dataTheme === "dark" || dataTheme === "light") return dataTheme;
+      const cls = String(htmlClass).split(/\s+/);
+      if (cls.includes("dark")) return "dark";
+      if (cls.includes("light")) return "light";
+      const cs = String(colorScheme).trim();
+      if (cs === "dark" || cs === "light") return cs;
+      // the computed background: rgb()/rgba() for legacy colours, the notation of the stylesheet for the others (shadcn
+      // writes oklch); a transparent one says nothing
+      const bg = String(bodyBg).trim();
+      let m, lum = null;
+      if ((m = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)(?:[\s,/]+([\d.]+%?))?\s*\)$/.exec(bg)) && (m[4] === undefined || parseFloat(m[4]) > 0)) lum = (0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3]) / 255;
+      else if ((m = /^okl(?:ch|ab)\(\s*([\d.]+)(%?)/.exec(bg))) lum = m[2] ? m[1] / 100 : +m[1];
+      else if ((m = /^l(?:ch|ab)\(\s*([\d.]+)/.exec(bg))) lum = m[1] / 100;
+      else if ((m = /^hsla?\(\s*[\d.]+(?:deg)?[\s,]+[\d.]+%[\s,]+([\d.]+)%/.exec(bg))) lum = m[1] / 100;
+      else if ((m = /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(bg))) lum = 0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3];
+      if (lum !== null && !/^(?!rgb)[a-z]+\([^)]*\/\s*0*(?:\.0+)?%?\s*\)$/.test(bg)) return lum < 0.5 ? "dark" : "light";
+      return "light";
+    };
 
     const rowItems = (c, allAttrs = false, more = "more", state = null, uses = null, opts = {}) => {
       // attribute lines of a class box: all of them, or the first ones plus "+N more". `🔑` marks the id,
@@ -372,10 +397,32 @@
       return best;
     };
     const wfLabel = (spec, key, lang) => (typeof spec?.label === "string" ? spec.label : spec?.label?.[lang]) || key;
-    // a workflow of behavior.json as the layout reads it
-    const workflowModel = (w, lang = "it") => ({
+    // who a notification goes to, as the diagram and the panel show it (the model keeps the keys): the label of a
+    // role (`roles` of behavior.json), the texts of `creator` and `admin` (`texts`, i18n), a path `self.<ref>…` as the
+    // labels of its features joined by › when the metamodel and the class are at hand (the editor's panel), else as
+    // written. ctx: { roles, lang, texts, mm, cn }
+    const principalLabel = (p, ctx = {}) => {
+      const lang = ctx.lang || "it";
+      if (ctx.roles?.[p]) return wfLabel(ctx.roles[p], p, lang);
+      if (ctx.texts?.[p]) return ctx.texts[p];
+      if (p.startsWith("self.") && ctx.mm && ctx.cn) {
+        const labels = [];
+        let cls = ctx.cn;
+        for (const part of p.split(".").slice(1)) {
+          const c = ctx.mm.classes?.[cls], f = c?.references?.[part] || c?.attributes?.[part];
+          if (!f) return p;
+          labels.push(wfLabel(f, part, lang));
+          cls = f.type;
+        }
+        return labels.join(" › ");
+      }
+      return p;
+    };
+    // a workflow of behavior.json as the layout reads it; ctx (principalLabel) gives every notification its `text`
+    const workflowModel = (w, lang = "it", ctx = {}) => ({
       states: Object.entries(w?.states || {}).map(([key, s]) => ({ key, label: wfLabel(s, key, lang), color: s.color || WF.color, kind: s.initial ? "initial" : s.final ? "final" : "state" })),
-      transitions: Object.entries(w?.transitions || {}).map(([key, t]) => ({ key, label: wfLabel(t, key, lang), from: t.from || [], to: t.to, timed: t.at != null, notifies: wfNotifies(t) })),
+      transitions: Object.entries(w?.transitions || {}).map(([key, t]) => ({ key, label: wfLabel(t, key, lang), from: t.from || [], to: t.to, timed: t.at != null,
+        notifies: wfNotifies(t).map((n) => ({ ...n, text: (n.notify || []).map((p) => principalLabel(p, { ...ctx, lang })).join(", ") })) })),
     });
     // the notifications a transition fires: its own `notify`/`template` (edited here) and the reactions naming it (`notifies` of behavior.json)
     const wfNotifies = (t) => [...((t.notify || []).length ? [{ notify: t.notify, template: t.template || null, own: true }] : []),
@@ -1005,7 +1052,7 @@
       return { k, x: at.x - ((at.x - view.x) * k) / view.k, y: at.y - ((at.y - view.y) * k) / view.k };
     };
     return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, fitView, zoomView, workflowModel, workflowLayout, workflowFocus,
-             stateView, stateOverlay, viewMark, wfLabel, WF, STEREO_H, recordRoles, builtinNodes, nodeNames, roleLiterals, userRows, USER, ROLE };
+             stateView, stateOverlay, viewMark, wfLabel, principalLabel, WF, STEREO_H, recordRoles, builtinNodes, nodeNames, roleLiterals, userRows, pageTheme, USER, ROLE };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -1220,6 +1267,7 @@
       wfBadRequires: "richiede una feature che la classe non ha:", requiresHint: "attributi o riferimenti da valorizzare per entrare nello stato",
       wfEnumStates: "gli stati devono essere i letterali dell'enum", rxBadEvent: "evento Classe.evento",
       notifies: "Avvisa", notifiesTo: "avvisa", notifiesHint: "chi viene avvisato quando la transizione scatta (destinatari, separati da virgola)",
+      principals: { creator: "chi ha creato il record", admin: "amministratore" },
       rolesHint: "i ruoli degli utenti dell'applicazione, dichiarati nel metamodello (roles: di domain.ecore.yaml), oltre ad admin; chi li ha è in user_roles",
       inBehavior: "in behavior.yaml", roleReserved: "ruolo predefinito", recordRole: "ruolo", recordRoles: "ruoli di record",
       recordRoleHint: "ruolo di record (role: true): chi lo ricopre lo dice il record stesso (self.<riferimento> nel comportamento)",
@@ -1263,6 +1311,7 @@
       wfBadRequires: "requires a feature the class does not have:", requiresHint: "attributes or references that must be set to enter the state",
       wfEnumStates: "the states must be the literals of the enum", rxBadEvent: "event as Class.event",
       notifies: "Notifies", notifiesTo: "notifies", notifiesHint: "who is told when the transition fires (principals, comma separated)",
+      principals: { creator: "the record's creator", admin: "administrator" },
       rolesHint: "the roles of the application users, declared in the metamodel (roles: of domain.ecore.yaml), besides admin; who holds them is in user_roles",
       inBehavior: "in behavior.yaml", roleReserved: "built-in role", recordRole: "role", recordRoles: "record roles",
       recordRoleHint: "record role (role: true): the record itself says who holds it (self.<reference> in the behaviour)",
@@ -1274,13 +1323,11 @@
     },
   };
 
-  // colours of both elements (light, dark by the system or by the `theme` attribute)
+  // colours of both elements, by the `theme` attribute: set by the app, else computed from the page (followPageTheme).
+  // No prefers-color-scheme here: the page decides, not the system (an app in light theme on a dark Mac was unreadable)
   const hostCss = `
 :host { --bg:#fff; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --panel:#f9fafb; --accent:#2563eb; --head:#eef2ff;
   --enum:#fef3c7; --wf:#dcfce7; --inv:#b45309; --err:#dc2626; --ok:#16a34a; display:block; font:13px/1.4 system-ui,sans-serif; color:var(--fg); }
-@media (prefers-color-scheme: dark) { :host { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151;
-  --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --wf:#064e3b; --inv:#f59e0b; --accent:#60a5fa; } }
-:host([theme="light"]) { --bg:#fff; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --panel:#f9fafb; --head:#eef2ff; --enum:#fef3c7; --wf:#dcfce7; --inv:#b45309; --accent:#2563eb; }
 :host([theme="dark"]) { --bg:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151; --panel:#1f2937; --head:#1e293b; --enum:#3b2f12; --wf:#064e3b; --inv:#f59e0b; --accent:#60a5fa; }
 `;
   // the state diagram (the panel of the editor and <workflow-view>): states, connectors, labels, hover, and the
@@ -1292,7 +1339,13 @@
 .wfkey { font-size:9px; fill:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
 .wfl-bg { fill:var(--bg); fill-opacity:.95; stroke-width:1; stroke-opacity:.55; }
 .wfl { font-size:10px; fill:var(--fg); }
-.wfn { font-size:11px; fill:var(--muted); cursor:help; }
+.wfn { cursor:help; outline:none; }
+.wfn-env { fill:none; stroke:var(--muted); stroke-width:1.2; stroke-linejoin:round; }
+.wfn-hit { fill:transparent; }
+.wfn:hover .wfn-env, .wfn:focus .wfn-env { stroke:var(--fg); }
+.tip { position:absolute; z-index:3; max-width:320px; padding:4px 8px; border:1px solid var(--line); border-radius:4px; background:var(--panel);
+  color:var(--fg); font:12px/1.4 system-ui,sans-serif; box-shadow:0 2px 8px rgba(0,0,0,.15); pointer-events:none; white-space:pre-wrap; }
+.tip[hidden] { display:none; }
 .wfa { stroke:none; }
 .wfe.far, .wfa.far, .wfdot.far, .wfl.far, .wfl-bg.far, .wfn.far { opacity:.3; }
 .wfe.out { stroke-width:2.6; }
@@ -1307,6 +1360,7 @@ svg.hover .wfe:not(.hi), svg.hover .wfa:not(.hi), svg.hover .wfdot:not(.hi), svg
   // diagram's; the diagram is laid out at that width and scrolls horizontally below its minimum
   const viewCss = `${hostCss}
 :host { contain:inline-size; overflow-x:auto; overflow-y:hidden; }
+.wfview { position:relative; }
 svg { display:block; font:11px system-ui,sans-serif; }
 ${wfCss}`;
   const css = `${hostCss}
@@ -1356,7 +1410,7 @@ button.on { border-color:var(--accent); color:var(--accent); }
 .wfgrip { height:7px; cursor:row-resize; background:var(--panel); position:relative; touch-action:none; }
 .wfgrip::after { content:""; position:absolute; left:50%; top:2px; width:36px; height:3px; margin-left:-18px; border-radius:2px; background:var(--line); }
 .wfgrip:hover::after { background:var(--accent); }
-.wfbody { overflow:auto; min-height:0; }
+.wfbody { overflow:auto; min-height:0; position:relative; }
 .wfhead { display:flex; gap:8px; align-items:baseline; padding:6px 10px 0; font-size:12px; color:var(--muted); white-space:nowrap; }
 .wfhead strong { color:var(--fg); font-size:13px; }
 .wfpanel svg { display:block; font:11px system-ui,sans-serif; }
@@ -1451,6 +1505,39 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       return w;
     };
   };
+  // The `theme` attribute of an element the app did not set: computed from the page (Layout.pageTheme) and kept up to
+  // date while html changes (class, data-theme, style) or the system scheme changes (a page in `media` mode follows
+  // it). An attribute set by the app wins and stops the following; removing it starts it again.
+  const pageSignals = () => {
+    const html = document.documentElement;
+    return { dataTheme: html.dataset.theme || "", htmlClass: html.className || "", colorScheme: getComputedStyle(html).colorScheme || "",
+             bodyBg: document.body ? getComputedStyle(document.body).backgroundColor : "" };
+  };
+  const followPageTheme = (host) => {
+    if (host.hasAttribute("theme") && host.getAttribute("theme") !== host._autoTheme) return;   // the app's choice
+    const apply = () => {
+      const v = Layout.pageTheme(pageSignals());
+      if (host.getAttribute("theme") !== v) { host._autoTheme = v; host.setAttribute("theme", v); }
+    };
+    apply();
+    if (!host._themeObs) {
+      host._themeObs = new MutationObserver(apply);
+      host._themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
+      host._themeMq = window.matchMedia?.("(prefers-color-scheme: dark)") || null;
+      host._themeMq?.addEventListener("change", apply);
+      host._themeApply = apply;
+    }
+  };
+  const stopPageTheme = (host) => {
+    host._themeObs?.disconnect();
+    host._themeMq?.removeEventListener("change", host._themeApply);
+    host._themeObs = host._themeMq = null;
+  };
+  // the attribute changed: by us (the computed value) or by the app (its value wins); removed → follow the page again
+  const themeAttrChanged = (host, value) => {
+    if (value === null) { host._autoTheme = null; if (host.isConnected) followPageTheme(host); }
+    else if (value !== host._autoTheme) { host._autoTheme = null; stopPageTheme(host); }
+  };
   // the state diagram as SVG: states in their colour (thick border when final), connectors in the colour of the
   // target state (dashed when timed) with a filled arrow head, dots at bus junctions, labels on a background.
   // Every part carries data-edge="wf:<class>:<transition>" for the hover highlight.
@@ -1488,15 +1575,44 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       const text = svg("text", { x: l.x + l.w / 2, y: l.y + WF.labelFont + 3, "text-anchor": "middle", class: `wfl${m}`, "data-edge": key });
       l.lines.forEach((line, i) => text.append(svg("tspan", { x: l.x + l.w / 2, dy: i ? WF.labelFont + 3 : 0 }, line)));
       inner.append(text);
-      if (e.notifies?.length) {   // who is told when the transition fires (notify of the transition, reactions naming it)
-        const tip = e.notifies.map((n) => `${(n.notify || []).join(", ")}${n.template ? ` (${n.template})` : ""}`).join("; ");
-        const env = svg("text", { x: l.x + l.w + 3, y: l.y + WF.labelFont + 2, class: `wfn${m}`, "data-edge": key, "data-notifies": tip }, "✉");
-        env.append(svg("title", {}, `${opts.notifyText || "notifies"}: ${tip}`));
+      if (e.notifies?.length) {   // who is told when the transition fires (notify of the transition, reactions naming it):
+        // an envelope drawn as a path (a text glyph depends on the font: «?» or a box where it is missing), the
+        // recipients with their labels in data-notifies (the tooltip the element draws) and in <title>
+        const tip = `${opts.notifyText || "notifies"}: ${e.notifies.map((n) => `${n.text || (n.notify || []).join(", ")}${n.template ? ` (${n.template})` : ""}`).join("; ")}`;
+        const x = l.x + l.w + 3, y = l.y + (l.h - WF_ENV.h) / 2;
+        const env = svg("g", { class: `wfn${m}`, "data-edge": key, "data-notifies": tip, tabindex: 0 },
+          svg("rect", { x: x - 2, y: y - 3, width: WF_ENV.w + 4, height: WF_ENV.h + 6, class: "wfn-hit" }),
+          svg("path", { d: `M${x} ${y}h${WF_ENV.w}v${WF_ENV.h}h-${WF_ENV.w}z M${x} ${y}l${WF_ENV.w / 2} ${WF_ENV.h * 0.55} ${WF_ENV.w / 2} -${WF_ENV.h * 0.55}`, class: "wfn-env" }),
+          svg("title", {}, tip));
         inner.append(env);
       }
     }
     root.append(inner);
     return root;
+  };
+  // the recipients of a transition in a tooltip the element draws (the native <title> stays for assistive technology):
+  // the browser's tooltip is slow and cannot be captured. `listen`: where pointerover/focusin arrive with their target
+  // still inside the shadow tree (the shadow root or the panel: on the host the target is retargeted); `container`:
+  // the positioned, scrolling box the tip is placed in (created on demand: a re-render drops it); `leave`: the element
+  // whose pointerleave hides the tip (pointerleave never reaches a shadow root)
+  const notifyTips = (listen, container, leave = listen) => {
+    const show = (target) => {
+      const tip = container.querySelector(":scope > .tip") || container.appendChild(el("div", { class: "tip" }));
+      tip.textContent = target.dataset.notifies;
+      tip.hidden = false;
+      const r = target.getBoundingClientRect(), c = container.getBoundingClientRect();
+      const left = Math.max(0, Math.min(r.left - c.left + container.scrollLeft, container.scrollLeft + container.clientWidth - tip.offsetWidth - 4));
+      let top = r.bottom - c.top + container.scrollTop + 4;
+      if (top + tip.offsetHeight > container.scrollTop + container.clientHeight) top = Math.max(0, r.top - c.top + container.scrollTop - tip.offsetHeight - 4);
+      tip.style.left = `${left}px`;
+      tip.style.top = `${top}px`;
+    };
+    const hide = () => { const tip = container.querySelector(":scope > .tip"); if (tip) tip.hidden = true; };
+    const over = (ev) => { const n = ev.target.closest?.("[data-notifies]"); if (n) show(n); else hide(); };
+    listen.addEventListener("pointerover", over);
+    leave.addEventListener("pointerleave", hide);
+    listen.addEventListener("focusin", over);
+    listen.addEventListener("focusout", hide);
   };
   // the hover highlight of the connectors in the given SVG roots: the parts whose data-edge is `key` get `hi` and the
   // roots `hover` (the other parts dim). Returns the key still drawn somewhere, else null (no roots: unchanged).
@@ -1529,9 +1645,14 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this.attachShadow({ mode: "open" });
     }
 
-    static get observedAttributes() { return ["lang", "readonly", "save-label"]; }
-    attributeChangedCallback() { this._wfCache.clear(); if (this.isConnected) this._render(); }
-    connectedCallback() { this._render(); }
+    static get observedAttributes() { return ["lang", "readonly", "save-label", "theme"]; }
+    attributeChangedCallback(name, _old, value) {
+      if (name === "theme") { themeAttrChanged(this, value); return; }
+      this._wfCache.clear();
+      if (this.isConnected) this._render();
+    }
+    connectedCallback() { followPageTheme(this); this._render(); }
+    disconnectedCallback() { stopPageTheme(this); }
 
     get t() { return T[(this.getAttribute("lang") || "it").slice(0, 2)] || T.it; }
     get readonly() { return this.hasAttribute("readonly"); }
@@ -1565,6 +1686,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     // comma separated list <-> array of names
     _list(text) { return String(text || "").split(",").map((x) => x.trim()).filter(Boolean); }
     _workflow(cn) { return this._bh?.workflows?.[cn] || null; }
+    // how the recipients of the notifications of a class's workflow are labelled (Layout.principalLabel)
+    _principalCtx(cn) { return { roles: this._bh?.roles, lang: this._lang(), texts: this.t.principals, mm: this._mm, cn }; }
     _formula(cn, an) { return this._bh?.derivations?.[cn]?.[an]?.text ?? null; }
     _uses(cn) { return this._bh?.uses?.[cn] || null; }
     _lang() { return (this.getAttribute("lang") || "it").slice(0, 2); }
@@ -1923,6 +2046,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           if (key !== this._hover) { this._hover = key; this._applyHover(); }
         });
         panel.addEventListener("pointerleave", () => { if (this._hover) { this._hover = null; this._applyHover(); } });
+        notifyTips(panel, panel.querySelector(".wfbody"));
         // keep the diagram fitted to the canvas (window resized, panel opened, full screen) until the user zooms
         let pending = false;
         new ResizeObserver(() => {
@@ -2173,7 +2297,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       const key = `${cn}|${this._lang()}|${width}`;
       let L = this._wfCache.get(key);
       if (!L) {
-        const model = Layout.workflowModel(wf, this._lang());
+        const model = Layout.workflowModel(wf, this._lang(), this._principalCtx(cn));
         L = Layout.workflowLayout(model.states, model.transitions, width, { measure: textMeasure() });
         this._wfCache.set(key, L);
       }
@@ -2199,7 +2323,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     }
     // the states, transitions and revert of a workflow as tables of inputs; every change goes into the proposal
     _workflowEditor(cn, w) {
-      const t = this.t, lang = this._lang();
+      const t = this.t, lang = this._lang(), who = this._principalCtx(cn);
       const states = w.states || (w.states = {}), trs = w.transitions || (w.transitions = {});
       const rename = (obj, oldKey, newKey) => { const rebuilt = {}; for (const [k, v] of Object.entries(obj)) rebuilt[k === oldKey ? newKey : k] = v; return rebuilt; };
       const lbl = (spec) => (typeof spec.label === "string" ? spec.label : spec.label?.[lang] || "");
@@ -2229,7 +2353,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           el("option", { value: "", selected: !tr.comment }, "—"), el("option", { value: "optional", selected: tr.comment === "optional" }, t.optional), el("option", { value: "required", selected: tr.comment === "required" }, t.required))),
         el("td", {}, el("input", { class: "w", value: tr.at ?? "", placeholder: "dueDate + 30d", onchange: (ev) => { tr.at = ev.target.value.trim() || null; this._bhChanged(); } })),
         el("td", {}, el("input", { class: "w", value: (tr.emits || []).join(", "), title: t.listHint, onchange: (ev) => { tr.emits = this._list(ev.target.value); this._bhChanged(); } })),
-        el("td", {}, el("input", { class: "w", value: (tr.notify || []).join(", "), title: t.notifiesHint, placeholder: "creator, role, self.ref", onchange: (ev) => { tr.notify = this._list(ev.target.value); this._bhChanged(); } })),
+        el("td", {}, el("input", { class: "w", value: (tr.notify || []).join(", "), title: t.notifiesHint, placeholder: "creator, role, self.ref", onchange: (ev) => { tr.notify = this._list(ev.target.value); this._bhChanged(); } }),
+          (tr.notify || []).length ? el("div", { class: "hint" }, (tr.notify || []).map((p) => Layout.principalLabel(p, who)).join(", ")) : null),
         el("td", {}, el("input", { class: "k", value: tr.template || "", placeholder: "template", onchange: (ev) => { tr.template = ev.target.value.trim() || null; this._bhChanged(); } })),
         el("td", {}, el("button", { class: "x", title: t.del, onclick: () => { delete trs[tn]; this._bhChanged(); } }, "×"))));
       const rv = w.revert;
@@ -2453,15 +2578,20 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     constructor() {
       super();
       this._wf = null;             // one workflow of behavior.json ({state, states, transitions, …})
+      this._roles = null;          // `roles` of behavior.json: the labels of the recipients (optional)
       this._cache = new Map();     // layouts per language and width
       this._last = null;           // "<lang>|<width>|<state>" of the diagram drawn (no redraw when unchanged)
       this._hover = null;
       this._ro = null;
       this.attachShadow({ mode: "open" });
     }
-    static get observedAttributes() { return ["lang", "name", "state"]; }
-    attributeChangedCallback() { if (this.isConnected) this._render(); }
+    static get observedAttributes() { return ["lang", "name", "state", "theme"]; }
+    attributeChangedCallback(name, _old, value) {
+      if (name === "theme") { themeAttrChanged(this, value); return; }
+      if (this.isConnected) this._render();
+    }
     connectedCallback() {
+      followPageTheme(this);
       const root = this.shadowRoot;
       if (!root.querySelector(".wfview")) {
         root.append(el("style", {}, viewCss), el("div", { class: "wfview" }));
@@ -2470,6 +2600,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
           if (key !== this._hover) { this._hover = key; this._applyHover(); }
         });
         this.addEventListener("pointerleave", () => { if (this._hover) { this._hover = null; this._applyHover(); } });
+        notifyTips(root, root.querySelector(".wfview"), this);
       }
       let pending = false;   // the width changed: a new layout (the height follows the diagram, so no loop)
       this._ro = new ResizeObserver(() => {
@@ -2480,8 +2611,15 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this._ro.observe(this);
       this._render();
     }
-    disconnectedCallback() { this._ro?.disconnect(); this._ro = null; }
+    disconnectedCallback() { this._ro?.disconnect(); this._ro = null; stopPageTheme(this); }
     get workflow() { return this._wf ? clone(this._wf) : null; }
+    get roles() { return this._roles ? clone(this._roles) : null; }
+    set roles(r) {
+      this._roles = r && typeof r === "object" ? clone(r) : null;
+      this._cache.clear();
+      this._last = null;
+      if (this.isConnected) this._render();
+    }
     set workflow(w) {
       this._wf = w && typeof w === "object" ? clone(w) : null;
       this._cache.clear();
@@ -2502,7 +2640,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       if (drawn === this._last) return;
       let L = this._cache.get(key);
       if (!L) {
-        const model = Layout.workflowModel(this._wf, lang);
+        const model = Layout.workflowModel(this._wf, lang, { roles: this._roles, lang, texts: (T[lang] || T.it).principals });
         L = Layout.workflowLayout(model.states, model.transitions, width, { measure: textMeasure() });
         this._cache.set(key, L);
       }
