@@ -118,8 +118,9 @@ role`) and `reverse` writes `roles:` from them (scopes and labels to add by hand
 it `self.<reference>`, and `validate` warns when such a reference acts as a principal without the mark. `DOMAIN.md`
 has the «Roles» section (and the record roles), `BEHAVIOR.md` lists both kinds. Diagrams (web modeler, Mermaid):
 when the metamodel has roles or a record role, two built-in boxes appear, `Role «enumeration»` (`admin` first, a scoped
-role as `director (Department)`) and `User «built-in»` (the users, with an email), linked by `roles 0..*`; a record
-role is a connector from its class to `User`, the other references to `User` (`createdBy`) stay rows in the class box.
+role as `director (Department)`) and `User «built-in»` (the users: rows `email` and `roles: Role [0..*]`, the EMF
+notation of an enum-typed attribute, a row and no connector, like `Order.state: OrderState`); a record role is a
+connector from its class to `User`, the other references to `User` (`createdBy`) stay rows in the class box.
 Clicking `Role` opens the «Ruoli» table of the side panel, where the roles are edited; `User` and `Role` are reserved
 names (`validate` rejects a class or an enum called so). Who does what with a role
 (`by`, `owner`, `notify`, `view_as`) stays in `behavior.yaml`; its `roles:` is optional now (it may still add a

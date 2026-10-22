@@ -964,7 +964,7 @@ def to_mermaid(raw: dict[str, Any]) -> str:
     # the users and their roles, as the web modeler draws them: when the metamodel has roles or a record role
     if e["roles"] or any(r.get("role") for c in e["classes"].values() for r in c["references"].values()):
         lines += ["  class Role {", "    <<enumeration>>"] + [f"    {rn}" for rn in [*BUILTIN_ROLES, *e["roles"]]] + ["  }",
-                  "  class User {", "    <<built-in>>", "    email", "  }", '  User --> "0..*" Role : roles']
+                  "  class User {", "    <<built-in>>", "    email", "    roles: Role [0..*]", "  }"]   # an enum-typed attribute: a row, no connector
     for en, espec in e["enums"].items():
         lines.append(f"  class {en} {{")
         lines.append("    <<enumeration>>")

@@ -95,13 +95,15 @@
     };
     // The application users are built in (`User`, table profiles) and their roles are the enum `app_role` (`roles:` of
     // the metamodel, `admin` first). When the metamodel declares roles, or a reference to User marked `role: true`
-    // (a record role), the diagram has the two built-in boxes `User «built-in»` and `Role «enumeration»`, linked by
-    // `roles 0..*`; a record role is a connector from its class to User. Without them, nothing is drawn.
+    // (a record role), the diagram has the two built-in boxes `User «built-in»` (rows `email` and `roles: Role [0..*]`:
+    // an enum-typed attribute is a row, no connector, as in Ecore Tools) and `Role «enumeration»`; a record role is a
+    // connector from its class to User. Without them, nothing is drawn.
     const recordRoles = (mm) => Object.entries(mm.classes).flatMap(([cn, c]) =>
       Object.entries(c.references || {}).filter(([, r]) => r.type === USER && r.role).map(([rn, r]) => ({ cn, rn, r })));
     const builtinNodes = (mm) => (Object.keys(mm.roles || {}).length || recordRoles(mm).length ? [USER, ROLE] : []);
     const nodeNames = (mm) => [...Object.keys(mm.classes), ...Object.keys(mm.enums), ...builtinNodes(mm)];
     const roleLiterals = (mm) => [ADMIN, ...Object.entries(mm.roles || {}).map(([rn, r]) => (r?.scope ? `${rn} (${r.scope})` : rn))];
+    const userRows = () => ["email", `roles: ${ROLE} [0..*]`];
 
     const rowItems = (c, allAttrs = false, more = "more", state = null, uses = null, opts = {}) => {
       // attribute lines of a class box: all of them, or the first ones plus "+N more". `🔑` marks the id,
@@ -144,7 +146,7 @@
         // a class with a workflow has a «workflow» stereotype line in its head, like an enum has «enumeration»
         return { w: width([name, ...rows], 160), h: HEAD_H + (opts.workflow ? STEREO_H : 0) + Math.max(1, rows.length) * ROW_H + PAD };
       }
-      if (name === USER) return { w: width([name, "email"], 120), h: HEAD_H + STEREO_H + ROW_H + PAD };
+      if (name === USER) return { w: width([name, ...userRows()], 120), h: HEAD_H + STEREO_H + userRows().length * ROW_H + PAD };
       if (name === ROLE) {
         const lits = roleLiterals(mm);
         return { w: width([name, ...lits], 120), h: HEAD_H + STEREO_H + lits.length * ROW_H + PAD };
@@ -758,7 +760,6 @@
           });
         }
       }
-      if (userBox && mm.diagram[ROLE]) list.push({ key: `${USER}.roles`, a: USER, b: ROLE, cls: "edge", start: null, end: "url(#arrow)", labelB: "roles 0..*", labelA: null });
       return list;
     };
 
@@ -1004,7 +1005,7 @@
       return { k, x: at.x - ((at.x - view.x) * k) / view.k, y: at.y - ((at.y - view.y) * k) / view.k };
     };
     return { rowItems, rowsOf, boxSize, normalize, autoLayout, routeEdges, edgesOf, freeSpot, fitView, zoomView, workflowModel, workflowLayout, workflowFocus,
-             stateView, stateOverlay, viewMark, wfLabel, WF, STEREO_H, recordRoles, builtinNodes, nodeNames, roleLiterals, USER, ROLE };
+             stateView, stateOverlay, viewMark, wfLabel, WF, STEREO_H, recordRoles, builtinNodes, nodeNames, roleLiterals, userRows, USER, ROLE };
   })();
 
   /* ------------------------------------------------------------------ changes between two metamodels
@@ -1216,7 +1217,7 @@
       rolesHint: "i ruoli degli utenti dell'applicazione, dichiarati nel metamodello (roles: di domain.ecore.yaml), oltre ad admin; chi li ha è in user_roles",
       inBehavior: "in behavior.yaml", roleReserved: "ruolo predefinito", recordRole: "ruolo", recordRoles: "ruoli di record",
       recordRoleHint: "ruolo di record (role: true): chi lo ricopre lo dice il record stesso (self.<riferimento> nel comportamento)",
-      builtinHint: "predefinito: gli utenti dell'applicazione (User, con email) e l'enum dei loro ruoli (Role: admin più roles: del metamodello). Si disegna quando il metamodello ha ruoli o ruoli di record.",
+      builtinHint: "predefinito: gli utenti dell'applicazione (User, con email e roles: Role [0..*]) e l'enum dei loro ruoli (Role: admin più roles: del metamodello). Si disegna quando il metamodello ha ruoli o ruoli di record.",
       builtinName: "nome predefinito (User, Role): non si dichiara",
       roleOnlyUser: "role: true solo su un riferimento a User",
       wfNotifyTemplate: "destinatari senza template", wfTemplateNotify: "template senza destinatari",
@@ -1258,7 +1259,7 @@
       rolesHint: "the roles of the application users, declared in the metamodel (roles: of domain.ecore.yaml), besides admin; who holds them is in user_roles",
       inBehavior: "in behavior.yaml", roleReserved: "built-in role", recordRole: "role", recordRoles: "record roles",
       recordRoleHint: "record role (role: true): the record itself says who holds it (self.<reference> in the behaviour)",
-      builtinHint: "built in: the application users (User, with an email) and the enum of their roles (Role: admin plus the roles: of the metamodel). Drawn when the metamodel has roles or record roles.",
+      builtinHint: "built in: the application users (User, with an email and roles: Role [0..*]) and the enum of their roles (Role: admin plus the roles: of the metamodel). Drawn when the metamodel has roles or record roles.",
       builtinName: "built-in name (User, Role): not declared",
       roleOnlyUser: "role: true only on a reference to User",
       wfNotifyTemplate: "recipients without a template", wfTemplateNotify: "template without recipients",
@@ -2125,7 +2126,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         if (!p) continue;
         const s = this._boxSize(n);
         const sel = this._sel?.name === n;
-        const rows = n === ROLE ? Layout.roleLiterals(mm) : ["email"];
+        const rows = n === ROLE ? Layout.roleLiterals(mm) : Layout.userRows();
         const b = svg("g", { class: `box builtin${n === ROLE ? " enum" : ""}${sel ? " sel" : ""}`, "data-name": n, transform: `translate(${p.x},${p.y})` },
           svg("rect", { class: "body", width: s.w, height: s.h, rx: 6 }),
           svg("rect", { class: "head", width: s.w - 2, x: 1, y: 1, height: HEAD_H + 10, rx: 5 }),
