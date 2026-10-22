@@ -66,3 +66,24 @@ test("no changes, no lines", () => {
   const { old } = cli(base, base);
   assert.deepEqual(Layout.diff(old, structuredClone(old)), []);
 });
+
+// Postgres jsonb returns the keys of every object in its own order (shorter first, then alphabetical): a proposal read
+// back from model_change_requests must not differ from the model it was saved from.
+const jsonbOrder = (x) => Array.isArray(x) ? x.map(jsonbOrder)
+  : x && typeof x === "object" ? Object.fromEntries(Object.keys(x).sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0)).map((k) => [k, jsonbOrder(x[k])])) : x;
+
+test("keys reordered as jsonb returns them: no lines", () => {
+  const labelled = structuredClone(base);
+  labelled.roles = { office: { label: { it: "Uffici", en: "Offices" }, doc: "chi istruisce" }, director: { scope: "Gruppo", label: { it: "Direttore", en: "Director" } } };
+  labelled.classes.Persona.label = { it: "Persona", en: "Person" };
+  labelled.classes.Persona.attributes.nome = { type: "EString", lower: 1, default: "x", label: { it: "Nome", en: "Name" } };
+  const { old } = cli(labelled, labelled);
+  const back = jsonbOrder(old);
+  assert.notEqual(JSON.stringify(back.roles.office.label), JSON.stringify(old.roles.office.label));   // the order did change
+  assert.deepEqual(Layout.diff(old, back), []);
+  assert.deepEqual(Layout.diff(back, old), []);
+  assert.ok(Layout.same({ it: "a", en: "b" }, { en: "b", it: "a" }));
+  assert.ok(!Layout.same({ it: "a", en: "b" }, { en: "b", it: "c" }));
+  assert.ok(!Layout.same(["a", "b"], ["b", "a"]), "arrays keep their order");
+  assert.equal(Layout.stableJson({ b: { d: 1, c: [2, { f: 1, e: 2 }] }, a: null }), '{"a":null,"b":{"c":[2,{"e":2,"f":1}],"d":1}}');
+});
