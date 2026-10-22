@@ -24,7 +24,7 @@ type Props = {
   style?: CSSProperties;
 };
 
-type ViewElement = HTMLElement & { workflow: unknown; state: string | null };
+type ViewElement = HTMLElement & { workflow: unknown; roles: unknown; state: string | null };
 
 declare module "react" {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -44,6 +44,7 @@ export function WorkflowView({ behavior, entity, state, lang = "it", theme, clas
   const ref = useRef<ViewElement | null>(null);
   const [ready, setReady] = useState(false);
   const workflow = useMemo(() => (behavior as Behavior | null)?.workflows?.[entity] ?? null, [behavior, entity]);
+  const roles = useMemo(() => (behavior as Behavior | null)?.roles ?? null, [behavior]);
 
   useEffect(() => {
     let alive = true;
@@ -54,8 +55,11 @@ export function WorkflowView({ behavior, entity, state, lang = "it", theme, clas
   }, []);
 
   useEffect(() => {
-    if (ready && ref.current) ref.current.workflow = workflow;
-  }, [ready, workflow]);
+    if (ready && ref.current) {
+      ref.current.roles = roles;         // the recipients of the notifications with the labels of the roles
+      ref.current.workflow = workflow;
+    }
+  }, [ready, workflow, roles]);
 
   if (!workflow) return null;
   return (

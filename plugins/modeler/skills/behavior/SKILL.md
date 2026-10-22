@@ -46,8 +46,9 @@ mantieni nomi e lingua dell'utente.
 - «Avvisa X quando Y», con Y una transizione: `notify: [X]` e `template: <chiave>` **sulla transizione** Y (con una
   condizione in più sul record `notify: {to: [X], template: …, when: …}`), non una reazione: il motore la vede come la
   reazione `notify_<transizione>` su `<Classe>.transitioned`, `behavior.json` porta `notifies` su ogni transizione
-  (anche per le reazioni scritte per esteso), il modellatore e `<WorkflowView>` la mostrano sulla freccia (✉, destinatari
-  nel tooltip, colonna «Avvisa» della transizione), `BEHAVIOR.md` nella colonna «Avvisa». Una reazione esplicita resta
+  (anche per le reazioni scritte per esteso), il modellatore e `<WorkflowView>` la mostrano sulla freccia (una busta; i destinatari
+  con le etichette dei ruoli nel tooltip disegnato dall'elemento e sotto l'input «Avvisa» della transizione, che resta
+  con le chiavi), `BEHAVIOR.md` nella colonna «Avvisa». Una reazione esplicita resta
   per ciò che non è legato a una sola transizione (più transizioni, `reverted`, un evento a tempo o esterno, una
   condizione solo sul record). I destinatari viaggiano sempre sull'evento del cambio di stato (`Order.transitioned`),
   non su un evento secondario; ogni notifica ha una `subscription` che la riceve, altrimenti `validate` avvisa. Le
