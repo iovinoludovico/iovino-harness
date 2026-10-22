@@ -164,6 +164,8 @@ class NotationTests(unittest.TestCase):
             "roles shape": ({"classes": {"A": {}}, "roles": []}, "a mapping of role keys"),
             "reserved": ({"classes": {"A": {"attributes": {"createdAt": "EDate"}}}}, "standard column"),
             "user declared": ({"classes": {"User": {}}}, "built in"),
+            "role class declared": ({"classes": {"Role": {}}}, "built in"),
+            "role enum declared": ({"classes": {"A": {}}, "enums": {"Role": ["x"]}}, "built in"),
             "cycle": ({"classes": {"A": {"supertypes": ["B"]}, "B": {"supertypes": ["A"]}}}, "cycle"),
             "column clash": ({"classes": {"A": {"attributes": {"b": "EString"}, "references": {"b": "B"}},
                                           "B": {}}}, "declared twice"),
@@ -266,6 +268,9 @@ class RolesTests(unittest.TestCase):
         self.assertIn("// roles of the application users (User.roles, one row per user x role x scope): area_director per Department", E.to_emfatic(m))
         self.assertIn("ref User[*] rupAssistants;  // role", E.to_emfatic(m))
         self.assertIn('  User --> "0..*" Role : roles', E.to_mermaid(m))
+        only_record = {"package": "t", "classes": {"Fund": {"references": {"manager": {"type": "User", "role": True}}}}}
+        self.assertIn("  class Role {", E.to_mermaid(only_record))          # a record role alone draws the users and their roles
+        self.assertNotIn("class Role", E.to_mermaid({"package": "t", "classes": {"Fund": {"references": {"createdBy": "User"}}}}))
         md = E.to_markdown(m)
         self.assertIn("## Ruoli", md)
         self.assertIn("| `area_director` | Direttore d'area | per Department |  |", md)

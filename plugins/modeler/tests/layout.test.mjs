@@ -91,7 +91,7 @@ for (const [name, raw] of [["anagrafica", () => fixture("anagrafica.ecore.yaml")
   for (const [w, h] of sizes) {
     test(`${name} at ${w}x${h}`, () => {
       const { mm, edges, boxes } = laidOut(raw(), w, h);
-      assert.equal(Object.keys(boxes).length, Object.keys(mm.classes).length + Object.keys(mm.enums).length, "every box is placed");
+      assert.equal(Object.keys(boxes).length, Object.keys(mm.classes).length + Object.keys(mm.enums).length + Layout.builtinNodes(mm).length, "every box is placed");
       assert.ok(edges.length > 0);
       checkDiagram(edges, boxes);
     });
@@ -315,8 +315,10 @@ test("rows: involved features are marked and the workflow head adds the stereoty
   const rows = Layout.rowItems(mm.classes.Invitation, true, "more", "state", bh.uses.Invitation);
   const dc = rows.find((r) => r.attr === "dataComplete");
   assert.ok(dc.text.endsWith(" ·ƒ") && dc.used.some((u) => u.kind === "guard" && u.of === "Invitation.submit"));
-  assert.ok(rows.find((r) => r.ref === "issuer").used.some((u) => u.kind === "notify"));
   assert.ok(!rows.find((r) => r.ref === "createdBy").used);
+  // the record role is a connector: its ` ·ƒ` mark goes on the label of the edge to User
+  const diagram = Object.fromEntries(Layout.nodeNames(mm).map((n) => [n, { x: 0, y: 0 }]));
+  assert.equal(Layout.edgesOf({ ...mm, diagram }, bh.uses).find((e) => e.key === "Invitation.issuer").labelB, "issuer 0..1 ·ƒ");
   const plain = Layout.boxSize(mm, "Invitation", { allAttrs: true });
   const marked = Layout.boxSize(mm, "Invitation", { allAttrs: true, uses: bh.uses.Invitation });
   assert.equal(marked.h, plain.h);
@@ -350,7 +352,8 @@ test("the class as seen from a state: «1 da <stato>» on rows and connectors, t
   assert.equal(rows.find((r) => r.attr === "hours").text, "hours: EBigDecimal [1 da In attesa di approvazione]");
   assert.equal(rows.find((r) => r.attr === "flatAmount").text, "flatAmount: EBigDecimal [1 da In attesa di approvazione]");
   assert.equal(rows.find((r) => r.attr === "notes").text, "notes: Text");                         // hidden: only in the view
-  assert.equal(rows.find((r) => r.ref === "issuer").text, "↗ issuer: User [1 da In attesa di approvazione] «role»");
+  assert.ok(!rows.some((r) => r.ref === "issuer"), "a record role is a connector to the User box, not a row");
+  assert.equal(rows.find((r) => r.ref === "createdBy").text, "↗ createdBy: User [1]");
   assert.ok(!rows.some((r) => r.hidden));
   const plain = Layout.rowItems(mm.classes.Invitation, true, "more", "state");
   assert.deepEqual(plain.map((r) => r.text), Layout.rowItems(mm.classes.Invitation, true, "more", "state", null, {}).map((r) => r.text));
@@ -368,9 +371,10 @@ test("the class as seen from a state: «1 da <stato>» on rows and connectors, t
   assert.equal(seen.find((r) => r.attr === "code").text, "code: EString [1]");                    // untouched by the state
   assert.equal(Layout.rowsOf(mm.classes.Invitation, true, "more", "state", null, { overlay, view, from: "da" }).length, seen.length);
   // the connectors: the label of a required reference carries the state
-  const diagram = Object.fromEntries([...Object.keys(mm.classes), ...Object.keys(mm.enums)].map((n) => [n, { x: 0, y: 0 }]));
+  const diagram = Object.fromEntries(Layout.nodeNames(mm).map((n) => [n, { x: 0, y: 0 }]));
   const edges = Layout.edgesOf({ ...mm, diagram }, null, { Invitation: overlay }, "da");
   assert.equal(edges.find((e) => e.key === "Invitation.reason").labelB, "reason 1 · 1 da In attesa di approvazione");
+  assert.equal(edges.find((e) => e.key === "Invitation.issuer").labelB, "issuer 0..1 · 1 da In attesa di approvazione");
   assert.equal(edges.find((e) => e.key === "Invitation.department").labelB, "department 1");
   assert.equal(Layout.edgesOf({ ...mm, diagram }).find((e) => e.key === "Invitation.reason").labelB, "reason 1");
   // the box grows in width only: the view never changes the height
@@ -396,4 +400,35 @@ test("fitView fills the canvas with the diagram; zoomView scales around a point 
   assert.ok(Math.abs(before.x - after.x) < 1e-9 && Math.abs(before.y - after.y) < 1e-9);   // … is the same after the zoom
   assert.equal(Layout.zoomView({ k: 2, x: 0, y: 0 }, 10, at).k, 2);                        // clamped
   assert.equal(Layout.zoomView({ k: 0.25, x: 0, y: 0 }, 0.1, at).k, 0.25);
+});
+
+test("built-in User and Role boxes: drawn when the metamodel has roles or a record role, linked by roles 0..*", () => {
+  for (const [w, h] of [[400, 480], [1280, 720], [1900, 900]]) {
+    const { mm, edges, boxes } = laidOut(fixture("invitations.ecore.yaml"), w, h);
+    assert.deepEqual(Layout.builtinNodes(mm), ["User", "Role"]);
+    assert.ok(boxes.User && boxes.Role, `User and Role boxes at ${w}x${h}`);
+    assert.deepEqual(Layout.roleLiterals(mm), ["admin", "office", "issuer (Department)", "director (Department)"]);
+    assert.equal(Layout.boxSize(mm, "Role").h, Layout.boxSize(mm, "User").h + 3 * 19);   // one row per literal, one row (email) for User
+    const issuer = edges.find((e) => e.key === "Invitation.issuer");
+    assert.ok(issuer, "the record role Invitation.issuer is a connector");
+    assert.equal(issuer.b, "User"); assert.equal(issuer.end, "url(#arrow)"); assert.equal(issuer.start, null);
+    assert.ok(issuer.labels.some((l) => l.text.startsWith("issuer 0..1")), JSON.stringify(issuer.labels));
+    const roles = edges.find((e) => e.key === "User.roles");
+    assert.equal(roles.a, "User"); assert.equal(roles.b, "Role");
+    assert.ok(roles.labels.some((l) => l.text === "roles 0..*"));
+    assert.ok(!edges.some((e) => e.key === "Invitation.createdBy"), "createdBy stays a row in the box");
+    checkDiagram(edges, boxes);
+  }
+  // without roles: no built-in box, no edge to User, the diagram as before
+  const plain = laidOut(hub(), 1280, 720);
+  assert.deepEqual(Layout.builtinNodes(plain.mm), []);
+  assert.ok(!plain.boxes.User && !plain.boxes.Role);
+  assert.ok(!plain.edges.some((e) => e.b === "User"));
+  // a record role alone is enough; a stale diagram.User of a model without roles draws nothing
+  const tiny = Layout.normalize({ package: "t", classes: { Fund: { references: { manager: { type: "User", role: true } } } } });
+  assert.deepEqual(Layout.builtinNodes(tiny), ["User", "Role"]);
+  assert.deepEqual(Layout.roleLiterals(tiny), ["admin"]);
+  const stale = Layout.normalize({ package: "t", classes: { Fund: { references: { owner: { type: "User" } } } }, diagram: { Fund: { x: 0, y: 0 }, User: { x: 300, y: 0 } } });
+  assert.deepEqual(Layout.edgesOf(stale), []);
+  assert.deepEqual(Object.keys(Layout.routeEdges(stale, (n) => Layout.boxSize(stale, n)).boxes), ["Fund"]);
 });
