@@ -1,102 +1,87 @@
-# Handoff — notifiche sulla transizione e ruoli nel metamodello (PR #34), creazione in modale (PR #33)
-_Aggiornato: 2026-10-21 (notte) · branch `main` (`93d646b`, PR #34), albero pulito_
+# Handoff — i ruoli e gli utenti nel diagramma del modellatore (PR #36), lint del kit (PR #35)
+_Aggiornato: 2026-10-22 · branch `main` (`2cb499f`, PR #36), albero pulito_
 
 ## Obiettivo
-Marketplace personale di plugin per Claude Code (`core`, `modeler`). Quarta e quinta revisione delle note del
-2026-10-21: su `main` sono entrate la convenzione «+ Nuovo» in modale per i riferimenti nei form (PR #33, core
-0.21.0), le notifiche dichiarate sulla transizione e i ruoli dell'applicazione nel metamodello (PR #34, modeler
-0.35.0). `NOTES.md`: 0 note aperte, 1 rinviata (massimo finito delle collezioni, nessun progetto lo richiede).
+Marketplace personale di plugin per Claude Code (`core`, `modeler`). Dopo le revisioni del 2026-10-21 (notifiche sulla
+transizione, ruoli nel metamodello: PR #34, modeler 0.35.0) oggi sono entrate su `main` la pulizia del lint del kit
+(PR #35, modeler 0.35.1) e i riquadri predefiniti `Role «enumeration»` e `User «built-in»` nel diagramma del
+modellatore web (PR #36, modeler 0.36.0). `NOTES.md`: 0 note aperte, 1 rinviata (massimo finito delle collezioni,
+nessun progetto lo richiede).
 
 ## Stato
-- Fatto (PR #33, `bb1523a`): convenzione in `conventions.md` («Lavoro sul codice»: ogni riferimento verso una classe
-  offre «+ Nuovo» in modale, stesso componente del form dell'entità, azione gemella che ritorna `{created}`, bottone
-  solo se il database permette la creazione, un livello, containment inline, form complessi con `?return=`) e ricetta
-  nella skill `modeler:metamodel` §4 punto 3 (`create<E>Inline`, `<ECreate onCreated>`, esempio di order-management).
-- Fatto (PR #34, `93d646b`, squash di `5cbec0a` notifiche + `bf62ae9` ruoli):
-  - **Notifiche sulla transizione**: `notify: [principals]` e `template:` sulla transizione (forma lunga
-    `notify: {to, template, when}`); `behavior.py` `expand` aggiunge la reazione sintetica `notify_<transizione>`
-    (marcata `_transition`), `dumps`/`from_editor`/`diff` tengono la forma breve, `runtime_json` porta `notifies` su
-    ogni transizione (entrambe le forme), `transition_reactions` riconosce `transition = k and (…)`. Editor: colonne
-    «Avvisa»/«Template» nella tabella delle transizioni, reazioni-notifica fuori dal pannello laterale, freccia con ✉
-    e tooltip (anche `<workflow-view>`), `<BehaviorView>` colonna «Avvisa». Fixture: `confirm` e `director_return` in
-    forma breve. Test `test_notification_declared_on_the_transition`.
-  - **Ruoli nel metamodello**: `roles:` a livello di package in `domain.ecore.yaml` (`label`, `doc`, `scope: <Classe>`;
-    `admin` predefinito), memorizzati come enum `app_role` + tabella `user_roles` (schema appforge): `E.storage`
-    (`roles`), `sqlgen._roles` (tipo e tabella se mancano, FK a `profiles` solo se esiste, `add value if not exists`,
-    TODO policy), `D.drift` (`MISSING TYPE/ROLE/TABLE/COLUMN`, `NOT IN METAMODEL role`, suggerimento su `user_roles`),
-    `D.reverse` (scrive `roles:`, non una classe), `role: true` su un `ref` a `User` = ruolo di record; Emfatic,
-    Mermaid, `DOMAIN.md` («Ruoli», «Ruoli di record»), XMI, `diff`, `patch_text`, `runtime_json` (`builtin_roles`).
-    `behavior.py` `bind(raw, e)` unisce i ruoli (`source`: metamodel/behavior/both) e lo usano `validate`,
-    `runtime_json`, `to_markdown`, `engine_version`, `sql_view`, `engine_sql`; `roles:` del behavior facoltativo
-    (`_check_roles`: errore se lo scope differisce, avvisi su label/doc diversi e su ruoli non dichiarati nel
-    metamodello); avviso «ruolo di record» su `self.<ref>` a `User` senza `role: true`; `from_editor` non riscrive i
-    ruoli del metamodello. Editor: pannello «Ruoli» su `mm.roles` (ruoli solo del behavior marcati «in
-    behavior.yaml»), checkbox «ruolo» sul riferimento a `User`, «role» nella riga del box, `diff` dei ruoli,
-    `behaviorSource` esclude i ruoli del metamodello. Fixture: `roles:` in `invitations.ecore.yaml`,
-    `issuer: {type: User, role: true}`. Test `RolesTests` (3), `test_roles_migration_applies_and_aligns` (Postgres),
-    `RolesFromTheMetamodelTests`.
-  - Notazione (`ecore-notation.md` «Roles», `behavior-notation.md` Transitions/Principals/parole), skill `metamodel`
-    §3, `behavior` §2-3, `install` §2, README; `NOTES.md` con le decisioni.
-- Verificato: `python3 -m unittest discover -s plugins/modeler/tests` → 114 OK, anche con `MODELER_PG` su Postgres 16
-  in Docker (motore end-to-end, migrazione dei ruoli idempotente e allineata); `python3 -m unittest discover -s tests`
-  → 23 OK; `node --test` dei 4 `.mjs` → 182 OK; `claude plugin validate .` OK. Nessuna CI nel repository.
-- Non committato: nulla. Questa sessione gira con core 0.20.0 in cache (`/reload-plugins` per core 0.21.0 e modeler
-  0.35.0).
+- Fatto (PR #35, `4299db8`): nessun `eslint-disable` nel kit (`delete rest.source` al posto del rest con binding inutile);
+  test `lint.test.mjs` «the kit silences no lint rule», eccezione `no-namespace` nei TSX.
+- Fatto (PR #36, `2cb499f`, nota del 2026-10-22): quando il metamodello ha `roles:` o una reference `role: true`, il
+  kit `metamodel-editor.js` disegna `Role «enumeration»` (`admin` primo, scope come `director (Department)`) e
+  `User «built-in»` (riga `email`, bordo tratteggiato, CSS `.box.builtin`), uniti da `roles 0..*`. Una reference
+  `role: true` è un connettore classe → `User` (molteplicità, overlay di stato, ` ·ƒ` sull'etichetta) e non più una riga;
+  le altre reference a `User` (`createdBy`) restano righe attenuate. Helper puri in `Layout`: `recordRoles`,
+  `builtinNodes`, `nodeNames`, `roleLiterals`, costanti `USER`/`ROLE`/`ADMIN`; `boxSize`, `autoLayout` (`near`:
+  `User` vicino alle classi con ruoli di record, `Role` vicino a `User`), `edgesOf` (gate su `builtinNodes`, così un
+  `diagram.User` stantio non disegna nulla), `routeEdges` e i filtri dell'editor (`_freeSpot`, `_fit`, `_separate`)
+  usano `nodeNames`; `_renderDiagram` dà una posizione ai box predefiniti che compaiono dopo un edit; `_anchor`/`_center`
+  (senza chiamanti) rimossi; `_renameClass` aggiorna gli `scope` dei ruoli. Selezione: kind `user`/`roles`
+  (`SelectDetail` del wrapper TSX), clic su `Role` → `_rolesPanel()` (estratto da `_globalBehaviorPanel`), su `User` →
+  ruoli e ruoli di record; i18n `builtinHint`, `builtinName`, `select`. `Role` riservato come `User`: editor
+  (`_allNames`, `_issues`) e `ecore.py` (`BUILTIN_ENUMS`, `validate` su classi ed enum, `runtime_json.builtin_enums`);
+  `to_mermaid` disegna `Role`/`User` anche con soli ruoli di record. Docs: `ecore-notation.md` «Roles», README del
+  modeler, skill `metamodel` §3.
+- Verificato: `node --test plugins/modeler/tests/*.mjs` → 184 OK (nuovo test «built-in User and Role boxes» a 400×480,
+  1280×720, 1900×900 con `checkDiagram`; conteggio dei box e righe aggiornati); `python3 -m unittest discover -s
+  plugins/modeler/tests` → 114 OK, 9 saltati (container Postgres spento, nessuna modifica SQL); `tests` → 23 OK;
+  `claude plugin validate .` OK; Chrome headless sulla fixture invitations a 1200×760 e 480×640: box, connettori
+  `Invitation.issuer` e `User.roles`, pannelli laterali, zero problemi. Nessuna CI nel repository.
+- Non committato: nulla. Questa sessione gira con core 0.21.0 e modeler 0.35.1 in cache (`/reload-plugins` per 0.36.0).
 
 ## Decisioni
-- Ruoli come **enum di chiavi** (`roles:` del package → `app_role`), non classe `Role` con righe — `by`/`notify`/`view_as`
-  citano chiavi fisse; una classe con righe darebbe ruoli a runtime al prezzo di un seed e di un motore diverso.
-  Memorizzazione uguale ad appforge (`app_role`, `user_roles`): zero migrazione per le app esistenti.
-- `roles:` di `behavior.yaml` resta facoltativo e la fixture lo tiene insieme al metamodello (valori identici: nessun
-  avviso) — i file esistenti non vanno migrati; il metamodello vince e le differenze sono segnalate.
-- La notifica di una transizione è una **reazione sintetica** in `expand`, non un nuovo concetto del motore — motore,
-  dispatcher, template e sottoscrittori non cambiano; le due forme coesistono e `validate` **non** suggerisce la breve
-  (le reazioni `transition = k` esistenti restano valide; lo dicono notazione e skill).
-- Nessun box `Role`/`User` nel diagramma — `User` non ha un box neppure oggi (righe attenuate nella classe); i ruoli
-  stanno nella tabella del pannello laterale, i ruoli di record nella riga del riferimento.
-- Nessuna pagina utenti nel kit — `/admin/users` è dell'app (appforge); `metamodel.json` porta i ruoli che può leggere.
-- Creazione in modale come convenzione globale più ricetta nella skill, non componente del kit — nessun generatore di form.
-- (Ereditate) overlay per stato: transizione morta = errore, parziale = avviso; `record_url` non generata dal motore;
-  «vedi come» dichiarato nel modello, mai una sessione dell'altro utente.
+- **Box `Role` e `User` nel diagramma** (ribalta la scelta del 2026-10-21) — i ruoli sono un enum come gli altri e Mermaid,
+  Emfatic e XMI già li disegnavano: il modellatore web mostrava meno di `DOMAIN.md`. Solo quando il metamodello ha
+  ruoli o ruoli di record: le app senza ruoli non cambiano.
+- **Ruolo di record = connettore, non riga** — nessuna reference classe→classe è insieme riga e connettore; il box si
+  accorcia; la vista per stato (🔒/hidden al passaggio del mouse) non si applica più a quella reference: accettato.
+- **`createdBy` e le altre reference a `User` restano righe** — un box `User` collegato a tutte le classi sporcherebbe
+  il diagramma (Mermaid invece le disegna tutte: differenza voluta).
+- Ruoli come **enum di chiavi** (`roles:` → `app_role`), non classe con righe; memorizzazione uguale ad appforge.
+- La notifica di una transizione è una **reazione sintetica** in `expand`; `validate` non suggerisce la forma breve.
+- Nessuna pagina utenti nel kit — `/admin/users` è dell'app.
+- (Ereditate) creazione in modale come convenzione più ricetta, non componente del kit; overlay per stato: transizione
+  morta = errore, parziale = avviso; «vedi come» dichiarato nel modello, mai una sessione dell'altro utente.
 
 ## Problemi aperti
-- order-management: al prossimo `/modeler:install` (0.35.0) portare i ruoli in `domain.ecore.yaml` (`roles:` da
-  `app_role`: rup, rup_assistant, area_director per Department), `role: true` su `Order.rupAssistants`, le 7 reazioni
-  `notify_*` in forma breve sulle transizioni, `view_as` al posto di `CUSTOM(view-as)`; `MODELER_EXCLUDE` in
-  `package.json` esclude ancora `user_roles` (toglierla: `drift` la confronta).
-- Nessun progetto usa ancora `states.<key>.model` né i ruoli nel metamodello: la sandbox e order-management sono la prova.
+- order-management ha già i ruoli nel metamodello (`roles:` rup, rup_assistant, area_director per Department; `role:
+  true` su `Fund.manager` e `Order.rupAssistants`; notifiche in forma breve; modeler 0.35.1 con le PR #24/#25
+  dell'app). Restano: `/modeler:install` per la 0.36.0 (i due box compaiono con i connettori `Fund.manager` e
+  `Order.rupAssistants`), la prova nel browser di `/admin/model` (tabella «Ruoli», box `Role`/`User`, ✉ sulle frecce),
+  `view_as: {users_by: [admin]}` al posto di `CUSTOM(view-as)`; «+ Nuovo» in modale solo per il fornitore (CPV, fondo e
+  COAN sono registri dell'amministratore).
+- Nessun progetto usa ancora `states.<key>.model`: la sandbox e order-management sono la prova.
 - Editor: la select dei template con «+ nuovo» nel pannello della transizione è un campo di testo; la colonna «Modello»
-  è in sola lettura (editing dell'overlay rinviato).
+  è in sola lettura; `MAX_ROWS` non si applica al box `Role` (con molti ruoli cresce, come gli enum).
+- Nello screenshot headless a 1200×760 il diagramma adattato tocca il bordo inferiore (la legenda copre l'ultima riga):
+  comportamento di `fitView` preesistente in headless, da verificare con l'estensione a scheda visibile.
 - Un controllo automatico di «view as» in `security-audit` B resta manuale.
-- Ereditati: un rilascio vero dal web (`modeler-release`, PR #28) e un run vero di `modeler-apply` non provati; `psql`
-  assente sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto cloud;
+- Ereditati: un rilascio vero dal web (`modeler-release`) e un run vero di `modeler-apply` non provati; `psql` assente
+  sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto cloud;
   `guard_harness_edit` solo Edit/Write; la cartella `help/` non è tracciata (decidere se versionarla o ignorarla).
-- Prova in Chrome con l'estensione: con la scheda in secondo piano i `requestAnimationFrame` sono sospesi; un metodo
-  nuovo dell'elemento non può chiamarsi `_view` (è la vista della tela).
 
 ## Prossimi passi
 1. Qui: `/reload-plugins`. Sugli altri computer: `claude plugin marketplace update iovino-harness && claude plugin
    update core@iovino-harness modeler@iovino-harness`.
-2. In order-management: `/modeler:install` (0.35.0); `roles:` nel metamodello e `role: true` su `Order.rupAssistants`
-   (`npm run model:validate`, `npm run model:drift` senza `user_roles` in `MODELER_EXCLUDE`); le reazioni
-   `notify_*` → `notify`/`template` sulle transizioni (`npm run model:sync`, controllare `notifies` in
-   `behavior.json` e la ✉ in `/admin/model`); `view_as: {users_by: [admin]}` al posto di `CUSTOM(view-as)`; «+ Nuovo»
-   per CPV, fondo e COAN con la ricetta della skill `metamodel` §4.
-3. In order-management: `/modeler:behavior` per i campi per stato come `requires`/`model` (`supplier`, `cig`,
-   `orderNumber`, `orderDate` da `ordered` con `readonly` dopo l'ordine; `rupAssistants` da `procurement`;
-   `deliveryDate` da `delivered`); motore a mano: frammenti da `npm run model:behavior -- --format sql`,
-   `field_policy` sullo stesso schema; `CUSTOM(order-workflow)` ridotta. Poi annotare nel §7 di
-   `docs/research/state-indexed-refinement.md` cosa il caso ha confermato o cambiato.
-4. Sandbox (`~/Documents/GitHub/modeler-sandbox`): reinstallare il kit (0.35.0), `roles:` nel metamodello con
-   `npm run model:migrate` (tipo e tabella creati), `notify` su una transizione di `Task`, `view_as` end-to-end,
-   `model: {assignee: {lower: 1, readonly: true}}` su uno stato (`model:validate`, `model:engine -- --write`,
-   `select task_field_policy(t) from tasks t`).
+2. In order-management: `/modeler:install` (0.36.0), poi `/admin/model` in locale (login via Mailpit): box `Role` con
+   `rup`, `rup_assistant`, `area_director (Department)`, box `User`, connettori `manager 1` da `Fund` e
+   `rupAssistants 0..*` da `Order`, clic su `Role` → tabella «Ruoli»; `npm run lint` pulito; screenshot da conservare.
+3. In order-management: `view_as: {users_by: [admin]}` con `/modeler:behavior` (SQL del motore 0.33 al posto di
+   `CUSTOM(view-as)`), «+ Nuovo» per il fornitore con la ricetta della skill `metamodel` §4; poi i campi per stato come
+   `requires`/`model` (vedi HANDOFF dell'app, punto 3).
+4. Sandbox (`~/Documents/GitHub/modeler-sandbox`): reinstallare il kit (0.36.0), `roles:` nel metamodello con
+   `npm run model:migrate`, `notify` su una transizione di `Task`, `view_as` end-to-end, `model: {assignee: {lower: 1,
+   readonly: true}}` su uno stato.
 5. Quando il caso degli ordini è in produzione: rileggere `docs/research/state-indexed-refinement.md` §6–§7 e decidere
    se diventa l'articolo (repository a parte) o resta la specifica del plugin.
 
 ## Per riprendere
 `cd <clone> && claude` — i plugin si caricano da questa cartella: dopo una modifica usa `/reload-plugins`.
-Test senza database: `python3 -m unittest discover -s tests && python3 -m unittest discover -s plugins/modeler/tests && node --test plugins/modeler/tests/layout.test.mjs plugins/modeler/tests/diff.test.mjs plugins/modeler/tests/lint.test.mjs plugins/modeler/tests/behavior.test.mjs && claude plugin validate .`
+Test senza database: `python3 -m unittest discover -s tests && python3 -m unittest discover -s plugins/modeler/tests && node --test plugins/modeler/tests/*.mjs && claude plugin validate .`
 Test con database (motore end-to-end, «view as», migrazione dei ruoli; Docker Desktop acceso):
 ```bash
 docker run -d --rm --name modeler-pg-test -e POSTGRES_PASSWORD=pg -p 55499:5432 postgres:16
@@ -113,19 +98,19 @@ docker stop modeler-pg-test
 Rilascio: `python3 scripts/release.py` (anteprima), `--write` (versioni + commit `chore(release)`), poi `/core:ship`
 (push, PR, merge su conferma); il pre-push blocca un plugin modificato con la versione vecchia.
 Prova dell'editor in Chrome senza app: una pagina HTML con `<metamodel-editor lang="it">` in un `div` di 1200×760, il kit
-inlineato in uno `<script>`, `ed.metamodel = <E.runtime_json(E.load(fixture))>`, `ed._allAttrs = true`,
-`ed.behavior = <B.runtime_json(b, meta)>`; selezione con `ed._sel = {kind: "class", name: "Invitation"}; ed._render()`;
+inlineato in uno `<script>`, `ed.metamodel = <E.runtime_json(E.load(fixture))>`, `ed.behavior = <B.runtime_json(b, meta)>`
+dentro un `setTimeout`; i box predefiniti sono `g.box.builtin[data-name=User|Role]`, i connettori `[data-edge="User.roles"]`
+e `[data-edge="Invitation.issuer"]`; pannelli con `ed._sel = {kind: "roles", name: "Role"}; ed._render()` (o `kind: "user"`);
 la ✉ delle transizioni è `text.wfn[data-notifies]` nel pannello del workflow.
-Headless: `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --virtual-time-budget=15000 --dump-dom file://…`
-(con `fetch`/`requestAnimationFrame` l'output resta vuoto: usare `setTimeout` e tutto inline); reale: `python3 -m http.server`
-e l'estensione, con la scheda visibile.
+Headless: `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --virtual-time-budget=8000 --window-size=1200,760 --screenshot=out.png file://…`
+e `--dump-dom` (con `fetch`/`requestAnimationFrame` l'output resta vuoto: usare `setTimeout` e tutto inline, scrivere il
+risultato in un `<pre>`); reale: `python3 -m http.server` e l'estensione, con la scheda visibile.
 Sandbox: `cd ~/Documents/GitHub/modeler-sandbox && npm run db:start && PORT=3077 npm run dev` (se il DB è nuovo: `npm run db:reset`);
 reinstallare il modellatore dal clone: `python3 plugins/modeler/scripts/modeler.py install ~/Documents/GitHub/modeler-sandbox --no-migration`.
 Typecheck dei TSX del kit: cartella fuori dal repository con `npm i --legacy-peer-deps typescript @types/react react react-dom next`,
 copia di `kit/next/*.tsx` in `src/`, stub di `@/lib/modeler/metamodel-actions` via `paths`, `tsc --noEmit`.
-File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultime tre voci), `plugins/modeler/skills/notation/references/ecore-notation.md`
-(«Roles»), `plugins/modeler/skills/notation/references/behavior-notation.md` (Transitions, Principals),
-`plugins/modeler/scripts/metamodel/behavior.py` (`expand` con la reazione sintetica, `bind`, `_check_roles`, `_check_principal`),
-`plugins/modeler/scripts/metamodel/ecore.py` (`roles` in `expand`/`validate`/`storage`/`patch_text`),
-`plugins/modeler/scripts/metamodel/sqlgen.py` (`_roles`), `plugins/modeler/scripts/metamodel/dbschema.py` (`reverse`, `drift`),
-`plugins/modeler/kit/metamodel-editor.js` (`_globalBehaviorPanel`, `_workflowEditor`, `workflowSvg`).
+File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultime due voci), `plugins/modeler/skills/notation/references/ecore-notation.md`
+(«Roles»), `plugins/modeler/kit/metamodel-editor.js` (`recordRoles`/`builtinNodes`/`nodeNames`/`roleLiterals` in cima a
+`Layout`, `boxSize`, `autoLayout`, `edgesOf`, il ciclo dei box predefiniti in `_renderDiagram`, `_renderSide`,
+`_rolesPanel`), `plugins/modeler/tests/layout.test.mjs` (ultimo test), `plugins/modeler/scripts/metamodel/ecore.py`
+(`BUILTIN_ENUMS`, `validate`, `to_mermaid`), `plugins/modeler/scripts/metamodel/behavior.py` (`expand`, `bind`).
