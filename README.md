@@ -6,7 +6,7 @@ Harness personale per Claude Code: un marketplace di plugin da installare su ogn
 
 | Plugin | Cosa fa |
 | :- | :- |
-| `core` | Convenzioni iniettate a inizio sessione, guardrail su segreti e comandi distruttivi, autoformattazione, agenti `code-reviewer` e `debugger`, skill `project-init`, `handoff`, `commit`, `ship`, `db-push`, `deploy`, `security-audit`, `harness-note`, `harness-review` |
+| `core` | Convenzioni iniettate a inizio sessione, guardrail su segreti e comandi distruttivi, autoformattazione, agenti `code-reviewer` e `debugger`, skill `project-init`, `handoff`, `commit`, `ship`, `release`, `db-push`, `deploy`, `security-audit`, `harness-note`, `harness-review` |
 | `modeler` | Sviluppo model-based delle app Next.js + Supabase: metamodello di dominio `domain.ecore.yaml` (notazione Ecore) dal prompt o ricavato dal database, modello di comportamento `behavior.yaml` (workflow, guardie, derivazioni, eventi, reazioni) verificato sul metamodello e da cui si generano documentazione, SQL e il motore (funzioni e trigger), modellatore web che diventa parte dell'app (`/admin/model`, proposte, CLI `tools/modeler/` con gli script `npm run model:*`), controllo di allineamento metamodello ↔ database, export Ecore/Emfatic/Mermaid. Dettagli in `plugins/modeler/README.md` |
 
 In arrivo: `research`, `mde`.
@@ -73,6 +73,7 @@ Differenze rispetto alla strada A:
 | `/core:project-init` | Primo lavoro serio su un repository senza CLAUDE.md |
 | `/core:commit` | Commit con Conventional Commits, test e lint prima, mai push |
 | `/core:ship` | Push del branch, PR, attesa della CI, merge su `main` solo dopo conferma |
+| `/core:release` | Nel repository harness: alza la versione dei plugin modificati e crea il commit `chore(release)` (prova a vuoto, poi `--write`); niente push |
 | `/core:handoff` | Fine sessione o cambio computer: aggiorna HANDOFF.md |
 | `/core:db-push` | Porta in produzione (Supabase cloud) le migrazioni nuove: controlli, anteprima, conferma, verifica |
 | `/core:deploy` | Passi di produzione (Supabase cloud, GHCR, Docker Manager di Hostinger, Nginx Proxy Manager, rollback, diagnosi): per scrivere `docs/deploy.md` o rispondere su server e proxy |
@@ -120,7 +121,9 @@ git push
   lo forza.
 - `release.py` aggiorna anche le copie della versione (`__version__` del modeler).
 - L'hook `.githooks/pre-push` blocca il push se un plugin modificato ha ancora la versione vecchia.
-- Claude lo fa da solo prima di ogni push (regola nel `CLAUDE.md` di questo repository).
+- `/core:release` esegue i due comandi (prova a vuoto, poi `--write`, con `--level` se dato) e si ferma al commit;
+  `/core:ship` lo include prima del push. Claude lo fa comunque da solo prima di ogni push (regola nel `CLAUDE.md` di
+  questo repository).
 - Dopo un rilascio di `modeler`, nelle app che lo usano lancia `/modeler:install` per aggiornare il modellatore
   copiato nel repository (a inizio sessione l'hook lo ricorda quando le versioni differiscono).
 
@@ -134,7 +137,7 @@ plugins/core/
   hooks/hooks.json
   scripts/hook.py
   agents/{code-reviewer,debugger}.md
-  skills/{project-init,handoff,commit,ship,db-push,deploy,security-audit,harness-note,harness-review}/SKILL.md
+  skills/{project-init,handoff,commit,ship,release,db-push,deploy,security-audit,harness-note,harness-review}/SKILL.md
 plugins/modeler/                ← metamodello e modellatore web delle app (README proprio)
 settings/recommended-settings.json, merge_settings.py
 scripts/release.py              ← versioni dei plugin a ogni rilascio
