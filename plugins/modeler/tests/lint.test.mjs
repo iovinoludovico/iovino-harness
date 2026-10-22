@@ -18,3 +18,15 @@ test("every constant of the kit is used (declared once, referenced at least once
   const unused = declared.filter((name) => (src.match(new RegExp(`\\b${name}\\b`, "g")) || []).length < 2);
   assert.deepEqual(unused, []);
 });
+
+// the app decides which rules are active: a directive for a rule the app does not run is itself a warning
+// ("Unused eslint-disable directive"), so the kit silences nothing and fixes the code instead. The two TSX files
+// keep the one exception their `declare module "react"` needs (@typescript-eslint/no-namespace fires in every Next app).
+test("the kit silences no lint rule (no eslint-disable), except no-namespace for the JSX declarations", () => {
+  assert.deepEqual([...src.matchAll(/eslint-disable[^\n]*/g)].map((m) => m[0]), []);
+  for (const file of ["workflow-view.tsx", "metamodel-modeler.tsx", "behavior-view.tsx", "view-as.tsx", "notification-templates.tsx"]) {
+    const tsx = readFileSync(path.join(here, "../kit/next", file), "utf8");
+    const directives = [...tsx.matchAll(/eslint-disable[^\n]*/g)].map((m) => m[0].trim());
+    assert.ok(directives.every((d) => d === "eslint-disable-next-line @typescript-eslint/no-namespace"), `${file}: ${directives.join(" | ")}`);
+  }
+});
