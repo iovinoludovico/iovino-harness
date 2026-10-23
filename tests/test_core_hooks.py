@@ -55,6 +55,14 @@ class GuardFileTests(unittest.TestCase):
         self.assertEqual(decision(res), "deny")
         self.check("/p/src/a.ts", "none", content="const k = process.env.ANTHROPIC_API_KEY")
 
+    def test_absolute_url_from_request_asks(self):
+        bad = "return NextResponse.redirect(new URL(target, req.nextUrl))"
+        self.check("/p/src/app/notifications/[id]/route.ts", "ask", content=bad)
+        self.check("/p/src/proxy.ts", "ask", content="const u = `${request.nextUrl.origin}/login`")
+        self.check("/p/src/app/x/route.ts", "none", content="return NextResponse.redirect(publicUrl(req, target))")
+        self.check("/p/src/lib/public-url.ts", "none", content=bad)   # the helper itself, not a route handler
+        self.check("/p/src/app/x/route.ts", "none", content="redirect('/orders')")
+
 
     def test_harness_edits_from_an_app_session_ask(self):
         with tempfile.TemporaryDirectory() as d:

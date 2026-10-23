@@ -77,6 +77,11 @@ Mai scrivere segreti nel rapporto, in file o in chat: se un comando ne mostra un
   `curl -s https://<app>/api/<rotta>` → 401/redirect, mai dati.
 - Redirect aperti: `curl -sI "https://<app>/login?next=//evil.example"` e `…/auth/callback?next=/\evil.example`
   → mai un `location` fuori dal dominio.
+- Redirect dietro il proxy: `curl -sI -b '<cookie di sessione>' https://<app>/<rotta che reindirizza>` (es.
+  `/notifications/<id>`, `/auth/callback`) → `location` sul dominio pubblico, mai `0.0.0.0`, `localhost` o una
+  porta (il server standalone costruisce `request.nextUrl` dall'host del processo). Nel repository `git grep -nE
+  'new URL\(.*(nextUrl|req\.url|request\.url)' -- 'src/**/route.ts' src/proxy.ts src/middleware.ts`: zero
+  righe, gli URL assoluti passano da `publicUrl(request, path)` su `APP_BASE_URL`.
 - Segreti nel bundle: scarica la pagina, estrai i chunk `/_next/static/**/*.js` e cerca `service_role`,
   `sb_secret_`, `eyJhbGciOi` (JWT), `postgres://`, `postgresql://`. Nel repository: `git grep -nE
   'sb_secret_|service_role|postgres(ql)?://[^ ]+:[^ ]+@' -- ':!*.example'`: niente fuori dagli `.example`.

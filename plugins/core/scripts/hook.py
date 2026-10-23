@@ -213,6 +213,11 @@ SECRET_CONTENT = [
 ]
 
 
+# A route handler, proxy or middleware that builds an absolute URL from the request: behind the proxy the standalone
+# server sees HOSTNAME=0.0.0.0, so the redirect lands on 0.0.0.0:3000 (invisible in development).
+ABSOLUTE_URL_FILES_RE = re.compile(r"(^|/)(route\.[jt]sx?|proxy\.[jt]s|middleware\.[jt]s)$")
+ABSOLUTE_URL_RE = re.compile(r"new URL\([^)]*\b(req|request)\.(nextUrl|url)\b|\b(req|request)\.nextUrl\.(origin|host|href)\b")
+
 def file_target(tool_input: dict) -> str:
     return str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
 
@@ -247,6 +252,12 @@ def cmd_guard_file(data: dict) -> int:
                     f"I segreti vanno nelle variabili d'ambiente, non nei file versionati. "
                     f"Usa un placeholder e un riferimento a process.env / os.environ."
                 )
+    if text and path and ABSOLUTE_URL_FILES_RE.search(path.replace("\\", "/")) and ABSOLUTE_URL_RE.search(text):
+        return ask(
+            f"{path} costruisce un URL assoluto da request.nextUrl/request.url: dietro il proxy il server standalone "
+            f"vede 0.0.0.0:<porta> e il redirect finisce lì (in locale non si vede). Usa publicUrl(request, path) su "
+            f"APP_BASE_URL o un redirect relativo. Conferma solo se è voluto."
+        )
     return guard_harness_edit(path, data)
 
 
