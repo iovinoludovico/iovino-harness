@@ -33,7 +33,13 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   the pull request, whose link comes back on the row (`model:track`). **Review** shows the PR (its body is the
   summary Claude wrote) and **Confirm and release** starts `modeler-release`: the same steps as `/core:db-push`
   and `/core:ship` (local rebuild and drift, no uncommented destructive DDL, `db push --db-url`, squash merge with
-  a maintainer token, wait for the deploy of the merge, `model:done`), progress on the row.
+  a maintainer token, wait for the deploy of the merge, `model:done`), progress on the row. The secrets the two
+  workflows read (`ANTHROPIC_API_KEY`, `MODELER_PROD_DB`, `MODELER_GH_TOKEN`) are set from the **«Apply from the
+  web» panel** of the same page: the app seals them with the repository's public key and writes them as repository
+  Actions secrets, keeping nothing: the database connection is the `DATABASE_URL` the web process already has, the
+  merge token can be the app's own, so only the API key is typed. The app itself needs one token
+  (`MODELER_APPLY_TOKEN`), and `install` writes the repository and the pooler URL it derives into
+  `src/lib/modeler/modeler-apply.json`.
   A change proposed from the prompt takes
   the same road: `/modeler:metamodel` edits a draft in `.modeler/drafts/` and `npm run model:propose` saves it as a
   pending proposal (`author: claude`, «from the prompt»), so the modeler shows it before it is applied.

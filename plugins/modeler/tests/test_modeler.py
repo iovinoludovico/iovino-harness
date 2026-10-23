@@ -609,6 +609,13 @@ class AppTests(unittest.TestCase):
         self.assertEqual(scripts["model:docs"], cli.NPM_SCRIPTS["model:docs"])
         self.assertEqual(scripts["model:propose"], cli.NPM_SCRIPTS["model:propose"])
         self.assertEqual(scripts["model:track"], cli.NPM_SCRIPTS["model:track"])
+        # apply from the web: the panel's helpers, its configuration (no git remote, no linked project here) and the
+        # dependency that seals the Actions secrets
+        self.assertTrue((self.app / "src/lib/modeler/apply-web.ts").exists())
+        self.assertEqual(json.loads((self.app / "src/lib/modeler/modeler-apply.json").read_text()), {"repo": None, "pooler": None})
+        pkg = json.loads((self.app / "package.json").read_text())
+        self.assertEqual(pkg["dependencies"]["libsodium-wrappers"], cli.NPM_DEPENDENCIES["libsodium-wrappers"])
+        self.assertTrue(any("run npm install" in w for w in written))
         # apply from the web: the workflow and its rules (adapted: the app owns them) and the columns of the outcome
         self.assertIn(".github/workflows/modeler-apply.yml", written)
         self.assertIn(".github/modeler-apply-rules.md", written)
@@ -883,7 +890,9 @@ class AppTests(unittest.TestCase):
         (self.app / "tools/modeler/VERSION").write_text("0.0.1\n")
         (self.app / ".github/workflows/modeler-apply.yml").write_text("# adapted workflow\n")
         (self.app / ".github/workflows/modeler-release.yml").write_text("# adapted release\n")
+        (self.app / "src/lib/modeler/apply-web.ts").write_text("// old\n")
         written = cli.install(self.app)
+        self.assertIn("export function dsnWithPassword", (self.app / "src/lib/modeler/apply-web.ts").read_text())
         self.assertEqual((self.app / ".github/workflows/modeler-release.yml").read_text(), "# adapted release\n")
         self.assertEqual((self.app / "src/lib/modeler/access.ts").read_text(), "// adapted to the app\n")
         self.assertEqual((self.app / ".github/workflows/modeler-apply.yml").read_text(), "# adapted workflow\n")
@@ -891,6 +900,45 @@ class AppTests(unittest.TestCase):
         self.assertIn("customElements", (self.app / "public/modeler/metamodel-editor.js").read_text())
         self.assertEqual(cli.installed_version(self.app), __version__)
         self.assertFalse(any(w.endswith("_model_change_requests.sql") for w in written))   # migration once
+
+    def test_install_derives_repo_and_pooler_for_the_apply_settings(self):
+        (self.app / ".git").mkdir()
+        (self.app / ".git" / "config").write_text('[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:acme/shop.git\n'
+                                                 '\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch "main"]\n\tremote = origin\n')
+        temp = self.app / "supabase" / ".temp"
+        temp.mkdir()
+        (temp / "pooler-url").write_text("postgresql://postgres.abcref:[YOUR-PASSWORD]@aws-0-eu-west-1.pooler.supabase.com:5432/postgres\n")
+        pkg = json.loads((self.app / "package.json").read_text())
+        pkg["dependencies"] = {"libsodium-wrappers": "0.8.1"}                  # a pinned range is the app's choice
+        (self.app / "package.json").write_text(json.dumps(pkg))
+        written = cli.install(self.app)
+        cfg = json.loads((self.app / "src/lib/modeler/modeler-apply.json").read_text())
+        self.assertEqual(cfg, {"repo": "acme/shop",                             # no password in the committed file
+                               "pooler": "postgresql://postgres.abcref@aws-0-eu-west-1.pooler.supabase.com:5432/postgres"})
+        self.assertFalse(any("npm install" in w for w in written))
+        self.assertEqual(json.loads((self.app / "package.json").read_text())["dependencies"], {"libsodium-wrappers": "0.8.1"})
+        # a reinstall without the remote and the linked project keeps what it knew
+        shutil.rmtree(self.app / ".git")
+        shutil.rmtree(temp)
+        cli.install(self.app)
+        self.assertEqual(json.loads((self.app / "src/lib/modeler/modeler-apply.json").read_text()), cfg)
+
+    def test_github_repo_from_remote_urls(self):
+        for url in ("https://github.com/gssi/order-management.git", "https://github.com/gssi/order-management",
+                    "https://x@github.com/gssi/order-management.git", "git@github.com:gssi/order-management.git",
+                    "ssh://git@github.com/gssi/order-management.git", "https://github.com/gssi/order-management/"):
+            self.assertEqual(cli.github_repo(url), "gssi/order-management", url)
+        self.assertIsNone(cli.github_repo("https://gitlab.com/o/r.git"))
+        self.assertIsNone(cli.github_repo(None))
+        self.assertIsNone(cli.git_origin_url(self.app))                        # no .git at all
+
+    def test_git_origin_url_follows_a_gitdir_file(self):
+        common = Path(self.tmp.name) / "repo.git"
+        (common / "worktrees" / "w").mkdir(parents=True)
+        (common / "config").write_text('[remote "origin"]\n\turl = https://github.com/o/r.git\n')
+        (common / "worktrees" / "w" / "commondir").write_text("../..\n")
+        (self.app / ".git").write_text(f"gitdir: {common / 'worktrees' / 'w'}\n")
+        self.assertEqual(cli.git_origin_url(self.app), "https://github.com/o/r.git")
 
     def test_vendored_cli_runs_without_the_plugin(self):
         cli.install(self.app)

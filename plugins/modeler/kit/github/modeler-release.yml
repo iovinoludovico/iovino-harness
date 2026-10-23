@@ -11,10 +11,14 @@
 # waits for the deploy run of the merge commit; closes the proposal (`model:done --write`). Progress and errors go
 # on the proposal row (`model:track`): the admin page shows them.
 #
-# Secrets (environment `modeler-release`; "Required reviewers" on it makes every release wait for a person):
+# Secrets: repository secrets written from the «Apply from the web» panel of /admin/model (or `gh secret set`); a
+# secret of the same name in the environment `modeler-release` takes precedence. "Required reviewers" on that
+# environment makes every release wait for a person, but only public repositories have it on the Free, Pro and Team
+# plans: on a private one the gate is the admin's «Confirm and release».
 #   MODELER_PROD_DB    DSN of the production database with the password (migrations are applied through it)
-#   MODELER_GH_TOKEN   fine-grained token of a maintainer: Contents + Pull requests: write on this repository only
-#                      (a merge made with the default GITHUB_TOKEN does not trigger the deploy workflow)
+#   MODELER_GH_TOKEN   fine-grained token with Contents + Pull requests: write on this repository only: a
+#                      maintainer's, or the app's own MODELER_APPLY_TOKEN written by the panel (a merge made with
+#                      the default GITHUB_TOKEN does not trigger the deploy workflow)
 # Installed by the modeler (`/modeler:install`) once; the app owns it from then on.
 name: modeler-release
 

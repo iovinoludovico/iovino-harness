@@ -30,6 +30,7 @@ KIT_DIR = SCRIPTS_DIR.parent / "kit"                          # only in the plug
 STATE_DIR = ".modeler"                                        # proposals and backups, in the app repository
 DRAFTS_DIR = "drafts"                                         # under STATE_DIR: the drafts `propose` turns into proposals
 METAMODEL_JSON = Path("src/lib/modeler/metamodel.json")       # what the admin page reads
+APPLY_JSON = Path("src/lib/modeler/modeler-apply.json")       # repository and pooler of the app, read by metamodel-actions.ts
 BEHAVIOR_JSON = Path("src/lib/modeler/behavior.json")         # the behaviour as the app reads it (typed expressions, SQL)
 DOMAIN_MD = Path("docs/DOMAIN.md")                            # the domain explained, generated; hand notes allowed
 BEHAVIOR_MD = Path("docs/BEHAVIOR.md")                        # the behaviour explained, generated (no hand notes)
@@ -38,6 +39,9 @@ EDITOR_JS = Path("public/modeler/metamodel-editor.js")
 TOOLS_DIR = Path("tools/modeler")
 LOCAL_SUPABASE_PORT = 54322
 VERSION_PLACEHOLDER = "__MODELER_VERSION__"                   # in kit/metamodel-editor.js
+
+# apply from the web: the panel of /admin/model seals the Actions secrets with the repository's public key
+NPM_DEPENDENCIES = {"libsodium-wrappers": "^0.8.4"}            # ships its own types
 
 NPM_SCRIPTS = {
     "model:validate": "python3 tools/modeler/modeler.py validate",
@@ -132,6 +136,67 @@ def proposals_dir(meta_path: Path) -> Path:
 
 def drafts_dir(meta_path: Path) -> Path:
     return meta_path.parent / STATE_DIR / DRAFTS_DIR
+
+
+def git_origin_url(root: Path) -> str | None:
+    """URL of the git remote `origin`, read from the repository's config (no git needed): `.git` may be a directory or
+    the `gitdir: <path>` file of a worktree or submodule, whose `commondir` holds the shared config."""
+    git = root / ".git"
+    if git.is_file():
+        m = re.match(r"gitdir:\s*(.+)", git.read_text(encoding="utf-8").strip())
+        if not m:
+            return None
+        git = (root / m.group(1)).resolve()
+        common = git / "commondir"
+        if common.is_file():
+            git = (git / common.read_text(encoding="utf-8").strip()).resolve()
+    config = git / "config"
+    if not config.is_file():
+        return None
+    section = None
+    for line in config.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            section = line
+        elif section == '[remote "origin"]' and line.startswith("url"):
+            k, _, v = line.partition("=")
+            if k.strip() == "url" and v.strip():
+                return v.strip()
+    return None
+
+
+GITHUB_REMOTE = re.compile(r"^(?:https?://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://(?:git@)?github\.com[:/])"
+                           r"([^/]+)/([^/]+?)(?:\.git)?/?$")
+
+
+def github_repo(url: str | None) -> str | None:
+    """`owner/repo` of a GitHub remote URL (https, with user, ssh, with or without .git); None for anything else."""
+    m = GITHUB_REMOTE.match(url.strip()) if url else None
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def pooler_url(root: Path) -> str | None:
+    """The pooler URL of the linked Supabase project without any password (`supabase link` writes it)."""
+    pooler = root / "supabase" / ".temp" / "pooler-url"
+    if not pooler.is_file() or not pooler.read_text(encoding="utf-8").strip():
+        return None
+    return re.sub(r"^(postgres(?:ql)?://[^:@/]+):[^@/]*@", r"\1@", pooler.read_text(encoding="utf-8").strip())
+
+
+def write_apply_config(target: Path) -> str:
+    """Writes APPLY_JSON (repository from the git remote, pooler from the linked project) for the server actions of the
+    admin page; a value that cannot be derived keeps what the file had (both keys always present, null when unknown)."""
+    current: dict[str, Any] = {}
+    path = target / APPLY_JSON
+    if path.exists():
+        try:
+            current = json.loads(path.read_text(encoding="utf-8")) or {}
+        except (json.JSONDecodeError, OSError):
+            current = {}
+    repo = github_repo(git_origin_url(target)) or current.get("repo")
+    pooler = pooler_url(target) or current.get("pooler")
+    _write_json(path, {"repo": repo, "pooler": pooler})
+    return f"{APPLY_JSON} (repository {repo or 'unknown'}, pooler {'known' if pooler else 'unknown'})"
 
 
 def _write_json(path: Path, data: Any) -> None:
@@ -1162,6 +1227,8 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
     copy(KIT_DIR / "next" / "notification-templates.tsx", "src/components/modeler/notification-templates.tsx")
     copy(KIT_DIR / "next" / "notification-actions.ts", "src/lib/modeler/notification-actions.ts")
     copy(KIT_DIR / "next" / "metamodel-actions.ts", "src/lib/modeler/metamodel-actions.ts")
+    copy(KIT_DIR / "next" / "apply-web.ts", "src/lib/modeler/apply-web.ts")
+    written.append(write_apply_config(target))      # always: metamodel-actions.ts imports the file
     copy(KIT_DIR / "next" / "access.ts", "src/lib/modeler/access.ts", overwrite=False)
     if has_view_as(target):
         # «view as» (behavior.yaml `view_as`): cookies and headers, the server actions, the switcher, the banners, the log
@@ -1194,10 +1261,19 @@ def install(target: Path, with_migration: bool = True) -> list[str]:
     pkg = target / "package.json"
     data = json.loads(pkg.read_text(encoding="utf-8"))
     scripts = data.setdefault("scripts", {})
+    changed: list[str] = []
     if any(scripts.get(k) != v for k, v in NPM_SCRIPTS.items()):
         scripts.update(NPM_SCRIPTS)
+        changed.append("model:* scripts")
+    # the sealed box of the Actions secrets: added once, an existing range (in either section) is kept
+    present = set(data.get("dependencies", {})) | set(data.get("devDependencies", {}))
+    added = [name for name in NPM_DEPENDENCIES if name not in present]
+    if added:
+        data.setdefault("dependencies", {}).update({n: NPM_DEPENDENCIES[n] for n in added})
+        changed.append(f"new dependencies {', '.join(added)}: run npm install")
+    if changed:
         pkg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        written.append("package.json (model:* scripts)")
+        written.append(f"package.json ({'; '.join(changed)})")
     if ensure_gitignore(target):
         written.append(".gitignore (__pycache__/, .modeler/backups/)")
     written += sync(target)
@@ -1376,8 +1452,11 @@ def cmd_install(a) -> int:
     if not (target / "package.json").exists():
         print(f"{target} is not a Node/Next.js project (no package.json)", file=sys.stderr)
         return 1
-    for w in install(target, with_migration=not a.no_migration):
+    written = install(target, with_migration=not a.no_migration)
+    for w in written:
         print(f"  + {w}")
+    if any("run npm install" in w for w in written):
+        print("run `npm install` and commit package-lock.json: the Docker image builds with `npm ci`")
     if not (target / E.METAMODEL_FILE).exists():
         print(f"no {E.METAMODEL_FILE} yet: derive it with `reverse --db <DSN> -o {E.METAMODEL_FILE}`, then `sync`")
     elif docs_status(target)["state"] in ("edited", "clash"):
