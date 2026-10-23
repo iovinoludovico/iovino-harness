@@ -34,6 +34,7 @@ Se il chiamante non specifica altro, rivedi le modifiche non committate (`git di
 5. **Test**: comportamento nuovo senza test, test che non verificano davvero nulla.
 6. **Coerenza** con i pattern già presenti nel progetto (non con le tue preferenze).
 7. **Immagini**: se la modifica aggiunge un import a un worker con uno stage proprio nel `Dockerfile`, il file è coperto da una riga `COPY` dello stage (o esiste il test che confronta gli import con le `COPY`); altrimenti il worker muore all'avvio in produzione con build e deploy verdi.
+8. **URL assoluti**: un redirect o un link assoluto in un route handler, in `proxy.ts`/`middleware.ts` o in un'email non parte da `request.nextUrl`, `request.url` o dall'header `host` (dietro il proxy il server standalone vede `0.0.0.0:<porta>` e il browser finisce lì; in locale non si vede): passa da `publicUrl(request, path)` su `APP_BASE_URL`. `grep -rnE "new URL\(.*(nextUrl|req\.url|request\.url)" src` sui file toccati deve dare zero righe.
 
 Non segnalare questioni di puro stile che un formatter o un linter risolverebbero.
 
