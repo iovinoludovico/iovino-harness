@@ -14,6 +14,7 @@ export type ApplyWebSecret = {
   name: ApplySecretName;
   updatedAt: string | null;      // when the repository secret was last written (GitHub's updated_at); null when missing
   envOverride: string | null;    // the environment holding a secret of the same name, which takes precedence
+  fromEnv: boolean;              // the app's environment provides it: applyWebStatus writes it on GitHub when missing
 };
 
 export type ApplyWebStatus =
@@ -32,11 +33,9 @@ export type ApplyWebStatus =
 
 export type ApplyWebInput = {
   anthropicKey?: string;         // ANTHROPIC_API_KEY
-  dbPassword?: string;           // MODELER_PROD_DB = pooler URL + this password (when the pooler is known)
-  dsn?: string;                  // MODELER_PROD_DB as a full connection string (when the pooler is unknown)
-  useAppDatabaseUrl?: boolean;   // MODELER_PROD_DB = the DATABASE_URL of the web process (when it has one)
-  mergeToken?: string;           // MODELER_GH_TOKEN; empty + useAppTokenForMerge: the app's own token
-  useAppTokenForMerge?: boolean;
+  dbPassword?: string;           // MODELER_PROD_DB = pooler URL + this password (when the web process has no DATABASE_URL)
+  dsn?: string;                  // MODELER_PROD_DB as a full connection string (when the pooler is unknown too)
+  mergeToken?: string;           // MODELER_GH_TOKEN of a maintainer, replacing the app's own token written by default
 };
 
 const POSTGRES_USER = /^(postgres(?:ql)?:\/\/[^:@/]+)(?::[^@/]*)?@/;

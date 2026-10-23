@@ -105,9 +105,12 @@ rivedilo **con l'utente**:
   stati, transizioni, ritorno, formule dei derivati, eventi, ruoli e reazioni: «Salva» produce una proposta con
   metamodello e comportamento, che `/modeler:apply` porta in `domain.ecore.yaml` e `behavior.yaml`.
 - Se l'app ha `behavior.yaml`, nella pagina di dettaglio di un record di una classe con workflow aggiungi il diagramma
-  degli stati con lo stato corrente: `import behavior from "@/lib/modeler/behavior.json"` e
-  `<WorkflowView behavior={behavior} entity="<Classe>" state={record.<attributo di stato>} lang="…" />`
+  degli stati con lo stato corrente: `import behavior from "@/lib/modeler/behavior.json"`, `import metamodel from
+  "@/lib/modeler/metamodel.json"` e
+  `<WorkflowView behavior={behavior} metamodel={metamodel} entity="<Classe>" state={record.<attributo di stato>} lang="…" />`
   (`@/components/modeler/workflow-view`), sopra le azioni di transizione; non compare se la classe non ha workflow.
+  `metamodel` è facoltativo: con esso il tooltip della busta scrive un destinatario `self.fund.manager` con le
+  etichette delle feature («Fondo › Responsabile»), come il pannello del modellatore; senza, il percorso resta com'è.
   Lo stato corrente è pieno del suo colore con testo bianco e un anello, gli altri stati sono attenuati, le transizioni
   che ne partono sono a piena forza, le altre attenuate (un valore non tra gli stati lascia il diagramma neutro e mette
   `data-state-missing` sull'elemento);
@@ -136,7 +139,7 @@ rivedilo **con l'utente**:
       </Tabs>
     );
   }
-  // nella pagina: <WorkflowTabs path={<StatePath … />} diagram={<WorkflowView behavior={behavior} entity="Order" state={row.status} lang="it" />} />
+  // nella pagina: <WorkflowTabs path={<StatePath … />} diagram={<WorkflowView behavior={behavior} metamodel={metamodel} entity="Order" state={row.status} lang="it" />} />
   ```
 - Se `behavior.yaml` ha `templates:` (`install` lo segnala con «templates found in behavior.yaml»): parti da
   `${CLAUDE_PLUGIN_ROOT}/kit/next/templates-page.tsx` per la pagina admin dei testi delle notifiche (es.
@@ -195,7 +198,9 @@ passo per passo:
 2. `install <app>` (punto 3), `npm install` se lo chiede (dipendenza nuova), poi `npm run model:validate` e
    `npm run model:sync`;
 3. typecheck, lint e test dell'app (gli script di `package.json`); se `install` stampa un suggerimento
-   («behavior.yaml found», «workflows in code», `<WorkflowView>`), applicalo o riportalo all'utente;
+   («behavior.yaml found», «workflows in code», `<WorkflowView>`, «DATABASE_URL reaches only the worker»: aggiungi
+   `DATABASE_URL: ${DATABASE_URL}` all'`environment` di `web` nel compose del repository e ricorda che il pannello del
+   server va aggiornato a mano), applicalo o riportalo all'utente;
 4. commit `chore(modeler): upgrade the modeler to <versione>` con, nel corpo, i titoli delle PR dell'harness tra le
    due versioni (`gh pr list --repo iovinoludovico/iovino-harness --state merged --limit 30 --json number,title,mergedAt`,
    quelle con `modeler` nel titolo e più recenti della versione installata) e ciò che l'app deve ancora fare a mano;
@@ -233,15 +238,16 @@ rilascio dal modellatore non li applica mai.
   proprietario del token deve poter unire su `main` (con la branch protection, tra chi può unire). Il repository lo
   conosce `modeler-apply.json` (dal remote git, scritto da `install`); `MODELER_APPLY_REPO` serve solo per forzarlo.
 - Tutto il resto dal pannello **«Applicazione dal web»** in testa a `/admin/model` (visibile a chi può modificare, non
-  in sviluppo): chiave API Anthropic (`ANTHROPIC_API_KEY`: i run si pagano con il credito API, non con l'abbonamento),
-  connessione al database di produzione (`MODELER_PROD_DB`: se il container `web` ha `DATABASE_URL` con la password,
-  come il worker, basta la casella «usa la connessione che l'app ha già», quindi nel compose passa `DATABASE_URL`
-  anche a `web`; altrimenti il pannello chiede la password e la inserisce nell'URL del pooler ricavato da
-  `supabase link`, o la stringa di connessione intera se il pooler è sconosciuto) e token che unisce la PR
-  (`MODELER_GH_TOKEN`: quello di un maintainer, oppure la casella «usa il token dell'app»; un merge fatto con
-  `GITHUB_TOKEN` non avvia il deploy). «Salva su GitHub» cifra ogni valore con la chiave pubblica del repository (sealed
-  box di libsodium, come `gh secret set`) e lo scrive come **repository secret**; l'app non conserva nulla e mostra
-  solo «impostata il …». I campi vuoti non toccano il segreto esistente. Lo stesso si può fare a mano con
+  in sviluppo). Ciò che l'app ha già nel suo ambiente lo scrive da sé su GitHub appena manca (`applyWebStatus`, al
+  caricamento del pannello; la riga dice «impostata il … · dall'ambiente dell'app»): `MODELER_PROD_DB` dalla
+  `DATABASE_URL` del container `web` (nel compose passala a `web` come al worker: `install` lo segnala quando raggiunge
+  solo il worker) e `MODELER_GH_TOKEN` dal token dell'app (un merge fatto con `GITHUB_TOKEN` non avvia il deploy). Da
+  digitare resta la chiave API Anthropic (`ANTHROPIC_API_KEY`: i run si pagano con il credito API, non con
+  l'abbonamento); facoltativo il token di un maintainer al posto di quello dell'app; se il web non ha `DATABASE_URL`, la
+  password del database (inserita nell'URL del pooler ricavato da `supabase link`) o la stringa di connessione intera
+  se il pooler è sconosciuto. «Salva su GitHub» cifra ogni valore con la chiave pubblica del repository (sealed box di
+  libsodium, come `gh secret set`) e lo scrive come **repository secret**; l'app non conserva nulla e mostra solo
+  «impostata il …». I campi vuoti non toccano il segreto esistente. Lo stesso si può fare a mano con
   `gh secret set NOME --repo owner/repo`.
 - Un secret con lo stesso nome negli environment `modeler-apply`/`modeler-release` **prevale** su quello del
   repository: il pannello lo segnala con il comando `gh secret delete NOME --env … --repo …` per toglierlo. «Required

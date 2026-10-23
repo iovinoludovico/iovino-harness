@@ -484,3 +484,21 @@ test("principalLabel / workflowModel: the recipients with the labels of the role
   assert.equal(L.edges.find((e) => e.key === "confirm").notifies[0].text, "Direttore di dipartimento");
   assert.ok(L.edges.find((e) => e.key === "cancel").notifies.length === 0);
 });
+
+// ---- <workflow-view> on a record page: with the metamodel the self.… recipients get the labels of the features
+test("workflowModel with mm/cn (as <workflow-view metamodel>): «Fondo › Responsabile» for self.fund.manager, the raw path without", () => {
+  const mm = { classes: {
+    Order: { attributes: { state: { type: "OrderState" } }, references: { fund: { type: "Fund", label: { it: "Fondo", en: "Fund" } } } },
+    Fund: { references: { manager: { type: "User", label: { it: "Responsabile", en: "Manager" }, role: true } } },
+  } };
+  const roles = { director: { label: { it: "Direttore generale", en: "General director" } } };
+  const wf = { states: { draft: { initial: true }, ordered: {} },
+               transitions: { order: { from: ["draft"], to: "ordered", notify: ["self.fund.manager", "director", "self.supplier"] } } };
+  const texts = { creator: "chi ha creato il record", admin: "amministratore" };
+  const withMm = Layout.workflowModel(wf, "it", { roles, lang: "it", texts, mm, cn: "Order" });
+  assert.equal(withMm.transitions[0].notifies[0].text, "Fondo › Responsabile, Direttore generale, self.supplier");
+  assert.equal(Layout.workflowModel(wf, "en", { roles, lang: "en", texts, mm, cn: "Order" }).transitions[0].notifies[0].text, "Fund › Manager, General director, self.supplier");
+  const withoutMm = Layout.workflowModel(wf, "it", { roles, lang: "it", texts });
+  assert.equal(withoutMm.transitions[0].notifies[0].text, "self.fund.manager, Direttore generale, self.supplier", "no metamodel: the path as written");
+  assert.equal(Layout.workflowModel(wf, "it", { roles, lang: "it", texts, mm, cn: null }).transitions[0].notifies[0].text, "self.fund.manager, Direttore generale, self.supplier", "no class name: as written");
+});

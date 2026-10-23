@@ -23,6 +23,7 @@
  *   const v = document.querySelector("workflow-view");
  *   v.workflow = behavior.workflows.Task;   // one workflow of behavior.json
  *   v.roles = behavior.roles;               // optional: the recipients of the notifications show the labels of the roles
+ *   v.metamodel = metamodel;                // optional: a `self.fund.manager` recipient shows the labels of the features
  *   v.setAttribute("state", "doing");       // the current state: its box filled with its colour (white text, a ring),
  *                                            // the other states and connectors dimmed, the transitions leaving it at
  *                                            // full strength (also the `state` property; an unknown value sets
@@ -2579,6 +2580,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       super();
       this._wf = null;             // one workflow of behavior.json ({state, states, transitions, …})
       this._roles = null;          // `roles` of behavior.json: the labels of the recipients (optional)
+      this._mm = null;             // the metamodel (metamodel.json): the labels of the `self.…` recipients (optional)
       this._cache = new Map();     // layouts per language and width
       this._last = null;           // "<lang>|<width>|<state>" of the diagram drawn (no redraw when unchanged)
       this._hover = null;
@@ -2620,6 +2622,13 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this._last = null;
       if (this.isConnected) this._render();
     }
+    get metamodel() { return this._mm ? clone(this._mm) : null; }
+    set metamodel(m) {
+      this._mm = m && typeof m === "object" ? clone(m) : null;
+      this._cache.clear();
+      this._last = null;
+      if (this.isConnected) this._render();
+    }
     set workflow(w) {
       this._wf = w && typeof w === "object" ? clone(w) : null;
       this._cache.clear();
@@ -2640,7 +2649,8 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       if (drawn === this._last) return;
       let L = this._cache.get(key);
       if (!L) {
-        const model = Layout.workflowModel(this._wf, lang, { roles: this._roles, lang, texts: (T[lang] || T.it).principals });
+        const model = Layout.workflowModel(this._wf, lang, { roles: this._roles, lang, texts: (T[lang] || T.it).principals,
+                                                              mm: this._mm, cn: this.getAttribute("name") || null });
         L = Layout.workflowLayout(model.states, model.transitions, width, { measure: textMeasure() });
         this._cache.set(key, L);
       }

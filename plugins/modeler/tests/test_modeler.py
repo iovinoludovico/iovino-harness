@@ -923,6 +923,23 @@ class AppTests(unittest.TestCase):
         cli.install(self.app)
         self.assertEqual(json.loads((self.app / "src/lib/modeler/modeler-apply.json").read_text()), cfg)
 
+    def test_install_tells_when_database_url_reaches_only_the_worker(self):
+        self.assertIsNone(cli.compose_hint(self.app))                          # no compose at all
+        compose = self.app / "deploy" / "docker-compose.prod.yml"
+        compose.parent.mkdir()
+        compose.write_text("services:\n  web:\n    image: ghcr.io/o/app-web\n    environment:\n      APP_BASE_URL: x\n"
+                           "  dispatcher:\n    image: ghcr.io/o/app-worker\n    environment:\n      DATABASE_URL: ${DATABASE_URL}\n")
+        hint = cli.compose_hint(self.app)
+        self.assertIn("DATABASE_URL reaches only dispatcher in deploy/docker-compose.prod.yml", hint)
+        self.assertIn("Apply from the web", hint)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_install(argparse.Namespace(app=str(self.app), no_migration=True)), 0)
+        self.assertIn("DATABASE_URL reaches only dispatcher", out.getvalue())
+        compose.write_text("services:\n  web:\n    environment:\n      - DATABASE_URL=${DATABASE_URL}\n"
+                           "  dispatcher:\n    environment:\n      DATABASE_URL: ${DATABASE_URL}\n")
+        self.assertIsNone(cli.compose_hint(self.app))                          # the list form counts too
+
     def test_github_repo_from_remote_urls(self):
         for url in ("https://github.com/gssi/order-management.git", "https://github.com/gssi/order-management",
                     "https://x@github.com/gssi/order-management.git", "git@github.com:gssi/order-management.git",

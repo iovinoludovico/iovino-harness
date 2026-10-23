@@ -36,8 +36,8 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   a maintainer token, wait for the deploy of the merge, `model:done`), progress on the row. The secrets the two
   workflows read (`ANTHROPIC_API_KEY`, `MODELER_PROD_DB`, `MODELER_GH_TOKEN`) are set from the **«Apply from the
   web» panel** of the same page: the app seals them with the repository's public key and writes them as repository
-  Actions secrets, keeping nothing: the database connection is the `DATABASE_URL` the web process already has, the
-  merge token can be the app's own, so only the API key is typed. The app itself needs one token
+  Actions secrets, keeping nothing; what the app's environment already holds (the `DATABASE_URL` of the web process,
+  the app's own token for the merge) is written by the panel itself, so only the API key is typed. The app needs one token
   (`MODELER_APPLY_TOKEN`), and `install` writes the repository and the pooler URL it derives into
   `src/lib/modeler/modeler-apply.json`.
   A change proposed from the prompt takes
@@ -79,7 +79,7 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   when selected, its **state diagram in a panel under the canvas** (laid out at the panel's width with the real
   text widths: states in their colour, transitions in the colour of the target, timed ones dashed, final sinks on a
   bus, hover highlight; the panel follows the selection, so the domain diagram stays clean; the same diagram is
-  reusable on the app's pages: `<WorkflowView behavior entity state>` of `workflow-view.tsx` wraps the
+  reusable on the app's pages: `<WorkflowView behavior metamodel entity state>` of `workflow-view.tsx` wraps the
   `<workflow-view>` element of the same kit file and shows the workflow of a record with its current state filled
   with its colour (white text, a ring), the other states dimmed, the transitions leaving it at full strength and the
   others dimmed, laid out at the width of its container; both elements take their colours from the page's theme,
