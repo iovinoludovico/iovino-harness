@@ -1410,6 +1410,39 @@ def templates_page_hint(root: Path) -> str | None:
             "as a model, <NotificationTemplates behavior overrides />) and apply the notification_templates migration")
 
 
+COMPOSE_FILES = ("docker-compose*.yml", "docker-compose*.yaml", "compose*.yml", "compose*.yaml", "deploy/*.yml", "deploy/*.yaml")
+
+
+def compose_hint(root: Path) -> str | None:
+    """The compose of the app passes DATABASE_URL to the worker but not to `web`: the «Apply from the web» panel
+    would then ask for the database password the app already has. None when no compose, or `web` has it too."""
+    def has_db(svc: Any) -> bool:
+        env = svc.get("environment") if isinstance(svc, dict) else None
+        if isinstance(env, dict):
+            return "DATABASE_URL" in env
+        if isinstance(env, list):
+            return any(str(e).split("=", 1)[0].split(":", 1)[0].strip() == "DATABASE_URL" for e in env)
+        return False
+
+    yaml = M.import_yaml()
+    for pattern in COMPOSE_FILES:
+        for f in sorted(root.glob(pattern)):
+            try:
+                doc = yaml.safe_load(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            services = doc.get("services") if isinstance(doc, dict) else None
+            if not isinstance(services, dict) or "web" not in services:
+                continue
+            others = [n for n, svc in services.items() if n != "web" and has_db(svc)]
+            if others and not has_db(services["web"]):
+                return (f"DATABASE_URL reaches only {', '.join(others)} in {f.relative_to(root)}: pass it to `web` too "
+                        "(environment: DATABASE_URL: ${DATABASE_URL}) and redeploy, so the «Apply from the web» panel of "
+                        "/admin/model reuses the app's database connection instead of asking for the password (install "
+                        "skill, section 7)")
+    return None
+
+
 def workflow_hint(root: Path) -> str | None:
     """The app keeps workflows in code (migrations, docs/customizations.md, an enum state attribute of the
     metamodel) but has no behavior.yaml: what to propose. None when the file exists or nothing looks like one."""
@@ -1461,7 +1494,8 @@ def cmd_install(a) -> int:
         print(f"no {E.METAMODEL_FILE} yet: derive it with `reverse --db <DSN> -o {E.METAMODEL_FILE}`, then `sync`")
     elif docs_status(target)["state"] in ("edited", "clash"):
         print(docs_report(docs_status(target), diff=False))
-    for hint in (behavior_page_hint(target), workflow_hint(target), templates_page_hint(target), view_as_hint(target)):
+    for hint in (behavior_page_hint(target), workflow_hint(target), templates_page_hint(target), view_as_hint(target),
+                 compose_hint(target)):
         if hint:
             print(hint)
     print("next: adapt src/lib/modeler/access.ts to the app's admin check, add the admin page and the link "

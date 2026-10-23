@@ -68,7 +68,7 @@ const TEXT = {
     applyWebReady: "configurata",
     applyWebMissing: (n: number) => (n === 1 ? "1 segreto da impostare" : `${n} segreti da impostare`),
     applyWebNoToken: "token dell'app mancante o non valido (MODELER_APPLY_TOKEN)",
-    applyWebIntro: "I segreti dei workflow «Applica» e «Conferma e rilascia» si salvano nel repository GitHub dell'app (Actions): l'app li cifra con la chiave pubblica del repository e non li conserva.",
+    applyWebIntro: "I workflow «Applica» e «Conferma e rilascia» girano su GitHub Actions, non nell'app: i loro segreti devono stare nel repository GitHub dell'app. Quelli che l'app ha già nel suo ambiente (connessione al database, token) li scrive da sé; l'app li cifra con la chiave pubblica del repository e non li conserva.",
     applyWebRepo: "Repository",
     applyWebNoRepo: "sconosciuto: rilancia `modeler install` con il remote `origin` configurato, o imposta MODELER_APPLY_REPO",
     applyWebSetOn: (d: string) => `impostata il ${d}`,
@@ -78,11 +78,10 @@ const TEXT = {
     applyWebAnthropic: "Chiave API Anthropic (ANTHROPIC_API_KEY): paga i run con il credito API",
     applyWebDbPassword: "Password del database di produzione (MODELER_PROD_DB)",
     applyWebDbPasswordHelp: (p: string) => `inserita nella URL del pooler ${p}`,
-    applyWebUseAppDb: "usa la connessione al database che l'app ha già (DATABASE_URL del container web)",
+    applyWebFromEnv: "dall'ambiente dell'app",
     applyWebDsn: "Stringa di connessione al database di produzione, con la password (MODELER_PROD_DB)",
     applyWebDsnHelp: "pooler sconosciuto: `supabase link` e poi `modeler install` lo ricavano da soli",
-    applyWebMergeToken: "Token che unisce la PR (MODELER_GH_TOKEN, facoltativo)",
-    applyWebUseAppToken: "usa il token dell'app per il merge (serve Pull requests: write; il deploy parte solo con un token personale)",
+    applyWebMergeToken: "Token di un maintainer per il merge della PR (MODELER_GH_TOKEN, facoltativo: sostituisce il token dell'app)",
     applyWebSave: "Salva su GitHub",
     applyWebSaving: "salvataggio…",
     applyWebLeaveEmpty: "I campi vuoti non cambiano il segreto esistente.",
@@ -119,7 +118,7 @@ const TEXT = {
     applyWebReady: "configured",
     applyWebMissing: (n: number) => (n === 1 ? "1 secret to set" : `${n} secrets to set`),
     applyWebNoToken: "app token missing or invalid (MODELER_APPLY_TOKEN)",
-    applyWebIntro: "The secrets of the «Apply» and «Confirm and release» workflows are stored in the app's GitHub repository (Actions): the app encrypts them with the repository's public key and keeps nothing.",
+    applyWebIntro: "The «Apply» and «Confirm and release» workflows run on GitHub Actions, not in the app: their secrets must live in the app's GitHub repository. Those the app already has in its environment (database connection, token) it writes by itself; the app encrypts them with the repository's public key and keeps nothing.",
     applyWebRepo: "Repository",
     applyWebNoRepo: "unknown: run `modeler install` again with the `origin` remote set, or set MODELER_APPLY_REPO",
     applyWebSetOn: (d: string) => `set on ${d}`,
@@ -129,11 +128,10 @@ const TEXT = {
     applyWebAnthropic: "Anthropic API key (ANTHROPIC_API_KEY): bills the runs on the API credit",
     applyWebDbPassword: "Production database password (MODELER_PROD_DB)",
     applyWebDbPasswordHelp: (p: string) => `inserted in the pooler URL ${p}`,
-    applyWebUseAppDb: "use the database connection the app already has (DATABASE_URL of the web container)",
+    applyWebFromEnv: "from the app's environment",
     applyWebDsn: "Production database connection string, with the password (MODELER_PROD_DB)",
     applyWebDsnHelp: "pooler unknown: `supabase link` and then `modeler install` derive it",
-    applyWebMergeToken: "Token that merges the PR (MODELER_GH_TOKEN, optional)",
-    applyWebUseAppToken: "use the app token for the merge (needs Pull requests: write; only a personal token triggers the deploy)",
+    applyWebMergeToken: "A maintainer's token that merges the PR (MODELER_GH_TOKEN, optional: replaces the app's token)",
     applyWebSave: "Save on GitHub",
     applyWebSaving: "saving…",
     applyWebLeaveEmpty: "Empty fields leave the existing secret untouched.",
@@ -150,19 +148,13 @@ const when = (iso: string, lang: string) => {
  * development (file mode) and when the status cannot be read: the editor works without it. */
 function ApplyWebPanel({ lang, t }: { lang: string; t: (typeof TEXT)["it"] }) {
   const [status, setStatus] = useState<ApplyWebStatus | null>(null);
-  const [form, setForm] = useState({ anthropicKey: "", dbPassword: "", dsn: "", mergeToken: "", useAppToken: false, useAppDb: false });
+  const [form, setForm] = useState({ anthropicKey: "", dbPassword: "", dsn: "", mergeToken: "" });
   const [saving, setSaving] = useState(false);
   const [res, setRes] = useState<ProposalResult | null>(null);
 
   // The status is read outside the render (a GitHub call); the panel disappears when it cannot be read.
   const readStatus = useCallback(() => applyWebStatus().catch((): ApplyWebStatus | null => null), []);
-  const showStatus = (st: ApplyWebStatus | null) => {
-    setStatus(st);
-    if (st?.mode === "db") {
-      const missing = (name: string) => !st.secrets.some((x) => x.name === name && (x.updatedAt || x.envOverride));
-      setForm((f) => ({ ...f, useAppToken: missing("MODELER_GH_TOKEN"), useAppDb: st.dbFromEnv && missing("MODELER_PROD_DB") }));
-    }
-  };
+  const showStatus = (st: ApplyWebStatus | null) => setStatus(st);
 
   useEffect(() => {
     let alive = true;
@@ -173,7 +165,7 @@ function ApplyWebPanel({ lang, t }: { lang: string; t: (typeof TEXT)["it"] }) {
   }, [readStatus]);
 
   if (!status || status.mode === "file") return null;
-  const filled = Boolean(form.anthropicKey || form.dbPassword || form.dsn || form.mergeToken || form.useAppToken || form.useAppDb);
+  const filled = Boolean(form.anthropicKey || form.dbPassword || form.dsn || form.mergeToken);
   const badge = !status.tokenOk
     ? <span className="text-destructive">{t.applyWebNoToken}</span>
     : status.configured
@@ -184,11 +176,10 @@ function ApplyWebPanel({ lang, t }: { lang: string; t: (typeof TEXT)["it"] }) {
     setSaving(true);
     setRes(null);
     try {
-      const r = await saveApplyWebSecrets({ anthropicKey: form.anthropicKey, dbPassword: form.dbPassword, dsn: form.dsn, mergeToken: form.mergeToken,
-                                            useAppTokenForMerge: form.useAppToken, useAppDatabaseUrl: form.useAppDb });
+      const r = await saveApplyWebSecrets({ anthropicKey: form.anthropicKey, dbPassword: form.dbPassword, dsn: form.dsn, mergeToken: form.mergeToken });
       setRes(r);
       if (r.ok) {
-        setForm({ anthropicKey: "", dbPassword: "", dsn: "", mergeToken: "", useAppToken: false, useAppDb: false });
+        setForm({ anthropicKey: "", dbPassword: "", dsn: "", mergeToken: "" });
         showStatus(await readStatus());
       }
     } catch (err) {
@@ -210,7 +201,7 @@ function ApplyWebPanel({ lang, t }: { lang: string; t: (typeof TEXT)["it"] }) {
           {status.secrets.map((x) => (
             <li key={x.name}>
               <code>{x.name}</code>{" "}
-              {x.updatedAt ? <span className="text-muted-foreground">{t.applyWebSetOn(when(x.updatedAt, lang))}</span> : <span className="text-amber-700 dark:text-amber-400">{t.applyWebUnset}</span>}
+              {x.updatedAt ? <span className="text-muted-foreground">{t.applyWebSetOn(when(x.updatedAt, lang))}{x.fromEnv ? ` · ${t.applyWebFromEnv}` : ""}</span> : <span className="text-amber-700 dark:text-amber-400">{t.applyWebUnset}</span>}
               {x.envOverride && status.repo && (
                 <p className="text-xs text-amber-700 dark:text-amber-400">{t.applyWebOverride(x.envOverride)} <code>{envOverrideCommand(x.name, x.envOverride, status.repo)}</code></p>
               )}
@@ -222,12 +213,7 @@ function ApplyWebPanel({ lang, t }: { lang: string; t: (typeof TEXT)["it"] }) {
           <span className="text-muted-foreground">{t.applyWebAnthropic}</span>
           <input type="password" autoComplete="off" className={input} value={form.anthropicKey} onChange={(e) => setForm({ ...form, anthropicKey: e.target.value })} />
         </label>
-        {status.dbFromEnv ? (
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={form.useAppDb} onChange={(e) => setForm({ ...form, useAppDb: e.target.checked })} />
-            <span className="text-muted-foreground">{t.applyWebUseAppDb}</span>
-          </label>
-        ) : status.pooler ? (
+        {status.dbFromEnv ? null : status.pooler ? (
           <label className="block">
             <span className="text-muted-foreground">{t.applyWebDbPassword}</span>
             <input type="password" autoComplete="off" className={input} value={form.dbPassword} onChange={(e) => setForm({ ...form, dbPassword: e.target.value })} />
@@ -244,12 +230,6 @@ function ApplyWebPanel({ lang, t }: { lang: string; t: (typeof TEXT)["it"] }) {
           <span className="text-muted-foreground">{t.applyWebMergeToken}</span>
           <input type="password" autoComplete="off" className={input} value={form.mergeToken} onChange={(e) => setForm({ ...form, mergeToken: e.target.value })} />
         </label>
-        {!form.mergeToken && (
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={form.useAppToken} onChange={(e) => setForm({ ...form, useAppToken: e.target.checked })} />
-            <span className="text-muted-foreground">{t.applyWebUseAppToken}</span>
-          </label>
-        )}
         <p className="text-xs text-muted-foreground">{t.applyWebLeaveEmpty} {t.applyWebReviewers}</p>
         <button type="button" className="rounded bg-primary px-2 py-1 font-medium text-primary-foreground disabled:opacity-50" disabled={saving || !status.tokenOk || !filled} onClick={save}>
           {saving ? t.applyWebSaving : t.applyWebSave}

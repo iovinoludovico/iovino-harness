@@ -36,8 +36,8 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   a maintainer token, wait for the deploy of the merge, `model:done`), progress on the row. The secrets the two
   workflows read (`ANTHROPIC_API_KEY`, `MODELER_PROD_DB`, `MODELER_GH_TOKEN`) are set from the **«Apply from the
   web» panel** of the same page: the app seals them with the repository's public key and writes them as repository
-  Actions secrets, keeping nothing: the database connection is the `DATABASE_URL` the web process already has, the
-  merge token can be the app's own, so only the API key is typed. The app itself needs one token
+  Actions secrets, keeping nothing; what the app's environment already holds (the `DATABASE_URL` of the web process,
+  the app's own token for the merge) is written by the panel itself, so only the API key is typed. The app needs one token
   (`MODELER_APPLY_TOKEN`), and `install` writes the repository and the pooler URL it derives into
   `src/lib/modeler/modeler-apply.json`.
   A change proposed from the prompt takes

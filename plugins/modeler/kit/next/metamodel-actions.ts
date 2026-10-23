@@ -21,8 +21,9 @@
 // (ANTHROPIC_API_KEY, MODELER_PROD_DB, MODELER_GH_TOKEN) are set from the «Apply from the web» panel of the page:
 // saveApplyWebSecrets seals each value with the repository's Actions public key (libsodium sealed box, as `gh secret
 // set` does) and writes it as a repository secret; the app stores nothing, applyWebStatus only reports their dates.
-// MODELER_PROD_DB is taken from the DATABASE_URL of the web process when the compose passes it (the worker already
-// has it), MODELER_GH_TOKEN from the app's own token when the admin says so: then only the API key is typed.
+// What the app's environment already holds is never typed again: applyWebStatus writes MODELER_PROD_DB from the
+// DATABASE_URL of the web process (the compose passes it to `web` as to the worker) and MODELER_GH_TOKEN from the app's
+// own token as soon as they are missing on GitHub, so the admin types only the API key.
 
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -288,10 +289,15 @@ export async function requestProposalApply(id: string): Promise<ProposalResult> 
 export async function applyWebStatus(): Promise<ApplyWebStatus> {
   await requireModelerAdmin();
   if (proposalMode() === "file") return { mode: "file" };
-  const blank = APPLY_SECRETS.map((name): ApplyWebSecret => ({ name, updatedAt: null, envOverride: null }));
-  const base = { mode: "db" as const, repo: applyRepo(), pooler: APPLY.pooler ?? null, dbFromEnv: appDatabaseUrl() !== null,
-                 tokenOk: false, configured: false, envChecked: false, secrets: blank };
   const cfg = githubConfig();
+  // what the app's environment provides: written on GitHub by this very call when missing there
+  const fromEnv: Partial<Record<ApplySecretName, string>> = {};
+  const own = appDatabaseUrl();
+  if (own) fromEnv.MODELER_PROD_DB = own;
+  if (!("ok" in cfg)) fromEnv.MODELER_GH_TOKEN = cfg.token;
+  const blank = APPLY_SECRETS.map((name): ApplyWebSecret => ({ name, updatedAt: null, envOverride: null, fromEnv: name in fromEnv }));
+  const base = { mode: "db" as const, repo: applyRepo(), pooler: APPLY.pooler ?? null, dbFromEnv: own !== null,
+                 tokenOk: false, configured: false, envChecked: false, secrets: blank };
   if ("ok" in cfg) return { ...base, error: cfg.message };
   const res = await gh(cfg.repo, cfg.token, "/actions/secrets?per_page=100");
   if (!res.ok) {
@@ -309,13 +315,47 @@ export async function applyWebStatus(): Promise<ApplyWebStatus> {
     const l = (await r.json()) as { secrets?: { name: string }[] };
     for (const x of l.secrets ?? []) if (!overrides.has(x.name)) overrides.set(x.name, env);
   }
-  const secrets = APPLY_SECRETS.map((name): ApplyWebSecret => ({ name, updatedAt: dates.get(name) ?? null, envOverride: overrides.get(name) ?? null }));
-  return { ...base, tokenOk: true, configured: secrets.every((x) => x.updatedAt || x.envOverride), envChecked, secrets, error: null };
+  let error: string | null = null;
+  const seed: Partial<Record<ApplySecretName, string>> = {};
+  for (const name of APPLY_SECRETS) if (fromEnv[name] && !dates.has(name) && !overrides.has(name)) seed[name] = fromEnv[name];
+  if (Object.keys(seed).length) {
+    const written = await putSecrets(cfg, seed);
+    if (written.ok) for (const name of written.names) dates.set(name, new Date().toISOString());
+    else error = `Could not write ${Object.keys(seed).join(", ")} from the app's environment: ${written.message}`;
+  }
+  const secrets = APPLY_SECRETS.map((name): ApplyWebSecret => ({ name, updatedAt: dates.get(name) ?? null, envOverride: overrides.get(name) ?? null, fromEnv: name in fromEnv }));
+  return { ...base, tokenOk: true, configured: secrets.every((x) => x.updatedAt || x.envOverride), envChecked, secrets, error };
 }
 
-/** Writes the secrets the workflows read as repository Actions secrets, each sealed with the repository's public key
- * (libsodium sealed box, the recipe of `gh secret set`). An empty field leaves the existing secret untouched; the app
- * stores nothing and never sends a value back. */
+/** Seals each value with the repository's Actions public key (libsodium sealed box, the recipe of `gh secret set`)
+ * and writes it as a repository secret. */
+async function putSecrets(cfg: { repo: string; token: string }, values: Partial<Record<ApplySecretName, string>>): Promise<ProposalResult & { names: ApplySecretName[] }> {
+  const names = Object.keys(values) as ApplySecretName[];
+  const pk = await gh(cfg.repo, cfg.token, "/actions/secrets/public-key");
+  if (!pk.ok) {
+    const detail = await ghDetail(pk);
+    return { ok: false, names, message: `GitHub refused the repository's public key (${pk.status}): ${detail || `the token needs Secrets: read and write on ${cfg.repo}`}` };
+  }
+  const { key_id, key: publicKey } = (await pk.json()) as { key_id: string; key: string };
+  const mod = await import("libsodium-wrappers");
+  const sodium = ((mod as unknown as { default?: typeof mod }).default ?? mod) as typeof mod;   // CJS under a bundler or Node
+  await sodium.ready;
+  const recipient = sodium.from_base64(publicKey, sodium.base64_variants.ORIGINAL);
+  for (const name of names) {
+    const sealed = sodium.crypto_box_seal(sodium.from_string(values[name] ?? ""), recipient);
+    const res = await gh(cfg.repo, cfg.token, `/actions/secrets/${name}`, {
+      method: "PUT", body: JSON.stringify({ encrypted_value: sodium.to_base64(sealed, sodium.base64_variants.ORIGINAL), key_id }),
+    });
+    if (!res.ok) {
+      const detail = await ghDetail(res);
+      return { ok: false, names, message: `GitHub refused to write ${name} (${res.status}): ${detail || `the token needs Secrets: write on ${cfg.repo}`}` };
+    }
+  }
+  return { ok: true, names, message: "" };
+}
+
+/** Writes what the admin typed as repository Actions secrets (sealed; see putSecrets). An empty field leaves the
+ * existing secret untouched; the app stores nothing and never sends a value back. */
 export async function saveApplyWebSecrets(input: ApplyWebInput): Promise<ProposalResult> {
   await requireModelerAdmin();
   if (proposalMode() === "file") return { ok: false, message: "In development the proposals are applied with /modeler:apply: nothing to configure." };
@@ -332,37 +372,14 @@ export async function saveApplyWebSecrets(input: ApplyWebInput): Promise<Proposa
     const full = APPLY.pooler ? dsnWithPassword(APPLY.pooler, input.dbPassword) : null;
     if (!full) return { ok: false, message: "The pooler URL of the production database is unknown: paste the full connection string instead (or `supabase link`, then `modeler install` again)." };
     values.MODELER_PROD_DB = full;
-  } else if (input.useAppDatabaseUrl) {
-    const own = appDatabaseUrl();
-    if (!own) return { ok: false, message: "The web process has no DATABASE_URL with the password: pass it to the `web` service in the compose, or type the password." };
-    values.MODELER_PROD_DB = own;
   }
   const merge = input.mergeToken?.trim();
   if (merge) values.MODELER_GH_TOKEN = merge;
-  else if (input.useAppTokenForMerge) values.MODELER_GH_TOKEN = cfg.token;
   const names = Object.keys(values) as ApplySecretName[];
   if (!names.length) return { ok: false, message: "Nothing to save: the fields are empty." };
   if (names.some((n) => Buffer.byteLength(values[n] ?? "") > 48_000)) return { ok: false, message: "A value exceeds GitHub's limit of 48 KB for a secret." };
-  const pk = await gh(cfg.repo, cfg.token, "/actions/secrets/public-key");
-  if (!pk.ok) {
-    const detail = await ghDetail(pk);
-    return { ok: false, message: `GitHub refused the repository's public key (${pk.status}): ${detail || `the token needs Secrets: read and write on ${cfg.repo}`}` };
-  }
-  const { key_id, key: publicKey } = (await pk.json()) as { key_id: string; key: string };
-  const mod = await import("libsodium-wrappers");
-  const sodium = ((mod as unknown as { default?: typeof mod }).default ?? mod) as typeof mod;   // CJS under a bundler or Node
-  await sodium.ready;
-  const recipient = sodium.from_base64(publicKey, sodium.base64_variants.ORIGINAL);
-  for (const name of names) {
-    const sealed = sodium.crypto_box_seal(sodium.from_string(values[name] ?? ""), recipient);
-    const res = await gh(cfg.repo, cfg.token, `/actions/secrets/${name}`, {
-      method: "PUT", body: JSON.stringify({ encrypted_value: sodium.to_base64(sealed, sodium.base64_variants.ORIGINAL), key_id }),
-    });
-    if (!res.ok) {
-      const detail = await ghDetail(res);
-      return { ok: false, message: `GitHub refused to write ${name} (${res.status}): ${detail || `the token needs Secrets: write on ${cfg.repo}`}` };
-    }
-  }
+  const written = await putSecrets(cfg, values);
+  if (!written.ok) return { ok: false, message: written.message };
   return { ok: true, message: `Saved on GitHub as repository secrets of ${cfg.repo}: ${names.join(", ")}. A secret with the same name in the modeler-apply or modeler-release environment still takes precedence.` };
 }
 
