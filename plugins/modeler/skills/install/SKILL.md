@@ -63,7 +63,13 @@ rivedilo **con l'utente**:
   registrano inizio e fine con `view_as_audit`, il selettore del ruolo, i banner e il registro `<ViewAsLog>`; il
   database fa il resto con il motore generato),
 - `src/lib/modeler/metamodel-actions.ts` (salva, elenca e scarta le proposte: file in sviluppo, tabella in produzione;
-  «Applica» su una proposta di produzione avvia il workflow `modeler-apply`),
+  «Applica» su una proposta di produzione avvia il workflow `modeler-apply`; `applyWebStatus`/`saveApplyWebSecrets`
+  per il pannello «Applicazione dal web», sezione 7),
+- `src/lib/modeler/apply-web.ts` (gli helper puri del pannello) e `src/lib/modeler/modeler-apply.json` (`repo` dal
+  remote git `origin`, `pooler` dall'URL del pooler del progetto Supabase collegato, senza password; riscritto a ogni
+  install tenendo i valori che non riesce a ricavare; si committa: contiene solo host e ref del progetto),
+- `libsodium-wrappers` tra le `dependencies` di `package.json` (solo se manca; cifra i segreti per GitHub): poi
+  `npm install` e commit di `package-lock.json`, l'immagine Docker fa `npm ci`,
 - `supabase/migrations/<ts>_model_change_requests_apply.sql` (solo la prima volta: le colonne `pr_url`, `apply_error`,
   `apply_requested_at`, `apply_finished_at` dell'esito di un'applicazione dal web),
 - `.github/workflows/modeler-apply.yml`, `.github/modeler-apply-rules.md` e `.github/workflows/modeler-release.yml`
@@ -186,13 +192,16 @@ applicata al cloud con `/core:db-push`.
 Quando `tools/modeler/VERSION` è più vecchio del plugin (l'inizio sessione lo segnala), fai da solo, senza chiedere
 passo per passo:
 1. branch `chore/modeler-<versione>` da `main` aggiornato;
-2. `install <app>` (punto 3), poi `npm run model:validate` e `npm run model:sync`;
+2. `install <app>` (punto 3), `npm install` se lo chiede (dipendenza nuova), poi `npm run model:validate` e
+   `npm run model:sync`;
 3. typecheck, lint e test dell'app (gli script di `package.json`); se `install` stampa un suggerimento
    («behavior.yaml found», «workflows in code», `<WorkflowView>`), applicalo o riportalo all'utente;
 4. commit `chore(modeler): upgrade the modeler to <versione>` con, nel corpo, i titoli delle PR dell'harness tra le
    due versioni (`gh pr list --repo iovinoludovico/iovino-harness --state merged --limit 30 --json number,title,mergedAt`,
    quelle con `modeler` nel titolo e più recenti della versione installata) e ciò che l'app deve ancora fare a mano;
 5. proponi `/core:ship` (porta anche le migrazioni nuove in cloud prima del push, se ce ne sono).
+Se l'app passa a un modellatore con il pannello «Applicazione dal web» (sezione 7), ricorda all'utente di rigenerare
+`MODELER_APPLY_TOKEN` con Pull requests: write e Secrets: write e di impostare i segreti dal pannello.
 `install` aggiunge a `.gitignore` anche `.modeler/backups/` (i backup di `apply` e `sync --force` sporcavano
 l'albero e bloccavano `ship`) e `.modeler/drafts/`. Senza `psql`, `pull`, `done`, `drift` e `reverse` usano `supabase db query`
 (`--linked` via Management API con il token di `supabase login`, altrimenti `--db-url`).
@@ -217,26 +226,37 @@ deploy fallito → errore sulla riga, migrazione già applicata e PR unita: roll
 `npm run model:done -- --write` chiude la proposta. La riga mostra «rilascio in corso», «unita, deploy in corso»,
 «rilascio fallito» con «Riprova». I drop e i cambi di tipo restano commentati nella migrazione: li elenca la PR, e il
 rilascio dal modellatore non li applica mai.
-- Da impostare una volta, nel repository GitHub dell'app, nell'environment `modeler-apply` (Settings →
-  Environments; il job gira lì e GitHub lo crea al primo run se manca; con «Required reviewers» ogni run aspetta
-  l'approvazione di una persona prima di spendere) o nei secrets del repository (Settings → Secrets and variables →
-  Actions): segreti `ANTHROPIC_API_KEY` (i run si pagano con il credito API, non con l'abbonamento) e `MODELER_PROD_DB` (DSN del
-  pooler del progetto Supabase, con la password: serve solo a `pull`/`track`, nessuna migrazione passa da lì);
-  variabili facoltative `MODELER_APPLY_MODEL` (default `claude-opus-5-5`), `MODELER_APPLY_BUDGET` (dollari per run,
-  default 10), `MODELER_HARNESS` (marketplace, default `iovinoludovico/iovino-harness`; se il repository dell'harness
-  è privato il passo «Claude Code and the modeler plugin» va adattato con un token).
-- Per il rilascio: environment `modeler-release` con **«Required reviewers»** (la conferma umana fuori dall'app: il
-  run aspetta l'approvazione su GitHub prima di toccare il database di produzione) e il secret `MODELER_GH_TOKEN`,
-  token fine-grained di chi può unire su `main` con Contents + Pull requests: write su quel solo repository (serve
-  perché un merge fatto con `GITHUB_TOKEN` non avvia il workflow di deploy); con la branch protection su `main`,
-  il proprietario del token deve essere tra chi può unire. `MODELER_PROD_DB` serve anche qui (`db push --db-url`).
-- Nel pannello dell'app (Docker Manager, come `DATABASE_URL`; skill `core:deploy`): `MODELER_APPLY_REPO`
-  (`owner/repo`) e `MODELER_APPLY_TOKEN`, un token fine-grained con Contents: write (i `repository_dispatch`) e
-  Pull requests: read («Rivedi») su quel repository. Senza, il bottone spiega cosa manca.
+- Da impostare una volta. Nel pannello dell'app (Docker Manager, come `DATABASE_URL`; skill `core:deploy`) **una sola
+  variabile**: `MODELER_APPLY_TOKEN`, token fine-grained sul solo repository dell'app con Contents: write (i
+  `repository_dispatch`), Pull requests: write («Rivedi», e il merge quando fa anche da `MODELER_GH_TOKEN`) e Secrets:
+  write (il pannello qui sotto); facoltativo Environments: read per l'avviso sui secret degli environment. Il
+  proprietario del token deve poter unire su `main` (con la branch protection, tra chi può unire). Il repository lo
+  conosce `modeler-apply.json` (dal remote git, scritto da `install`); `MODELER_APPLY_REPO` serve solo per forzarlo.
+- Tutto il resto dal pannello **«Applicazione dal web»** in testa a `/admin/model` (visibile a chi può modificare, non
+  in sviluppo): chiave API Anthropic (`ANTHROPIC_API_KEY`: i run si pagano con il credito API, non con l'abbonamento),
+  connessione al database di produzione (`MODELER_PROD_DB`: se il container `web` ha `DATABASE_URL` con la password,
+  come il worker, basta la casella «usa la connessione che l'app ha già», quindi nel compose passa `DATABASE_URL`
+  anche a `web`; altrimenti il pannello chiede la password e la inserisce nell'URL del pooler ricavato da
+  `supabase link`, o la stringa di connessione intera se il pooler è sconosciuto) e token che unisce la PR
+  (`MODELER_GH_TOKEN`: quello di un maintainer, oppure la casella «usa il token dell'app»; un merge fatto con
+  `GITHUB_TOKEN` non avvia il deploy). «Salva su GitHub» cifra ogni valore con la chiave pubblica del repository (sealed
+  box di libsodium, come `gh secret set`) e lo scrive come **repository secret**; l'app non conserva nulla e mostra
+  solo «impostata il …». I campi vuoti non toccano il segreto esistente. Lo stesso si può fare a mano con
+  `gh secret set NOME --repo owner/repo`.
+- Un secret con lo stesso nome negli environment `modeler-apply`/`modeler-release` **prevale** su quello del
+  repository: il pannello lo segnala con il comando `gh secret delete NOME --env … --repo …` per toglierlo. «Required
+  reviewers» sugli environment (il run aspetta l'approvazione di una persona) esiste solo sui repository pubblici con
+  i piani Free, Pro e Team: su un repository privato la conferma umana è il clic in `/admin/model` e il tetto di spesa
+  `MODELER_APPLY_BUDGET`. Variabili facoltative (Settings → Secrets and variables → Actions → Variables):
+  `MODELER_APPLY_MODEL` (default `claude-opus-5-5`), `MODELER_APPLY_BUDGET` (dollari per run, default 10),
+  `MODELER_HARNESS` (marketplace, default `iovinoludovico/iovino-harness`; se il repository dell'harness è privato il
+  passo «Claude Code and the modeler plugin» va adattato con un token).
+- Se `next build` dell'app fallisce su `libsodium-wrappers` (import dinamico nella server action), aggiungi
+  `serverExternalPackages: ["libsodium-wrappers"]` in `next.config.ts`: il pacchetto resta esterno al bundle e Next lo
+  copia nello standalone.
 - Costo per run (stima; il valore reale è `total_cost_usd` nel riepilogo del job): modifica piccola (attributo,
   relazione, letterale) 2–5 $ con Opus 5.5, 1–2,5 $ con Sonnet 5.5; media (classe nuova con tabella, policy, form,
   pagina) 8–20 $ / 4–10 $. `MODELER_APPLY_BUDGET` ferma il run oltre la soglia (la riga mostra l'errore, nessuna PR).
 - Prova: Actions → `modeler-apply` → «Run workflow» con l'id di una proposta di prova; poi, per il rilascio, una
-  proposta con una migrazione innocua e `modeler-release` → «Run workflow» (id, numero della PR); la prima volta con
-  il reviewer attivo. I workflow sono dell'app: `install` non li sovrascrive (adattali liberamente, es. i servizi
-  di `supabase start`).
+  proposta con una migrazione innocua e `modeler-release` → «Run workflow» (id, numero della PR). I workflow sono
+  dell'app: `install` non li sovrascrive (adattali liberamente, es. i servizi di `supabase start`).

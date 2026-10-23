@@ -85,10 +85,13 @@ Record A `<app>.iovino-systems.cloud` → IP del VPS. Un errore del certificato 
      anche quando quella corretta è pubblicata;
    - **Variabili**: `DATABASE_URL` (session pooler, con la password) è l'unica senza predefinito ed è un segreto:
      solo qui. Le altre (`deploy/.env.production.example`) solo per cambiare i predefiniti del compose.
-     Con il modellatore e l'applicazione dal web (skill `modeler:install`, sezione 7) anche `MODELER_APPLY_REPO`
-     (`owner/repo`) e `MODELER_APPLY_TOKEN` (token fine-grained, Contents: write e Pull requests: read su quel
-     repository): secondo segreto del pannello, mai nel compose né nel repository. Il token con cui il workflow
-     `modeler-release` unisce la PR (`MODELER_GH_TOKEN`) sta nei secrets di GitHub, non nel pannello.
+     Con il modellatore e l'applicazione dal web (skill `modeler:install`, sezione 7) anche `MODELER_APPLY_TOKEN`
+     (token fine-grained sul solo repository dell'app: Contents write, Pull requests write, Secrets write): secondo
+     segreto del pannello, mai nel compose né nel repository. Gli altri segreti dei workflow (`ANTHROPIC_API_KEY`,
+     `MODELER_PROD_DB`, `MODELER_GH_TOKEN`) li scrive l'admin dal pannello «Applicazione dal web» di `/admin/model`
+     come repository secrets di GitHub Actions; perché riusi la connessione al database senza chiedere la password,
+     il compose passa `DATABASE_URL` anche al servizio `web`, non solo al worker. `MODELER_APPLY_REPO` solo per
+     forzare un repository diverso da quello del remote git.
 3. Deploy dal pannello **dopo** che il workflow ha pubblicato le immagini (primo push su `main`).
 4. Le modifiche al compose si fanno nel pannello e si riportano in `deploy/docker-compose.prod.yml` (e
    viceversa): repository e server restano uguali.

@@ -11,15 +11,25 @@
 // (listMetamodelProposals) so that nobody wonders where a saved change went, and can reject one.
 // "Apply" on a production proposal (requestProposalApply) starts the `modeler-apply` GitHub Actions workflow
 // (repository_dispatch): Claude Code applies it on a branch and opens the pull request, whose link comes back on
-// the row (`npm run model:track`). Env of the app: MODELER_APPLY_REPO (owner/repo) and MODELER_APPLY_TOKEN (a
-// fine-grained token with Contents: write on that repository only); the token never leaves the server.
-// "Confirm and release" on the PR (requestProposalRelease) starts `modeler-release` the same way (migrations on
-// the production database, merge, deploy, done); proposalPullRequest shows the PR to review first (Pull requests:
-// read on the same token).
+// the row (`npm run model:track`). "Confirm and release" on the PR (requestProposalRelease) starts `modeler-release`
+// the same way (migrations on the production database, merge, deploy, done); proposalPullRequest shows the PR to
+// review first.
+// One variable in the app's environment: MODELER_APPLY_TOKEN, a fine-grained token on that repository only with
+// Contents: write (the dispatches), Pull requests: write (the review, and the merge when it serves as MODELER_GH_TOKEN)
+// and Secrets: write (the panel below); it never leaves the server. The repository comes from modeler-apply.json
+// (written by `modeler install` from the git remote; MODELER_APPLY_REPO overrides it). The secrets the workflows read
+// (ANTHROPIC_API_KEY, MODELER_PROD_DB, MODELER_GH_TOKEN) are set from the «Apply from the web» panel of the page:
+// saveApplyWebSecrets seals each value with the repository's Actions public key (libsodium sealed box, as `gh secret
+// set` does) and writes it as a repository secret; the app stores nothing, applyWebStatus only reports their dates.
+// MODELER_PROD_DB is taken from the DATABASE_URL of the web process when the compose passes it (the worker already
+// has it), MODELER_GH_TOKEN from the app's own token when the admin says so: then only the API key is typed.
 
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { modelerDb, requireModelerAdmin } from "./access";
+import { APPLY_ENVIRONMENTS, APPLY_SECRETS, dsnHasPassword, dsnWithPassword,
+         type ApplySecretName, type ApplyWebInput, type ApplyWebSecret, type ApplyWebStatus } from "./apply-web";
+import applyConfig from "./modeler-apply.json";
 
 export type ProposalResult = { ok: boolean; message: string };
 
@@ -153,23 +163,49 @@ export async function listMetamodelProposals(): Promise<PendingProposal[]> {
 
 const GITHUB_HEADERS = (token: string) => ({ Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" });
 
+// Written by `modeler install`: the repository (from the git remote) and the pooler URL of the production database
+// without password (from the linked Supabase project); null when it could not derive them.
+const APPLY = applyConfig as { repo?: string | null; pooler?: string | null };
+
+function applyRepo(): string | null {
+  return process.env.MODELER_APPLY_REPO || APPLY.repo || null;
+}
+
+/** The connection string of the production database the web process already has (the compose passes DATABASE_URL
+ * to `web` as to the worker), when it carries the password: the panel reuses it instead of asking for the password. */
+function appDatabaseUrl(): string | null {
+  return [process.env.MODELER_PROD_DB, process.env.DATABASE_URL].find((v) => v && dsnHasPassword(v)) ?? null;
+}
+
 function githubConfig(): { repo: string; token: string } | ProposalResult {
-  const repo = process.env.MODELER_APPLY_REPO;
+  const repo = applyRepo();
   const token = process.env.MODELER_APPLY_TOKEN;
-  if (!repo || !token) {
-    return { ok: false, message: "Apply from the web is not configured: set MODELER_APPLY_REPO (owner/repo) and MODELER_APPLY_TOKEN in the app's environment (see the modeler install skill, section 7)." };
+  if (!token) {
+    return { ok: false, message: "Apply from the web is not configured: set MODELER_APPLY_TOKEN in the app's environment (fine-grained token on this repository: Contents write, Pull requests write, Secrets write). The API key, the database password and the merge token are then set from the «Apply from the web» panel of this page (modeler install skill, section 7)." };
+  }
+  if (!repo) {
+    return { ok: false, message: "Apply from the web: the GitHub repository is unknown. Run `modeler install` again with the git remote `origin` set, or set MODELER_APPLY_REPO (owner/repo) in the app's environment." };
   }
   return { repo, token };
 }
 
+type GhResponse = { ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<unknown> };
+
+/** One call to the GitHub API on the app's repository; a network failure reads as status 0. */
+async function gh(repo: string, token: string, path: string, init: RequestInit = {}): Promise<GhResponse> {
+  return fetch(`https://api.github.com/repos/${repo}${path}`, { ...init, headers: GITHUB_HEADERS(token), cache: "no-store" })
+    .catch((e: unknown): GhResponse => ({ ok: false, status: 0, text: async () => String(e), json: async () => ({}) }));
+}
+
+async function ghDetail(res: GhResponse): Promise<string> {
+  return (await res.text().catch(() => "")).slice(0, 200);
+}
+
 async function dispatch(repo: string, token: string, eventType: string, payload: Record<string, unknown>): Promise<ProposalResult> {
-  const res = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
-    method: "POST", headers: GITHUB_HEADERS(token),
-    body: JSON.stringify({ event_type: eventType, client_payload: payload }),
-  }).catch((e: unknown) => ({ ok: false, status: 0, text: async () => String(e) }));
+  const res = await gh(repo, token, "/dispatches", { method: "POST", body: JSON.stringify({ event_type: eventType, client_payload: payload }) });
   if (!res.ok) {
-    const detail = (await res.text().catch(() => "")).slice(0, 200);
-    return { ok: false, message: `GitHub refused the dispatch (${res.status}): ${detail || "check MODELER_APPLY_REPO and the token's permissions"}` };
+    const detail = await ghDetail(res);
+    return { ok: false, message: `GitHub refused the dispatch (${res.status}): ${detail || "check the repository and the token's permissions (Contents: write)"}` };
   }
   return { ok: true, message: "" };
 }
@@ -186,10 +222,9 @@ export async function proposalPullRequest(id: string): Promise<ProposalPullReque
   if (error) return { ok: false, message: error.message };
   const m = /\/pull\/(\d+)$/.exec(data?.[0]?.pr_url ?? "");
   if (!m) return { ok: false, message: "No pull request on this proposal yet" };
-  const res = await fetch(`https://api.github.com/repos/${cfg.repo}/pulls/${m[1]}`, { headers: GITHUB_HEADERS(cfg.token), cache: "no-store" })
-    .catch((e: unknown) => ({ ok: false, status: 0, text: async () => String(e), json: async () => ({}) }));
+  const res = await gh(cfg.repo, cfg.token, `/pulls/${m[1]}`);
   if (!res.ok) {
-    const detail = (await res.text().catch(() => "")).slice(0, 200);
+    const detail = await ghDetail(res);
     return { ok: false, message: `GitHub refused the request (${res.status}): ${detail || "the token needs Pull requests: read"}` };
   }
   const pr = (await res.json()) as { number: number; title: string; body: string | null; state: string; merged: boolean;
@@ -246,6 +281,89 @@ export async function requestProposalApply(id: string): Promise<ProposalResult> 
   }
   if (error) return { ok: false, message: error.message };
   return { ok: true, message: "Workflow started: the pull request will appear here when it is ready (a few minutes)." };
+}
+
+/** The state of «Apply from the web»: repository, token, the three Actions secrets with the date they were written
+ * and whether an environment secret of the same name would take precedence. Never returns a value. */
+export async function applyWebStatus(): Promise<ApplyWebStatus> {
+  await requireModelerAdmin();
+  if (proposalMode() === "file") return { mode: "file" };
+  const blank = APPLY_SECRETS.map((name): ApplyWebSecret => ({ name, updatedAt: null, envOverride: null }));
+  const base = { mode: "db" as const, repo: applyRepo(), pooler: APPLY.pooler ?? null, dbFromEnv: appDatabaseUrl() !== null,
+                 tokenOk: false, configured: false, envChecked: false, secrets: blank };
+  const cfg = githubConfig();
+  if ("ok" in cfg) return { ...base, error: cfg.message };
+  const res = await gh(cfg.repo, cfg.token, "/actions/secrets?per_page=100");
+  if (!res.ok) {
+    const detail = await ghDetail(res);
+    return { ...base, error: `GitHub refused the secrets list (${res.status}): ${detail || `the token needs Secrets: read and write on ${cfg.repo}`}` };
+  }
+  const list = (await res.json()) as { secrets?: { name: string; updated_at: string }[] };
+  const dates = new Map((list.secrets ?? []).map((x) => [x.name, x.updated_at] as const));
+  let envChecked = true;
+  const overrides = new Map<string, string>();
+  for (const env of APPLY_ENVIRONMENTS) {
+    const r = await gh(cfg.repo, cfg.token, `/environments/${env}/secrets?per_page=100`);
+    if (r.status === 404) continue;                       // not created yet: GitHub creates it on the first run
+    if (!r.ok) { envChecked = false; continue; }          // Environments: read missing on the token: not blocking
+    const l = (await r.json()) as { secrets?: { name: string }[] };
+    for (const x of l.secrets ?? []) if (!overrides.has(x.name)) overrides.set(x.name, env);
+  }
+  const secrets = APPLY_SECRETS.map((name): ApplyWebSecret => ({ name, updatedAt: dates.get(name) ?? null, envOverride: overrides.get(name) ?? null }));
+  return { ...base, tokenOk: true, configured: secrets.every((x) => x.updatedAt || x.envOverride), envChecked, secrets, error: null };
+}
+
+/** Writes the secrets the workflows read as repository Actions secrets, each sealed with the repository's public key
+ * (libsodium sealed box, the recipe of `gh secret set`). An empty field leaves the existing secret untouched; the app
+ * stores nothing and never sends a value back. */
+export async function saveApplyWebSecrets(input: ApplyWebInput): Promise<ProposalResult> {
+  await requireModelerAdmin();
+  if (proposalMode() === "file") return { ok: false, message: "In development the proposals are applied with /modeler:apply: nothing to configure." };
+  const cfg = githubConfig();
+  if ("ok" in cfg) return cfg;
+  const values: Partial<Record<ApplySecretName, string>> = {};
+  const key = input.anthropicKey?.trim();
+  if (key) values.ANTHROPIC_API_KEY = key;
+  const dsn = input.dsn?.trim();
+  if (dsn) {
+    if (!dsnHasPassword(dsn)) return { ok: false, message: "The connection string must carry the password: postgresql://user:password@host:5432/postgres." };
+    values.MODELER_PROD_DB = dsn;
+  } else if (input.dbPassword) {
+    const full = APPLY.pooler ? dsnWithPassword(APPLY.pooler, input.dbPassword) : null;
+    if (!full) return { ok: false, message: "The pooler URL of the production database is unknown: paste the full connection string instead (or `supabase link`, then `modeler install` again)." };
+    values.MODELER_PROD_DB = full;
+  } else if (input.useAppDatabaseUrl) {
+    const own = appDatabaseUrl();
+    if (!own) return { ok: false, message: "The web process has no DATABASE_URL with the password: pass it to the `web` service in the compose, or type the password." };
+    values.MODELER_PROD_DB = own;
+  }
+  const merge = input.mergeToken?.trim();
+  if (merge) values.MODELER_GH_TOKEN = merge;
+  else if (input.useAppTokenForMerge) values.MODELER_GH_TOKEN = cfg.token;
+  const names = Object.keys(values) as ApplySecretName[];
+  if (!names.length) return { ok: false, message: "Nothing to save: the fields are empty." };
+  if (names.some((n) => Buffer.byteLength(values[n] ?? "") > 48_000)) return { ok: false, message: "A value exceeds GitHub's limit of 48 KB for a secret." };
+  const pk = await gh(cfg.repo, cfg.token, "/actions/secrets/public-key");
+  if (!pk.ok) {
+    const detail = await ghDetail(pk);
+    return { ok: false, message: `GitHub refused the repository's public key (${pk.status}): ${detail || `the token needs Secrets: read and write on ${cfg.repo}`}` };
+  }
+  const { key_id, key: publicKey } = (await pk.json()) as { key_id: string; key: string };
+  const mod = await import("libsodium-wrappers");
+  const sodium = ((mod as unknown as { default?: typeof mod }).default ?? mod) as typeof mod;   // CJS under a bundler or Node
+  await sodium.ready;
+  const recipient = sodium.from_base64(publicKey, sodium.base64_variants.ORIGINAL);
+  for (const name of names) {
+    const sealed = sodium.crypto_box_seal(sodium.from_string(values[name] ?? ""), recipient);
+    const res = await gh(cfg.repo, cfg.token, `/actions/secrets/${name}`, {
+      method: "PUT", body: JSON.stringify({ encrypted_value: sodium.to_base64(sealed, sodium.base64_variants.ORIGINAL), key_id }),
+    });
+    if (!res.ok) {
+      const detail = await ghDetail(res);
+      return { ok: false, message: `GitHub refused to write ${name} (${res.status}): ${detail || `the token needs Secrets: write on ${cfg.repo}`}` };
+    }
+  }
+  return { ok: true, message: `Saved on GitHub as repository secrets of ${cfg.repo}: ${names.join(", ")}. A secret with the same name in the modeler-apply or modeler-release environment still takes precedence.` };
 }
 
 /** Rejects a pending proposal: moved to .modeler/proposals/rejected/ in development, status `rejected` in production. */
