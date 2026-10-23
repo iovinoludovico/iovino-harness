@@ -1,7 +1,7 @@
 {
   "name": "modeler",
   "displayName": "Modeler",
-  "version": "0.36.2",
+  "version": "0.37.0",
   "description": "Model-based development of Next.js + Supabase apps driven by a domain metamodel in Ecore notation (domain.ecore.yaml): metamodel from the prompt or reverse-engineered from the database, a web modeler that becomes part of the application (admin page, proposals, vendored CLI with model:* npm scripts), drift checks between metamodel and database, Ecore/Emfatic/Mermaid export.",
   "author": { "name": "Ludovico Iovino" },
   "license": "MIT",
