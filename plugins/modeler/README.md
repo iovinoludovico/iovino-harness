@@ -79,7 +79,7 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   when selected, its **state diagram in a panel under the canvas** (laid out at the panel's width with the real
   text widths: states in their colour, transitions in the colour of the target, timed ones dashed, final sinks on a
   bus, hover highlight; the panel follows the selection, so the domain diagram stays clean; the same diagram is
-  reusable on the app's pages: `<WorkflowView behavior entity state>` of `workflow-view.tsx` wraps the
+  reusable on the app's pages: `<WorkflowView behavior metamodel entity state>` of `workflow-view.tsx` wraps the
   `<workflow-view>` element of the same kit file and shows the workflow of a record with its current state filled
   with its colour (white text, a ring), the other states dimmed, the transitions leaving it at full strength and the
   others dimmed, laid out at the width of its container; both elements take their colours from the page's theme,

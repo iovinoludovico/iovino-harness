@@ -8,7 +8,11 @@
 // has no workflow. The record pages of the app use it:
 //
 //   import behavior from "@/lib/modeler/behavior.json";
-//   <WorkflowView behavior={behavior} entity="Task" state={row.state} lang="it" />
+//   import metamodel from "@/lib/modeler/metamodel.json";
+//   <WorkflowView behavior={behavior} metamodel={metamodel} entity="Task" state={row.state} lang="it" />
+//
+// `metamodel` is optional: with it the tooltip of a notification names a `self.fund.manager` recipient with the labels
+// of the features («Fondo › Responsabile»), as the modeler's panel does; without it the path is shown as written.
 
 import Script from "next/script";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type DetailedHTMLProps, type HTMLAttributes } from "react";
@@ -16,6 +20,7 @@ import type { Behavior } from "./behavior-view";
 
 type Props = {
   behavior: unknown;          // src/lib/modeler/behavior.json
+  metamodel?: unknown;        // src/lib/modeler/metamodel.json: the labels of the self.… recipients in the tooltips
   entity: string;             // the class name (key of behavior.workflows)
   state: string | null;       // the current value of the state attribute of the record
   lang?: string;
@@ -24,7 +29,7 @@ type Props = {
   style?: CSSProperties;
 };
 
-type ViewElement = HTMLElement & { workflow: unknown; roles: unknown; state: string | null };
+type ViewElement = HTMLElement & { workflow: unknown; roles: unknown; metamodel: unknown; state: string | null };
 
 declare module "react" {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -40,7 +45,7 @@ declare module "react" {
   }
 }
 
-export function WorkflowView({ behavior, entity, state, lang = "it", theme, className, style }: Props) {
+export function WorkflowView({ behavior, metamodel, entity, state, lang = "it", theme, className, style }: Props) {
   const ref = useRef<ViewElement | null>(null);
   const [ready, setReady] = useState(false);
   const workflow = useMemo(() => (behavior as Behavior | null)?.workflows?.[entity] ?? null, [behavior, entity]);
@@ -57,9 +62,10 @@ export function WorkflowView({ behavior, entity, state, lang = "it", theme, clas
   useEffect(() => {
     if (ready && ref.current) {
       ref.current.roles = roles;         // the recipients of the notifications with the labels of the roles
+      ref.current.metamodel = metamodel ?? null;   // and of the features along a self.… path
       ref.current.workflow = workflow;
     }
-  }, [ready, workflow, roles]);
+  }, [ready, workflow, roles, metamodel]);
 
   if (!workflow) return null;
   return (

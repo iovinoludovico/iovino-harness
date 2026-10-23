@@ -105,9 +105,12 @@ rivedilo **con l'utente**:
   stati, transizioni, ritorno, formule dei derivati, eventi, ruoli e reazioni: «Salva» produce una proposta con
   metamodello e comportamento, che `/modeler:apply` porta in `domain.ecore.yaml` e `behavior.yaml`.
 - Se l'app ha `behavior.yaml`, nella pagina di dettaglio di un record di una classe con workflow aggiungi il diagramma
-  degli stati con lo stato corrente: `import behavior from "@/lib/modeler/behavior.json"` e
-  `<WorkflowView behavior={behavior} entity="<Classe>" state={record.<attributo di stato>} lang="…" />`
+  degli stati con lo stato corrente: `import behavior from "@/lib/modeler/behavior.json"`, `import metamodel from
+  "@/lib/modeler/metamodel.json"` e
+  `<WorkflowView behavior={behavior} metamodel={metamodel} entity="<Classe>" state={record.<attributo di stato>} lang="…" />`
   (`@/components/modeler/workflow-view`), sopra le azioni di transizione; non compare se la classe non ha workflow.
+  `metamodel` è facoltativo: con esso il tooltip della busta scrive un destinatario `self.fund.manager` con le
+  etichette delle feature («Fondo › Responsabile»), come il pannello del modellatore; senza, il percorso resta com'è.
   Lo stato corrente è pieno del suo colore con testo bianco e un anello, gli altri stati sono attenuati, le transizioni
   che ne partono sono a piena forza, le altre attenuate (un valore non tra gli stati lascia il diagramma neutro e mette
   `data-state-missing` sull'elemento);
@@ -136,7 +139,7 @@ rivedilo **con l'utente**:
       </Tabs>
     );
   }
-  // nella pagina: <WorkflowTabs path={<StatePath … />} diagram={<WorkflowView behavior={behavior} entity="Order" state={row.status} lang="it" />} />
+  // nella pagina: <WorkflowTabs path={<StatePath … />} diagram={<WorkflowView behavior={behavior} metamodel={metamodel} entity="Order" state={row.status} lang="it" />} />
   ```
 - Se `behavior.yaml` ha `templates:` (`install` lo segnala con «templates found in behavior.yaml»): parti da
   `${CLAUDE_PLUGIN_ROOT}/kit/next/templates-page.tsx` per la pagina admin dei testi delle notifiche (es.
