@@ -59,8 +59,9 @@ subscriptions:                          # webhook subscribers (n8n, …)
 ```
 Top-level keys: `metamodel doc roles view_as derivations workflows events reactions subscriptions templates`. The roles
 are declared in the metamodel (`roles:` of `domain.ecore.yaml`, `ecore-notation.md` «Roles»): `roles:` here is
-optional, for a label, a doc or a scope the metamodel lacks (and for the files written before the roles moved; `validate`
-warns about a role the metamodel does not declare and reports one described differently in the two files). Quote an
+optional, for a label, a doc or a scope the metamodel lacks (`validate` warns about a role the metamodel does not
+declare and reports one described differently in the two files; a `roles:` here with no `roles:` in the metamodel is
+the form before the roles moved and is an error: move the block to `domain.ecore.yaml`). Quote an
 expression that contains `[`, `:` or `#` (YAML flow syntax): `when: "transition in [submit, resubmit]"`. The
 reaction key is `event`, not `on` (`on` is a boolean in YAML).
 

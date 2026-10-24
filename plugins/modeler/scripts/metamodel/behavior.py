@@ -633,8 +633,15 @@ def _guarded(u: dict[str, Any], cname: str, rn: str) -> bool:
 
 def _check_roles(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> None:
     """`roles:` of behavior.yaml: well formed, and consistent with the roles the metamodel declares (the two files
-    may both describe a role; they must agree)."""
-    for rn, r in b.get("behavior_roles", b["roles"]).items():
+    may both describe a role; they must agree). The roles belong to the metamodel: a behaviour that declares them
+    alone is the form before they moved (modeler < 0.35), and nothing else would say so (no box in the diagram, no
+    «Roles» in DOMAIN.md, drift blind to user_roles): an error, with the way out."""
+    own = b.get("behavior_roles", b["roles"])
+    if own and not e.get("roles"):
+        rep.error("roles", f"declared here only ({', '.join(own)}): the roles belong to the metamodel: move this block to "
+                           f"{E.METAMODEL_FILE} (roles:, same keys; `reverse` writes it from {E.ROLES_ENUM}/{E.ROLES_TABLE}), "
+                           "keep here at most label and doc, then model:sync")
+    for rn, r in own.items():
         where = f"roles.{rn}"
         mr = (e.get("roles") or {}).get(rn)
         if mr is not None:
@@ -793,8 +800,8 @@ def _check_principal(b: dict[str, Any], e: dict[str, Any], cname: str, p: str, w
         if "." not in hop and cname in e["classes"] and base == X.CLASS + "User":
             _, refs = E.features(e, cname)
             if hop in refs and not refs[hop].get("role"):
-                rep.warn(where, f"'{p}' acts as a role of the record: mark {cname}.{hop} with `role: true` in the metamodel "
-                                "(listed with the roles)")
+                rep.error(where, f"'{p}' acts as a role of the record: mark {cname}.{hop} with `role: true` in the metamodel "
+                                 "(a record role, listed with the roles; no migration)")
         return
     m = ROLE_AT.match(p)
     if not m:

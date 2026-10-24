@@ -115,7 +115,8 @@ has them and gains the new literals), `drift` compares the enum with the roles (
 role`) and `reverse` writes `roles:` from them (scopes and labels to add by hand). The engine's `has_role` and
 `role_members` read that table when the app defines none. A reference to `User` marked **`role: true`** is a
 **record role**: who holds it is written in the record (`Fund.manager`, `Order.rupAssistants`); the behaviour names
-it `self.<reference>`, and `validate` warns when such a reference acts as a principal without the mark. `DOMAIN.md`
+it `self.<reference>`, and `validate` rejects such a reference acting as a principal without the mark (no migration:
+the mark only lists it with the roles). `DOMAIN.md`
 has the «Roles» section (and the record roles), `BEHAVIOR.md` lists both kinds. Diagrams (web modeler, Mermaid):
 when the metamodel has roles or a record role, two built-in boxes appear, `Role «enumeration»` (`admin` first, a scoped
 role as `director (Department)`) and `User «built-in»` (the users: rows `email` and `roles: Role [0..*]`, the EMF
@@ -124,7 +125,11 @@ connector from its class to `User`, the other references to `User` (`createdBy`)
 Clicking `Role` opens the «Ruoli» table of the side panel, where the roles are edited; `User` and `Role` are reserved
 names (`validate` rejects a class or an enum called so). Who does what with a role
 (`by`, `owner`, `notify`, `view_as`) stays in `behavior.yaml`; its `roles:` is optional now (it may still add a
-label or a scope the metamodel lacks, and `validate` reports a role described differently in the two files).
+label or a scope the metamodel lacks, and `validate` reports a role described differently in the two files). The
+roles never live in the behaviour alone: a `behavior.yaml` with `roles:` next to a metamodel without them is the form
+before they moved (modeler < 0.35), and `validate` rejects it (`install` says «roles found in behavior.yaml only»,
+`drift` reports an excluded `user_roles`, the web modeler warns), because nothing else would show it: no `Role`/`User`
+box, no «Roles» in `DOMAIN.md`.
 
 ### Rules
 Domain rules the structure cannot express, on the package or on a class: a list of `{id, text}`. The id is a

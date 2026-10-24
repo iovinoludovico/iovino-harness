@@ -141,6 +141,14 @@ rivedilo **con l'utente**:
   }
   // nella pagina: <WorkflowTabs path={<StatePath … />} diagram={<WorkflowView behavior={behavior} metamodel={metamodel} entity="Order" state={row.status} lang="it" />} />
   ```
+- Se `install` segnala «roles found in behavior.yaml only»: l'app è nella forma precedente la 0.35, con i ruoli solo
+  nel comportamento, e niente lo mostra (nessun riquadro `Role`/`User` nel diagramma, nessuna sezione «Ruoli» in
+  `DOMAIN.md`, `drift` cieco se `user_roles` è in `MODELER_EXCLUDE`); `model:validate` lo rifiuta. Sposta il blocco
+  `roles:` da `behavior.yaml` a `domain.ecore.yaml` (stesse chiavi: `label`, `doc`, `scope: <Classe>`; in
+  `behavior.yaml` possono restare al più `label` e `doc`), marca `role: true` i riferimenti a `User` che il comportamento
+  usa come principal (`self.<riferimento>`, `validate` li elenca; nessuna migrazione), togli `user_roles` da
+  `MODELER_EXCLUDE` (`.env*` restano dell'utente: indicagli la riga) e rilancia `model:validate`, `model:sync` e
+  `model:drift`.
 - Se `behavior.yaml` ha `templates:` (`install` lo segnala con «templates found in behavior.yaml»): parti da
   `${CLAUDE_PLUGIN_ROOT}/kit/next/templates-page.tsx` per la pagina admin dei testi delle notifiche (es.
   `src/app/(admin)/admin/notifications/page.tsx`, link nella navigazione admin) e applica la migrazione
@@ -198,7 +206,8 @@ passo per passo:
 2. `install <app>` (punto 3), `npm install` se lo chiede (dipendenza nuova), poi `npm run model:validate` e
    `npm run model:sync`;
 3. typecheck, lint e test dell'app (gli script di `package.json`); se `install` stampa un suggerimento
-   («behavior.yaml found», «workflows in code», `<WorkflowView>`, «DATABASE_URL reaches only the worker»: aggiungi
+   («roles found in behavior.yaml only»: i ruoli vanno nel metamodello, punto 4, nello stesso commit, perché
+   `model:validate` li rifiuta; «behavior.yaml found», «workflows in code», `<WorkflowView>`, «DATABASE_URL reaches only the worker»: aggiungi
    `DATABASE_URL: ${DATABASE_URL}` all'`environment` di `web` nel compose del repository e ricorda che il pannello del
    server va aggiornato a mano), applicalo o riportalo all'utente;
 4. commit `chore(modeler): upgrade the modeler to <versione>` con, nel corpo, i titoli delle PR dell'harness tra le

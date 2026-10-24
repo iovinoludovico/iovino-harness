@@ -51,7 +51,8 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   modeler, Mermaid) draw the built-in boxes `Role «enumeration»` and `User «built-in»` (rows `email` and
   `roles: Role [0..*]`: an enum-typed attribute is a row, no connector, as in Ecore Tools), with the record roles as
   connectors to `User` (the web modeler edits the roles from the `Role` box or the side panel);
-  the behaviour resolves `by`/`notify`/`view_as` against them (its own `roles:` is optional).
+  the behaviour resolves `by`/`notify`/`view_as` against them (its own `roles:` is optional, and rejected by `validate`
+  when the metamodel declares none: the form before the roles moved; `install` and `drift` say so too).
 - Behaviour is the second model, **`behavior.yaml`** next to the metamodel: roles, derivations of the attributes
   marked `derived: true`, workflows (states with the fields they `require` and, through `model`, **the class as seen
   from the state**: an overlay that locks, hides or narrows features per state, enforced by the engine, shown as a

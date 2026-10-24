@@ -1270,7 +1270,7 @@
       notifies: "Avvisa", notifiesTo: "avvisa", notifiesHint: "chi viene avvisato quando la transizione scatta (destinatari, separati da virgola)",
       principals: { creator: "chi ha creato il record", admin: "amministratore" },
       rolesHint: "i ruoli degli utenti dell'applicazione, dichiarati nel metamodello (roles: di domain.ecore.yaml), oltre ad admin; chi li ha è in user_roles",
-      inBehavior: "in behavior.yaml", roleReserved: "ruolo predefinito", recordRole: "ruolo", recordRoles: "ruoli di record",
+      inBehavior: "in behavior.yaml", rolesInBehavior: "dichiarati solo in behavior.yaml: non compaiono nel diagramma, spostali nel metamodello (pannello Ruoli)", roleReserved: "ruolo predefinito", recordRole: "ruolo", recordRoles: "ruoli di record",
       recordRoleHint: "ruolo di record (role: true): chi lo ricopre lo dice il record stesso (self.<riferimento> nel comportamento)",
       builtinHint: "predefinito: gli utenti dell'applicazione (User, con email e roles: Role [0..*]) e l'enum dei loro ruoli (Role: admin più roles: del metamodello). Si disegna quando il metamodello ha ruoli o ruoli di record.",
       builtinName: "nome predefinito (User, Role): non si dichiara",
@@ -1314,7 +1314,7 @@
       notifies: "Notifies", notifiesTo: "notifies", notifiesHint: "who is told when the transition fires (principals, comma separated)",
       principals: { creator: "the record's creator", admin: "administrator" },
       rolesHint: "the roles of the application users, declared in the metamodel (roles: of domain.ecore.yaml), besides admin; who holds them is in user_roles",
-      inBehavior: "in behavior.yaml", roleReserved: "built-in role", recordRole: "role", recordRoles: "record roles",
+      inBehavior: "in behavior.yaml", rolesInBehavior: "declared in behavior.yaml only: not in the diagram, move them to the metamodel (Roles panel)", roleReserved: "built-in role", recordRole: "role", recordRoles: "record roles",
       recordRoleHint: "record role (role: true): the record itself says who holds it (self.<reference> in the behaviour)",
       builtinHint: "built in: the application users (User, with an email and roles: Role [0..*]) and the enum of their roles (Role: admin plus the roles: of the metamodel). Drawn when the metamodel has roles or record roles.",
       builtinName: "built-in name (User, Role): not declared",
@@ -1832,8 +1832,12 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
 
     /* ------------------------------------------------------------------ destructive changes */
     _warnings() {
-      // compared with the metamodel the page was opened with: what the migration would have to drop
       const t = this.t, out = [], orig = this._orig;
+      // the roles declared in behavior.yaml alone (the form before they moved to the metamodel): no box in the diagram,
+      // and the emptiness goes unnoticed; a warning, not an issue, because the fix is adding them in the «Ruoli» panel
+      const legacy = Object.entries(this._bh?.roles || {}).filter(([, r]) => r?.source === "behavior").map(([rn]) => rn);
+      if (legacy.length && !Object.keys(this._mm.roles || {}).length) out.push(`${t.roles}: ${t.rolesInBehavior} (${legacy.join(", ")})`);
+      // compared with the metamodel the page was opened with: what the migration would have to drop
       if (!orig) return out;
       for (const [cn, oc] of Object.entries(orig.classes || {})) {
         const c = this._mm.classes[cn];

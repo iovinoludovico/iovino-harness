@@ -832,15 +832,20 @@ class RolesFromTheMetamodelTests(unittest.TestCase):
         # a record role: a direct reference to User acting as a principal is marked role: true
         m, b = meta(), behavior()
         m["classes"]["Invitation"]["references"]["issuer"] = "User"
-        w = [x for x in B.validate(b, m).warnings if "role: true" in x]
+        rep = B.validate(b, m)
+        w = [x for x in rep.errors if "role: true" in x]
         self.assertTrue(w and all("'self.issuer' acts as a role of the record: mark Invitation.issuer" in x for x in w), w)
-        self.assertFalse(any("self.guest.email" in x for x in w))
-        # the form before the roles moved: the behaviour's roles alone, no report
+        self.assertFalse(any("self.guest.email" in x for x in rep.errors + rep.warnings))
+        # the form before the roles moved (the behaviour's roles alone): an error that says where they go, nothing
+        # else would signal it (no box in the diagram, no «Roles» in DOMAIN.md, drift blind to user_roles)
         m = meta()
         del m["roles"]
         rep = B.validate(behavior(), m)
-        self.assertEqual((rep.errors, rep.warnings), ([], []))
-        self.assertEqual(B.runtime_json(behavior(), m)["roles"]["office"]["source"], "behavior")
+        self.assertEqual(len(rep.errors), 1, rep.errors)
+        self.assertIn("roles: declared here only (office, issuer, director): the roles belong to the metamodel: move this block to "
+                      "domain.ecore.yaml (roles:, same keys; `reverse` writes it from app_role/user_roles)", rep.errors[0])
+        self.assertEqual(rep.warnings, [])
+        self.assertEqual(B.runtime_json(behavior(), m)["roles"]["office"]["source"], "behavior")   # the views still bind them
 
 
 class DerivedInTheMetamodelTests(unittest.TestCase):
