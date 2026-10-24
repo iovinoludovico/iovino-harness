@@ -1301,6 +1301,25 @@ def has_view_as(root: Path) -> bool:
         return False
 
 
+def roles_hint(root: Path) -> str | None:
+    """behavior.yaml declares the roles and the metamodel none: the form before the roles moved to the metamodel
+    (modeler < 0.35). An upgrade brings the new kit but does not move them, and nothing shows it: no `Role`/`User`
+    box in the diagram, no «Roles» in DOMAIN.md, `drift` aligned with user_roles excluded."""
+    bpath, mpath = root / B.BEHAVIOR_FILE, root / E.METAMODEL_FILE
+    if not bpath.exists() or not mpath.exists():
+        return None
+    try:
+        own = B.expand(B.load(bpath))["roles"]
+        if not own or E.load(mpath).get("roles"):
+            return None
+    except Exception:
+        return None
+    return (f"roles found in {B.BEHAVIOR_FILE} only ({', '.join(own)}): the roles belong to the metamodel: move the block to "
+            f"{E.METAMODEL_FILE} (roles:, same keys; label and doc may stay in {B.BEHAVIOR_FILE}), mark with role: true the "
+            f"references to User the behaviour uses as principals (self.<reference>), drop {E.ROLES_TABLE} from MODELER_EXCLUDE "
+            "so that model:drift compares it, then model:validate and model:sync (install skill, section 6)")
+
+
 def view_as_hint(root: Path) -> str | None:
     """behavior.yaml has `view_as` but nothing in the app sends the headers of src/lib/modeler/view-as.ts yet."""
     if not has_view_as(root):
@@ -1494,8 +1513,8 @@ def cmd_install(a) -> int:
         print(f"no {E.METAMODEL_FILE} yet: derive it with `reverse --db <DSN> -o {E.METAMODEL_FILE}`, then `sync`")
     elif docs_status(target)["state"] in ("edited", "clash"):
         print(docs_report(docs_status(target), diff=False))
-    for hint in (behavior_page_hint(target), workflow_hint(target), templates_page_hint(target), view_as_hint(target),
-                 compose_hint(target)):
+    for hint in (roles_hint(target), behavior_page_hint(target), workflow_hint(target), templates_page_hint(target),
+                 view_as_hint(target), compose_hint(target)):
         if hint:
             print(hint)
     print("next: adapt src/lib/modeler/access.ts to the app's admin check, add the admin page and the link "

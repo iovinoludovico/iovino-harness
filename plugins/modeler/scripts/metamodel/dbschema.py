@@ -447,6 +447,10 @@ def drift(meta: dict[str, Any], cat: dict[str, Any], exclude: set[str] | None = 
     out: list[str] = []
     exclude, excluded_columns = split_exclude(exclude)
     tables = set(cat["tables"])
+    if E.ROLES_TABLE in exclude and E.ROLES_TABLE in tables and not m.get("roles"):
+        # the roles are not infrastructure to hide: excluded, the table would never say that the metamodel lacks them
+        out.append(f"EXCLUDED {E.ROLES_TABLE}: the metamodel declares no roles: declare them (roles:, `reverse` writes them "
+                   f"from {E.ROLES_ENUM}/{E.ROLES_TABLE}) and drop {E.ROLES_TABLE} from MODELER_EXCLUDE so that drift compares it")
     cols: dict[str, dict[str, dict[str, Any]]] = {}
     for c in cat["columns"]:
         if (c["table"], c["name"]) not in excluded_columns:

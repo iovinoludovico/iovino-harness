@@ -343,6 +343,12 @@ class RolesTests(unittest.TestCase):
         del rev["roles"]
         cat["tables"] = ["departments", "user_roles"]
         self.assertIn("NOT IN METAMODEL table user_roles (declare the roles in the metamodel: roles:)", D.drift(rev, cat))
+        # excluded (the pre-0.35 MODELER_EXCLUDE of an app) it still says that the metamodel lacks the roles
+        self.assertIn("EXCLUDED user_roles: the metamodel declares no roles: declare them (roles:, `reverse` writes them "
+                      "from app_role/user_roles) and drop user_roles from MODELER_EXCLUDE so that drift compares it",
+                      D.drift(rev, cat, {"user_roles"}))
+        cat["tables"] = ["departments"]
+        self.assertFalse(any("EXCLUDED" in x for x in D.drift(rev, cat, {"user_roles"})))   # no such table: nothing to say
 
 
 class UniqueTogetherTests(unittest.TestCase):
@@ -712,6 +718,26 @@ class AppTests(unittest.TestCase):
         client.write_text('import { viewAsHeaders } from "@/lib/modeler/view-as";\nexport const headers = viewAsHeaders();\n')
         self.assertIsNone(cli.view_as_hint(self.app))
         self.assertEqual(json.loads((self.app / "src/lib/modeler/behavior.json").read_text())["view_as"], {"users_by": ["admin"]})
+
+    def test_install_says_when_the_roles_are_declared_in_the_behaviour_only(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures"
+        self.assertIsNone(cli.roles_hint(self.app))                               # no model at all
+        (self.app / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        (self.app / "behavior.yaml").write_text((fixtures / "invitations.behavior.yaml").read_text())
+        self.assertIsNone(cli.roles_hint(self.app))                               # roles in the metamodel: fine
+        yaml = M.import_yaml()
+        meta = yaml.safe_load((fixtures / "invitations.ecore.yaml").read_text())
+        del meta["roles"]                                                         # the form before the roles moved
+        (self.app / "domain.ecore.yaml").write_text(yaml.safe_dump(meta, sort_keys=False, allow_unicode=True))
+        hint = cli.roles_hint(self.app)
+        self.assertIn("roles found in behavior.yaml only (office, issuer, director): the roles belong to the metamodel", hint)
+        self.assertIn("drop user_roles from MODELER_EXCLUDE", hint)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_install(argparse.Namespace(app=str(self.app), no_migration=True)), 0)
+        self.assertIn("roles found in behavior.yaml only", out.getvalue())
+        (self.app / "behavior.yaml").write_text("metamodel: domain.ecore.yaml\n")
+        self.assertIsNone(cli.roles_hint(self.app))                               # no roles anywhere: nothing to move
 
     def test_install_tells_when_workflows_live_in_code_without_a_behaviour_model(self):
         self.assertIsNone(cli.workflow_hint(self.app))                        # nothing looks like a workflow
