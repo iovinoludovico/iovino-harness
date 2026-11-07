@@ -7,7 +7,7 @@
 # migrations (`supabase db reset`, `supabase test db` if the app has tests, `model:drift` aligned); refuses
 # destructive DDL that is not commented out unless `allow_destructive` is true; compares the migrations with the
 # production database (unknown remote migrations or out-of-order local ones stop the run); applies the new ones
-# (`supabase db push --db-url`); merges the PR (squash) with MODELER_GH_TOKEN, so the push on main starts the deploy;
+# (`supabase db push --db-url --yes`); merges the PR (squash) with MODELER_GH_TOKEN, so the push on main starts the deploy;
 # waits for the deploy run of the merge commit; closes the proposal (`model:done --write`). Progress and errors go
 # on the proposal row (`model:track`): the admin page shows them.
 #
@@ -140,7 +140,8 @@ jobs:
             fi
           done
           supabase db push --db-url "$MODELER_PROD_DB" --dry-run
-          supabase db push --db-url "$MODELER_PROD_DB"
+          # CLI 3.x asks one confirmation before writing to a remote database: --yes answers it (the admin confirmed)
+          supabase db push --db-url "$MODELER_PROD_DB" --yes
           supabase migration list --db-url "$MODELER_PROD_DB"
 
       - name: Merge the pull request

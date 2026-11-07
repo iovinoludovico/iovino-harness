@@ -41,10 +41,12 @@ REMINDER_VARS = {"reminder.days", "reminder.count", "reminder.state"}
 STATE_VARS = {"state.key", "state.label"}
 ROLE_KEYS = {"label", "scope", "doc"}
 VIEW_AS_KEYS = {"users_by", "doc"}   # «view as»: who may use the application as another user
-WORKFLOW_KEYS = {"state", "states", "transitions", "revert", "doc"}
+WORKFLOW_KEYS = {"state", "states", "transitions", "revert", "doc", "regions"}
+REGION_KEYS = {"state", "states", "transitions", "label", "doc"}   # an orthogonal region: its own state attribute, states and transitions
+RECORDS_KEYS = {"by", "at"}          # `records: {by: <reference to User>, at: <DateTime attribute>}`: who fired the transition and when
 STATE_KEYS = {"initial", "final", "label", "doc", "owner", "editable_by", "reminder", "color", "requires", "model"}
 MODEL_KEYS = {"lower", "readonly", "hidden", "in"}   # the overlay of a state on a feature (`states.<key>.model`)
-TRANSITION_KEYS = {"from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "doc", "notify", "template"}
+TRANSITION_KEYS = {"from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "doc", "notify", "template", "records"}
 NOTIFY_KEYS = {"to", "template", "when"}            # `notify: {to, template, when}` on a transition (the long form of `notify: [...]`)
 INTERNAL_KEYS = {"notify_when", "notifies", "_notify_extra", "_transition"}   # canonical/runtime keys, never written in the file
 REVERT_KEYS = {"by", "final_by", "comment"}
@@ -79,14 +81,8 @@ def loads(text: str) -> dict[str, Any]:
     return M.loads(text)
 
 
-class _Flow(dict):
-    """A mapping written on one line (flow style) by dumps()."""
-
-
-def _dumper():
-    yaml, Dumper = E._flow_dumper()
-    Dumper.add_representer(_Flow, lambda d, data: d.represent_mapping("tag:yaml.org,2002:map", data.items(), flow_style=True))
-    return yaml, Dumper
+_Flow = E._Flow            # a mapping written on one line (flow style) by dumps()
+_dumper = E._flow_dumper
 
 
 def _expr_text(x: Any) -> str:
@@ -152,21 +148,31 @@ def from_editor(doc: dict[str, Any]) -> dict[str, Any]:
     if doc.get("view_as") is not None:
         raw["view_as"] = dict(_mapping(doc["view_as"]))
     raw["derivations"] = {cn: {an: text(ex) for an, ex in _mapping(ders).items()} for cn, ders in _mapping(doc.get("derivations")).items()}
-    raw["workflows"] = {}
-    for cn, w in _mapping(doc.get("workflows")).items():
-        w = _mapping(w)
+    def flow(w: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         states = {sn: {k: v for k, v in _mapping(st).items()} for sn, st in _mapping(w.get("states")).items()}
         transitions = {}
         for tn, t in _mapping(w.get("transitions")).items():
             t = {k: (text(v) if k in ("when", "guard", "notify_when") else v) for k, v in _mapping(t).items()
-                 if k not in ("notifies", "_notify_extra")}
+                 if k not in ("notifies", "_notify_extra", "region")}
             if isinstance(t.get("from"), list) and len(t["from"]) == 1:
                 t["from"] = t["from"][0]
             nwhen = t.pop("notify_when", None)
             if nwhen and t.get("notify"):          # a notification with its own condition: the long form
                 t["notify"] = {"to": t["notify"], "template": t.pop("template", None), "when": nwhen}
             transitions[tn] = t
-        raw["workflows"][cn] = {**{k: v for k, v in w.items() if k not in ("states", "transitions")}, "states": states, "transitions": transitions}
+        return states, transitions
+
+    raw["workflows"] = {}
+    for cn, w in _mapping(doc.get("workflows")).items():
+        w = _mapping(w)
+        states, transitions = flow(w)
+        regions = {}
+        for rk, r in _mapping(w.get("regions")).items():
+            r = _mapping(r)
+            rstates, rtransitions = flow(r)
+            regions[rk] = {**{k: v for k, v in r.items() if k not in ("states", "transitions")}, "states": rstates, "transitions": rtransitions}
+        raw["workflows"][cn] = {**{k: v for k, v in w.items() if k not in ("states", "transitions", "regions")}, "states": states, "transitions": transitions,
+                               **({"regions": regions} if regions else {})}
     raw["events"] = {cn: {en: (ev or {}) for en, ev in _mapping(evs).items()} for cn, evs in _mapping(doc.get("events")).items()}
     raw["reactions"] = [{k: (text(v) if k == "when" else v) for k, v in _mapping(r).items()} for r in _list(doc.get("reactions"))
                         if not _mapping(r).get("_transition")]      # the notification of a transition is written on the transition
@@ -175,51 +181,292 @@ def from_editor(doc: dict[str, Any]) -> dict[str, Any]:
     return _clean(raw)
 
 
+_HEADER = ["# Behaviour of the domain (behavior.yaml): roles, derivations, workflows, events, reactions.",
+           "# Edit it from the prompt (/modeler:behavior), in the app's modeler (/admin/model) or by hand; `npm run",
+           "# model:validate` checks it against domain.ecore.yaml."]
+SECTIONS = ("metamodel", "doc", "roles", "view_as", "derivations", "workflows", "events", "reactions", "subscriptions", "templates")
+
+
+def _flow_map(m: dict[str, Any]) -> dict[str, Any]:
+    """A block of entries each written on one line (states, transitions, events, roles)."""
+    return E._Block({k: (_Flow(v) if isinstance(v, dict) else v) for k, v in m.items()})
+
+
+def _workflow_body(w: dict[str, Any]) -> dict[str, Any]:
+    """A workflow (or a region of one) as dumps writes it: its keys one per line, states and transitions one per line
+    each, the regions as blocks of the same shape."""
+    body = E._Block({k: v for k, v in w.items() if k not in ("states", "transitions", "revert", "regions")})
+    body["states"] = _flow_map(w.get("states", {}))
+    body["transitions"] = _flow_map(w.get("transitions", {}))
+    if w.get("regions"):
+        body["regions"] = E._Block({rk: _workflow_body(r) for rk, r in w["regions"].items()})
+    if w.get("revert"):
+        body["revert"] = _Flow(w["revert"])
+    return body
+
+
+def _styled(r: dict[str, Any]) -> dict[str, Any]:
+    """The sections of a (clean, tidy) behaviour with the block/flow style dumps gives them."""
+    block = E._Block
+    out: dict[str, Any] = {}
+    if r.get("roles"):
+        out["roles"] = _flow_map(r["roles"])
+    if r.get("view_as") is not None:
+        out["view_as"] = _Flow(r["view_as"] if isinstance(r["view_as"], dict) else {})
+    if r.get("derivations"):
+        out["derivations"] = block({cn: block(ders) for cn, ders in r["derivations"].items()})
+    if r.get("workflows"):
+        out["workflows"] = block({cn: _workflow_body(w) for cn, w in r["workflows"].items()})
+    if r.get("events"):
+        out["events"] = block({cn: _flow_map(evs) for cn, evs in r["events"].items()})
+    for key in ("reactions", "subscriptions"):
+        if r.get(key):
+            out[key] = [_Flow(item) for item in r[key]]
+    if r.get("templates"):
+        out["templates"] = block({key: block({lang: block(tx) for lang, tx in langs.items()}) for key, langs in r["templates"].items()})
+    return out
+
+
+def _section_lines(key: str, value: Any) -> list[str]:
+    """The lines of one top-level section as dumps writes it (no blank line around it)."""
+    yaml, Dumper = _dumper()
+    dump = lambda v: yaml.dump(v, Dumper=Dumper, sort_keys=False, allow_unicode=True, width=200).rstrip("\n")  # noqa: E731
+    if key in ("reactions", "subscriptions"):
+        return [f"{key}:"] + ["  - " + dump(item) for item in value]
+    if key in ("roles", "view_as"):
+        return dump(E._Block({key: value})).split("\n")
+    out = [f"{key}:"]
+    for name, body in value.items():
+        out += ["  " + line for line in dump(E._Block({name: body})).split("\n")]
+    return out
+
+
 def dumps(raw: dict[str, Any]) -> str:
     """behavior.yaml from its structure: one section per key, one block per class, states, transitions,
     reactions and subscriptions one per line (flow style), as the notation reference writes them.
-    Comments are not kept: callers back the file up and say so."""
-    yaml, Dumper = _dumper()
-    dump = lambda v: yaml.dump(v, Dumper=Dumper, sort_keys=False, allow_unicode=True, width=200).rstrip("\n")  # noqa: E731
-    block = E._Block                                                     # a mapping written one key per line
-    flow_map = lambda m: block({k: (_Flow(v) if isinstance(v, dict) else v) for k, v in m.items()})  # noqa: E731
+    Comments are not kept: callers back the file up and say so (apply edits the changed lines: patch_text)."""
+    yaml, _ = _dumper()
     r = _clean(_tidy(raw))
-    out = ["# Behaviour of the domain (behavior.yaml): roles, derivations, workflows, events, reactions.",
-           "# Edit it from the prompt (/modeler:behavior), in the app's modeler (/admin/model) or by hand; `npm run",
-           "# model:validate` checks it against domain.ecore.yaml.", ""]
+    out = list(_HEADER) + [""]
     for key in ("metamodel", "doc"):
         if r.get(key):   # a scalar: never a flow mapping at the top level (it would end the document)
             scalar = yaml.safe_dump(r[key], allow_unicode=True, width=1000).strip()
             out.append(f"{key}: {scalar.split(chr(10))[0] if scalar.endswith('...') else scalar}")
-    if r.get("roles"):
-        out += ["", dump(block({"roles": flow_map(r["roles"])}))]
-    if r.get("view_as") is not None:
-        out += ["", dump(block({"view_as": _Flow(r["view_as"] if isinstance(r["view_as"], dict) else {})}))]
-    if r.get("derivations"):
-        out += ["", "derivations:"]
-        for cn, ders in r["derivations"].items():
-            out += ["  " + line for line in dump(block({cn: block(ders)})).split("\n")]
-    if r.get("workflows"):
-        out += ["", "workflows:"]
-        for cn, w in r["workflows"].items():
-            body = block({k: v for k, v in w.items() if k not in ("states", "transitions", "revert")})
-            body["states"] = flow_map(w.get("states", {}))
-            body["transitions"] = flow_map(w.get("transitions", {}))
-            if w.get("revert"):
-                body["revert"] = _Flow(w["revert"])
-            out += ["  " + line for line in dump(block({cn: body})).split("\n")]
-    if r.get("events"):
-        out += ["", "events:"]
-        for cn, evs in r["events"].items():
-            out += ["  " + line for line in dump(block({cn: flow_map(evs)})).split("\n")]
-    for key in ("reactions", "subscriptions"):
-        if r.get(key):
-            out += ["", f"{key}:"] + ["  - " + dump(_Flow(item)) for item in r[key]]
-    if r.get("templates"):
-        out += ["", "templates:"]
-        for key, langs in r["templates"].items():
-            out += ["  " + line for line in dump(block({key: block({lang: block(tx) for lang, tx in langs.items()})})).split("\n")]
+    for key, value in _styled(r).items():
+        out += [""] + _section_lines(key, value)
     return "\n".join(out).rstrip("\n") + "\n"
+
+
+# --------------------------------------------------------------------------- #
+# Surgical rewrite: only the lines of what changed
+# --------------------------------------------------------------------------- #
+_EXPR_KEYS = ("when", "guard", "at", "notify_when")
+
+
+def _norm(v: Any, key: str | None = None) -> Any:
+    """The canonical behaviour with every expression in its canonical text: what two files mean."""
+    if isinstance(v, dict):
+        return {k: _norm(x, k) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm(x) for x in v]
+    if key in _EXPR_KEYS and isinstance(v, str):
+        return _expr_text(v)
+    return v
+
+
+def canonical(raw: dict[str, Any]) -> dict[str, Any]:
+    """expand() with the expressions (guards, conditions, derivations) in their canonical text."""
+    x = _norm(expand(raw))
+    x["derivations"] = {cn: {an: _expr_text(ex) for an, ex in ders.items()} for cn, ders in x["derivations"].items()}
+    x["reactions"] = [r for r in x["reactions"] if not r.get("_transition")]     # the file writes them on the transition
+    return x
+
+
+class _Patch:
+    """Edits (start, end, replacement) on the lines of a behaviour file, mapping by mapping."""
+
+    def __init__(self, lines: list[str]):
+        self.lines = lines
+        self.edits: list[tuple[int, int, list[str]]] = []
+
+    def block(self, start: int) -> bool:
+        """The key at `start` opens a block (its value is not written on the same line)."""
+        return not E._inline(self.lines[start])
+
+    def delete(self, start: int, end: int) -> None:
+        self.edits.append((*E._removal(self.lines, start, end), []))
+
+    def mapping(self, start: int, end: int, indent: int, old: dict[str, Any], new: dict[str, Any], raw: dict[str, Any],
+                flow: bool, deeper=None) -> bool:
+        """The entries of the block lines[start+1:end] at `indent`, compared on `old`/`new` (canonical) and written
+        from `raw` (styled): deleted, replaced (or edited inside by `deeper(key, (s, e))` when it returns True) and
+        added after the last one, in the style of their neighbours. False when the block is not laid out as
+        expected (one key per entry): the caller rewrites it whole."""
+        entries = E._children(self.lines, start + 1, end, indent)
+        if set(entries) != set(old):
+            return False
+        for k in old:
+            s, e = entries[k]
+            if k not in new:
+                self.delete(s, e)
+            elif old[k] != new[k]:
+                if deeper is not None and self.block(s) and deeper(k, (s, e)):
+                    continue
+                self.edits.append((s, e, E._entry_lines(k, raw[k], indent, self.lines[s], flow)))
+        added = [k for k in new if k not in old]
+        if added:
+            last = max(e for _, e in entries.values()) if entries else start + 1
+            like, col = E._like(self.lines, entries)
+            self.edits.append((last, last, [ln for k in added for ln in E._entry_lines(k, raw[k], indent, like, flow, col)]))
+        return True
+
+    def items(self, start: int, end: int, indent: int) -> list[tuple[int, int]]:
+        """The `- item` entries of the list block lines[start+1:end] at `indent`, each up to its last content line."""
+        out: list[tuple[int, int]] = []
+        head = " " * indent + "- "
+        last = start
+        for i in range(start + 1, end):
+            line = self.lines[i]
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            depth = len(line) - len(line.lstrip())
+            if line.startswith(head):
+                if out:
+                    out[-1] = (out[-1][0], last + 1)
+                out.append((i, end))
+            elif depth <= indent:
+                break
+            last = i
+        if out:
+            out[-1] = (out[-1][0], last + 1)
+        return out
+
+    def sequence(self, start: int, end: int, indent: int, old: list[Any], new: list[Any], raw: list[Any]) -> bool:
+        """A list of named items (reactions, subscriptions): matched by name (by position when unnamed)."""
+        items = self.items(start, end, indent)
+        if len(items) != len(old):
+            return False
+        key = lambda r, i: str(r.get("name") or f"#{i}")  # noqa: E731
+        olds = {key(r, i): (r, items[i]) for i, r in enumerate(old)}
+        news = {key(r, i): (r, raw[i]) for i, r in enumerate(new)}
+        if len(olds) != len(old) or len(news) != len(new):
+            return False
+        yaml, Dumper = _dumper()
+        line = lambda item: " " * indent + "- " + yaml.dump(_Flow(item), Dumper=Dumper, sort_keys=False, allow_unicode=True, width=10 ** 6).strip()  # noqa: E731
+        for k, (r, (s, e)) in olds.items():
+            if k not in news:
+                self.delete(s, e)
+            elif r != news[k][0]:
+                self.edits.append((s, e, [line(news[k][1])]))
+        added = [k for k in news if k not in olds]
+        if added:
+            last = max(e for _, e in items) if items else start + 1
+            self.edits.append((last, last, [line(news[k][1]) for k in added]))
+        return True
+
+    def apply(self) -> str:
+        lines = list(self.lines)
+        for s, e, repl in sorted(self.edits, key=lambda x: (x[0], x[1]), reverse=True):
+            lines[s:e] = repl
+        return "\n".join(lines)
+
+
+def patch_text(text: str, new: dict[str, Any]) -> str | None:
+    """`text` (the current behavior.yaml) changed into `new` rewriting only what differs: one role, derivation,
+    state, transition, event, reaction, subscription or template text, else the block of one class, else a section.
+    Comments, order and the style of the untouched lines stay. None when the file is not laid out as dumps writes
+    it or the change touches `metamodel`/`doc`: the caller stops, or rewrites the whole file on request."""
+    try:
+        old = loads(text)
+    except Exception:  # noqa: BLE001 - an unreadable file is left to a full rewrite
+        return None
+    if not isinstance(old, dict):
+        return None
+    r = _clean(_tidy(new))
+    a, b = canonical(old), canonical(r)
+    if a["metamodel"] != b["metamodel"] or a["doc"] != b["doc"]:
+        return None
+    styled = _styled(r)
+    lines = text.split("\n")
+    top = E._children(lines, 0, len(lines), 0)
+    p = _Patch(lines)
+
+    def section(key: str, present: bool, edit) -> bool:
+        """A top-level section: removed, edited inside (`edit(start, end)` → True) or rewritten, added."""
+        if key in top and not present:
+            p.delete(*top[key])
+        elif key in top:
+            s, e = top[key]
+            if not (p.block(s) and edit(s, e)):
+                p.edits.append((s, e, _section_lines(key, styled[key])))
+        elif present:
+            after = [top[k][0] for k in SECTIONS[SECTIONS.index(key) + 1:] if k in top]
+            if after:
+                p.edits.append((after[0], after[0], _section_lines(key, styled[key]) + [""]))
+            else:
+                at = max(e for _, e in top.values()) if top else len(lines)
+                p.edits.append((at, at, [""] + _section_lines(key, styled[key])))
+        return True
+
+    if a["roles"] != b["roles"]:
+        section("roles", bool(b["roles"]), lambda s, e: p.mapping(s, e, 2, a["roles"], b["roles"], styled.get("roles", {}), True))
+    if a["view_as"] != b["view_as"]:
+        if "view_as" in top and b["view_as"] is None:
+            p.delete(*top["view_as"])
+        elif "view_as" in top:
+            p.edits.append((*top["view_as"], E._entry_lines("view_as", styled["view_as"], 0, lines[top["view_as"][0]], True)))
+        else:
+            section("view_as", True, lambda s, e: False)
+    if a["derivations"] != b["derivations"]:
+        def der_class(cn: str, rng: tuple[int, int]) -> bool:
+            return p.mapping(*rng, 4, a["derivations"][cn], b["derivations"][cn], styled["derivations"][cn], False)
+        section("derivations", bool(b["derivations"]),
+                lambda s, e: p.mapping(s, e, 2, a["derivations"], b["derivations"], styled.get("derivations", {}), False, der_class))
+    if a["workflows"] != b["workflows"]:
+        def wf_body(ow: dict[str, Any], nw: dict[str, Any], sw: dict[str, Any], rng: tuple[int, int], indent: int) -> bool:
+            """The keys of a workflow or region block: states and transitions entry by entry, regions block by block."""
+            keys = lambda w: {k: v for k, v in w.items() if v not in (None, [], {}) or k in ("states", "transitions")}  # noqa: E731
+
+            def inside(k: str, r2: tuple[int, int]) -> bool:
+                if k in ("states", "transitions"):
+                    return p.mapping(*r2, indent + 2, ow[k], nw[k], sw[k], True)
+                if k == "regions":
+                    def region(rk: str, r3: tuple[int, int]) -> bool:
+                        return wf_body(ow["regions"][rk], nw["regions"][rk], sw["regions"][rk], r3, indent + 4)
+                    return p.mapping(*r2, indent + 2, ow["regions"], nw["regions"], sw["regions"], False, region)
+                return False
+            return p.mapping(*rng, indent, keys(ow), keys(nw), sw, True, inside)
+
+        def wf_class(cn: str, rng: tuple[int, int]) -> bool:
+            return wf_body(a["workflows"][cn], b["workflows"][cn], styled["workflows"][cn], rng, 4)
+        section("workflows", bool(b["workflows"]),
+                lambda s, e: p.mapping(s, e, 2, a["workflows"], b["workflows"], styled.get("workflows", {}), False, wf_class))
+    if a["events"] != b["events"]:
+        def ev_class(cn: str, rng: tuple[int, int]) -> bool:
+            return p.mapping(*rng, 4, a["events"][cn], b["events"][cn], styled["events"][cn], True)
+        section("events", bool(b["events"]),
+                lambda s, e: p.mapping(s, e, 2, a["events"], b["events"], styled.get("events", {}), False, ev_class))
+    for key in ("reactions", "subscriptions"):
+        if a[key] != b[key]:
+            section(key, bool(b[key]), lambda s, e, key=key: p.sequence(s, e, 2, a[key], b[key], styled.get(key, [])))
+    if a["templates"] != b["templates"]:
+        if "templates" in top and p.block(top["templates"][0]):      # a new template follows the language lines of the others
+            keys = E._children(lines, top["templates"][0] + 1, top["templates"][1], 2)
+            langs = [E._children(lines, s + 1, e, 4) for s, e in keys.values() if p.block(s)]
+            if langs and all(E._inline(lines[s]) for ls in langs for s, _ in ls.values()):
+                styled["templates"] = E._Block({k: E._Block({lang: _Flow(tx) for lang, tx in v.items()}) for k, v in styled["templates"].items()})
+
+        def tpl_key(k: str, rng: tuple[int, int]) -> bool:
+            return p.mapping(*rng, 4, a["templates"][k], b["templates"][k], styled["templates"][k], True)
+        section("templates", bool(b["templates"]),
+                lambda s, e: p.mapping(s, e, 2, a["templates"], b["templates"], styled.get("templates", {}), False, tpl_key))
+    out = p.apply()
+    try:
+        if canonical(loads(out)) != b:          # never write a file that does not read back as the proposal
+            return None
+    except Exception:  # noqa: BLE001
+        return None
+    return out
 
 
 def dump(raw: dict[str, Any], path: str | Path) -> None:
@@ -281,12 +528,36 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
             if tn not in ow["transitions"]:
                 out.append(f"+ transition {cn}.{tn}: {', '.join(tr['from'])} -> {tr['to']}")
             else:
-                ks = changed_keys(ow["transitions"][tn], tr, ("from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "notify", "template"))
+                ks = changed_keys(ow["transitions"][tn], tr, ("from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "notify", "template", "records"))
                 if "notify" not in ks and not same(ow["transitions"][tn].get("notify_when"), tr.get("notify_when"), "when"):
                     ks.append("notify")          # the condition of the notification changed
                 if ks:
                     out.append(f"~ transition {cn}.{tn}: {', '.join(ks)}")
         out += [f"- transition {cn}.{tn}" for tn in ow["transitions"] if tn not in w["transitions"]]
+        for rk, r in w["regions"].items():
+            orr = ow["regions"].get(rk)
+            if orr is None:
+                out.append(f"+ region {cn}.{rk} on {r['state']}: {len(r['states'])} states, {len(r['transitions'])} transitions")
+                continue
+            if orr["state"] != r["state"]:
+                out.append(f"~ region {cn}.{rk}: state attribute {orr['state']} -> {r['state']}")
+            for sn, st in r["states"].items():
+                if sn not in orr["states"]:
+                    out.append(f"+ state {cn}.{rk}.{sn}")
+                else:
+                    ks = changed_keys(orr["states"][sn], st, ("initial", "final", "label", "color", "owner", "editable_by", "reminder"))
+                    if ks:
+                        out.append(f"~ state {cn}.{rk}.{sn}: {', '.join(ks)}")
+            out += [f"- state {cn}.{rk}.{sn}" for sn in orr["states"] if sn not in r["states"]]
+            for tn, tr in r["transitions"].items():
+                if tn not in orr["transitions"]:
+                    out.append(f"+ transition {cn}.{rk}.{tn}: {', '.join(tr['from'])} -> {tr['to']}")
+                else:
+                    ks = changed_keys(orr["transitions"][tn], tr, ("from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "notify", "template", "records"))
+                    if ks:
+                        out.append(f"~ transition {cn}.{rk}.{tn}: {', '.join(ks)}")
+            out += [f"- transition {cn}.{rk}.{tn}" for tn in orr["transitions"] if tn not in r["transitions"]]
+        out += [f"- region {cn}.{rk}" for rk in ow["regions"] if rk not in w["regions"]]
         if not same(ow.get("revert"), w.get("revert")):
             out.append(f"~ workflow {cn}: revert")
     out += [f"- workflow {cn}" for cn in a["workflows"] if cn not in b["workflows"]]
@@ -352,44 +623,21 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
     synthetic: list[dict[str, Any]] = []        # the notification of a transition, as the reaction it stands for
     for cn, wspec in _mapping(raw.get("workflows")).items():
         w = _mapping(wspec)
-        states: dict[str, Any] = {}
-        for sn, sspec in _mapping(w.get("states")).items():
-            s = _mapping(sspec) if sspec is not None else {}
-            rem = s.get("reminder")
-            states[str(sn)] = {**copy.deepcopy(s), "initial": bool(s.get("initial", False)), "final": bool(s.get("final", False)),
-                               "owner": [str(x) for x in _list(s.get("owner"))],
-                               "editable_by": [str(x) for x in _list(s.get("editable_by"))],
-                               "requires": [str(x) for x in _list(s.get("requires"))],
-                               "model": _model_spec(s.get("model")),
-                               "reminder": _mapping(rem) if isinstance(rem, dict) else ({"after": rem} if rem else None)}
-        transitions: dict[str, Any] = {}
-        for tn, tspec in _mapping(w.get("transitions")).items():
-            t = _mapping(tspec) if tspec is not None else {}
-            # `notify: [principals]` + `template: key`, or `notify: {to, template, when}` for a condition of its own
-            n = t.get("notify")
-            if isinstance(n, dict):
-                to, template, nwhen = [str(x) for x in _list(n.get("to"))], n.get("template", t.get("template")), n.get("when")
-                extra_n = sorted(str(k) for k in set(n) - NOTIFY_KEYS)
-            else:
-                to, template, nwhen, extra_n = [str(x) for x in _list(n)], t.get("template"), None, []
-            transitions[str(tn)] = {**copy.deepcopy(t), "from": [str(x) for x in _list(t.get("from"))],
-                                    "to": str(t["to"]) if t.get("to") is not None else None,
-                                    "by": [str(x) for x in _list(t.get("by"))],
-                                    "when": t.get("when"), "guard": t.get("guard"), "comment": t.get("comment"),
-                                    "at": t.get("at"), "emits": [str(x) for x in _list(t.get("emits"))],
-                                    "notify": to, "template": template, "notify_when": nwhen, "_notify_extra": extra_n}
-            if to:
-                cond = f"transition = {tn}" + (f" and ({' '.join(str(nwhen).split())})" if nwhen else "")
-                synthetic.append({"name": f"notify_{tn}", "event": f"{cn}.transitioned", "when": cond, "notify": list(to),
-                                  "template": template, "_transition": str(tn)})
+        states, transitions = _expand_flow(str(cn), w, synthetic)
+        regions: dict[str, Any] = {}
+        for rk, rspec in _mapping(w.get("regions")).items():
+            r = _mapping(rspec) if rspec is not None else {}
+            rstates, rtransitions = _expand_flow(str(cn), r, synthetic)
+            regions[str(rk)] = {**{k: copy.deepcopy(v) for k, v in r.items() if k not in ("states", "transitions")},
+                                "state": r.get("state"), "states": rstates, "transitions": rtransitions}
         rev = w.get("revert")
         revert = None
         if rev:
             rv = _mapping(rev) if isinstance(rev, dict) else {}
             revert = {**copy.deepcopy(rv), "by": [str(x) for x in _list(rv.get("by"))],
                       "final_by": [str(x) for x in _list(rv.get("final_by"))], "comment": rv.get("comment")}
-        out["workflows"][str(cn)] = {**{k: copy.deepcopy(v) for k, v in w.items() if k not in ("states", "transitions", "revert")},
-                                     "state": w.get("state"), "states": states, "transitions": transitions, "revert": revert}
+        out["workflows"][str(cn)] = {**{k: copy.deepcopy(v) for k, v in w.items() if k not in ("states", "transitions", "revert", "regions")},
+                                     "state": w.get("state"), "states": states, "transitions": transitions, "revert": revert, "regions": regions}
     for cn, espec in _mapping(raw.get("events")).items():
         evs: dict[str, Any] = {}
         for en, ev in (_mapping(espec).items() if isinstance(espec, dict) else [(x, None) for x in _list(espec)]):
@@ -413,6 +661,42 @@ def expand(raw: dict[str, Any]) -> dict[str, Any]:
                                 "body": "" if tx.get("body") is None else str(tx["body"])}
         out["templates"][str(key)] = langs
     return out
+
+
+def _expand_flow(cn: str, w: dict[str, Any], synthetic: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The states and transitions of a workflow or of one of its regions in canonical form; the `notify` of a
+    transition is added to `synthetic` as the reaction it stands for."""
+    states: dict[str, Any] = {}
+    for sn, sspec in _mapping(w.get("states")).items():
+        s = _mapping(sspec) if sspec is not None else {}
+        rem = s.get("reminder")
+        states[str(sn)] = {**copy.deepcopy(s), "initial": bool(s.get("initial", False)), "final": bool(s.get("final", False)),
+                           "owner": [str(x) for x in _list(s.get("owner"))],
+                           "editable_by": [str(x) for x in _list(s.get("editable_by"))],
+                           "requires": [str(x) for x in _list(s.get("requires"))],
+                           "model": _model_spec(s.get("model")),
+                           "reminder": _mapping(rem) if isinstance(rem, dict) else ({"after": rem} if rem else None)}
+    transitions: dict[str, Any] = {}
+    for tn, tspec in _mapping(w.get("transitions")).items():
+        t = _mapping(tspec) if tspec is not None else {}
+        # `notify: [principals]` + `template: key`, or `notify: {to, template, when}` for a condition of its own
+        n = t.get("notify")
+        if isinstance(n, dict):
+            to, template, nwhen = [str(x) for x in _list(n.get("to"))], n.get("template", t.get("template")), n.get("when")
+            extra_n = sorted(str(k) for k in set(n) - NOTIFY_KEYS)
+        else:
+            to, template, nwhen, extra_n = [str(x) for x in _list(n)], t.get("template"), None, []
+        transitions[str(tn)] = {**copy.deepcopy(t), "from": [str(x) for x in _list(t.get("from"))],
+                                "to": str(t["to"]) if t.get("to") is not None else None,
+                                "by": [str(x) for x in _list(t.get("by"))],
+                                "when": t.get("when"), "guard": t.get("guard"), "comment": t.get("comment"),
+                                "at": t.get("at"), "emits": [str(x) for x in _list(t.get("emits"))],
+                                "notify": to, "template": template, "notify_when": nwhen, "_notify_extra": extra_n}
+        if to:
+            cond = f"transition = {tn}" + (f" and ({' '.join(str(nwhen).split())})" if nwhen else "")
+            synthetic.append({"name": f"notify_{tn}", "event": f"{cn}.transitioned", "when": cond, "notify": list(to),
+                              "template": template, "_transition": str(tn)})
+    return states, transitions
 
 
 def bind(raw: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
@@ -549,10 +833,20 @@ def context(e: dict[str, Any], b: dict[str, Any], cname: str, event: str | None 
     """Where an expression of `cname` is read; in a reaction on `<Class>.transitioned`, `transition` names the
     transition that fired."""
     ctx = X.Context(e, cname)
-    if event == "transitioned" and cname in b["workflows"]:
-        ctx.variables["transition"] = X.ENUM + "@transition"
-        ctx.names["@transition"] = list(b["workflows"][cname]["transitions"])
+    w = b["workflows"].get(cname)
+    if w:
+        for f in [w] + list(w.get("regions", {}).values()):
+            if f.get("state"):                           # `state = draft`, `accountingState = checked`
+                ctx.state_attrs[str(f["state"])] = list(f["states"])
+        if event == "transitioned":
+            ctx.variables["transition"] = X.ENUM + "@transition"
+            ctx.names["@transition"] = [tn for f in [w] + list(w.get("regions", {}).values()) for tn in f["transitions"]]
     return ctx
+
+
+def flows(w: dict[str, Any]) -> list[tuple[str | None, dict[str, Any]]]:
+    """The main workflow and its regions: [(None, w), (region key, region), …] (canonical form)."""
+    return [(None, w)] + [(rk, r) for rk, r in w.get("regions", {}).items()]
 
 
 # --------------------------------------------------------------------------- #
@@ -723,7 +1017,7 @@ def _check_derivations(b: dict[str, Any], e: dict[str, Any], rep: M.Report) -> N
                 rep.error(w, "the derivation is an expression (text)")
                 continue
             try:
-                node, _ = X.check(text, X.Context(e, cname), expect=X.feature_type(a, e, False))
+                node, _ = X.check(text, context(e, b, cname), expect=X.feature_type(a, e, False))
             except X.ExprError as exc:
                 rep.error(w, str(exc))
                 continue
@@ -786,7 +1080,7 @@ def _check_principal(b: dict[str, Any], e: dict[str, Any], cname: str, p: str, w
             rep.error(where, "'self' is the record: navigate to a user (self.<reference>)")
             return
         try:
-            _, t = X.check(p, X.Context(e, cname))
+            _, t = X.check(p, context(e, b, cname))
         except X.ExprError as exc:
             rep.error(where, f"'{p}': {exc}")
             return
@@ -823,7 +1117,7 @@ def _check_principal(b: dict[str, Any], e: dict[str, Any], cname: str, p: str, w
         return                                              # reported elsewhere
     if path:
         try:
-            _, t = X.check(path, X.Context(e, cname))
+            _, t = X.check(path, context(e, b, cname))
         except X.ExprError as exc:
             rep.error(where, f"'{p}': {exc}")
             return
@@ -862,11 +1156,55 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
     extra = set(w) - WORKFLOW_KEYS
     if extra:
         rep.error(where, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(WORKFLOW_KEYS))})")
+    _check_flow(b, e, cname, w, where, rep, region=None)
+    # the regions: orthogonal to the main states, each on its own attribute, their transition keys unique in the class
+    # (the engine addresses every transition by its key; `transition = <key>` in a reaction names it)
+    state_attrs: dict[str, str] = {str(w.get("state")): "the workflow"}
+    keys: dict[str, str] = {tn: "the workflow" for tn in w["transitions"]}
+    for rk, r in w["regions"].items():
+        rw = f"{where}.regions.{rk}"
+        if not IDENT.match(rk):
+            rep.error(rw, "region keys are lowercase identifiers (letters, digits, _)")
+        extra = set(r) - REGION_KEYS
+        if extra:
+            rep.error(rw, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: {', '.join(sorted(REGION_KEYS))})")
+        sa = str(r.get("state"))
+        if r.get("state") and sa in state_attrs:
+            rep.error(f"{rw}.state", f"'{sa}' already holds the state of {state_attrs[sa]}: a region has its own attribute")
+        state_attrs[sa] = f"region {rk}"
+        for tn in r["transitions"]:
+            if tn in keys:
+                rep.error(f"{rw}.transitions.{tn}", f"a transition with this key exists in {keys[tn]}: keys are unique in the class")
+            keys[tn] = f"region {rk}"
+        for sn, s in r["states"].items():
+            for key in ("requires", "model"):
+                if s.get(key):
+                    rep.error(f"{rw}.states.{sn}.{key}", "the record's view belongs to the states of the main workflow, not to a region")
+        _check_flow(b, e, cname, r, rw, rep, region=rk)
+    rv = w.get("revert")
+    if rv is not None:
+        rw = f"{where}.revert"
+        extra = set(rv) - REVERT_KEYS
+        if extra:
+            rep.error(rw, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: by, final_by, comment)")
+        if not rv["by"]:
+            rep.error(rw, "by: who can bring a record back to a previous state")
+        for key in ("by", "final_by"):
+            for p in rv[key]:
+                _check_principal(b, e, cname, p, f"{rw}.{key}", rep)
+        if rv.get("comment") is not None and rv["comment"] not in COMMENT:
+            rep.error(f"{rw}.comment", "required or optional")
+
+
+def _check_flow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[str, Any], where: str, rep: M.Report,
+                region: str | None) -> None:
+    """The state attribute, states and transitions of the main workflow (`region` None) or of one region."""
     states, transitions = w["states"], w["transitions"]
+    what = f"region {region}" if region else "workflow"
     # the state attribute
     sa = w.get("state")
     if not sa:
-        rep.error(where, "state: the attribute of the class that holds the state")
+        rep.error(where, f"state: the attribute of the class that holds the state of the {what}")
     else:
         a = _attribute(e, cname, str(sa))
         if a is None:
@@ -889,7 +1227,7 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
     final = [s for s, spec in states.items() if spec["final"]]
     if states and len(initial) != 1:
         rep.error(f"{where}.states", f"exactly one state is `initial: true` (found {len(initial)})")
-    if states and not final:
+    if states and not final and not region:
         rep.error(f"{where}.states", "at least one state is `final: true`")
     for sn, s in states.items():
         sw = f"{where}.states.{sn}"
@@ -914,8 +1252,10 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
                 rep.error(f"{sw}.reminder", "template: a lowercase identifier")
             if s["final"]:
                 rep.warn(f"{sw}.reminder", "a final state is never reminded")
-        _check_state_model(e, cname, sa, sn, s, states, transitions, sw, rep)
-    ctx = X.Context(e, cname)
+        if not region:
+            _check_state_model(e, cname, sa, sn, s, states, transitions, sw, rep)
+    ctx = context(e, b, cname)
+    attrs, refs = E.features(e, cname)
     reach: dict[str, set[str]] = {s: set() for s in states}
     for tn, t in transitions.items():
         tw = f"{where}.transitions.{tn}"
@@ -937,13 +1277,13 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
             rep.error(tw, "from: one or more states")
         for s in t["from"]:
             if s not in states:
-                rep.error(tw, f"from: unknown state '{s}'")
+                rep.error(tw, f"from: unknown state '{s}'" + (f" (the states of {what})" if region else ""))
             elif states[s]["final"]:
                 rep.warn(tw, f"leaves the final state '{s}'")
         if t["to"] is None:
             rep.error(tw, "to: the target state")
         elif t["to"] not in states:
-            rep.error(tw, f"to: unknown state '{t['to']}'")
+            rep.error(tw, f"to: unknown state '{t['to']}'" + (f" (the states of {what})" if region else ""))
         else:
             for s in t["from"]:
                 if s in reach:
@@ -968,6 +1308,24 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
                 _check_expr(e, ctx, t[key], f"{tw}.{key}", rep)
         if t.get("comment") is not None and t["comment"] not in COMMENT:
             rep.error(f"{tw}.comment", "required or optional")
+        rec = t.get("records")
+        if rec is not None:                      # who fired it and when, written by the engine
+            rw = f"{tw}.records"
+            if not isinstance(rec, dict) or not rec:
+                rep.error(rw, "a mapping {by: <reference to User>, at: <DateTime attribute>} (one of the two at least)")
+            else:
+                extra = set(rec) - RECORDS_KEYS
+                if extra:
+                    rep.error(rw, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: by, at)")
+                by, at = rec.get("by"), rec.get("at")
+                if by is not None:
+                    r = refs.get(str(by))
+                    if r is None or r["upper"] != 1 or (E.resolve_type(e, r["type"]) or r["type"]) != "User":
+                        rep.error(f"{rw}.by", f"'{by}' is not a single-valued reference of {cname} to User")
+                if at is not None:
+                    a = attrs.get(str(at))
+                    if a is None or a["upper"] != 1 or a["type"] not in ("DateTime", "Date"):
+                        rep.error(f"{rw}.at", f"'{at}' is not a Date or DateTime attribute of {cname}")
         declared = b["events"].get(cname, {})
         for ev in t["emits"]:
             if ev not in declared:
@@ -984,19 +1342,6 @@ def _check_workflow(b: dict[str, Any], e: dict[str, Any], cname: str, w: dict[st
         for s in states:
             if s not in seen:
                 rep.error(f"{where}.states.{s}", f"unreachable from '{initial[0]}'")
-    rv = w.get("revert")
-    if rv is not None:
-        rw = f"{where}.revert"
-        extra = set(rv) - REVERT_KEYS
-        if extra:
-            rep.error(rw, f"unknown keys: {', '.join(sorted(map(str, extra)))} (allowed: by, final_by, comment)")
-        if not rv["by"]:
-            rep.error(rw, "by: who can bring a record back to a previous state")
-        for key in ("by", "final_by"):
-            for p in rv[key]:
-                _check_principal(b, e, cname, p, f"{rw}.{key}", rep)
-        if rv.get("comment") is not None and rv["comment"] not in COMMENT:
-            rep.error(f"{rw}.comment", "required or optional")
 
 
 def _check_state_model(e: dict[str, Any], cname: str, sa: Any, sn: str, s: dict[str, Any], states: dict[str, Any],
@@ -1305,7 +1650,7 @@ def _check_placeholder(b: dict[str, Any], e: dict[str, Any], name: str, where: l
             if path == "id":                                   # every record has an id (not a feature of the metamodel)
                 continue
             try:
-                _, t = X.check(path, X.Context(e, cname))
+                _, t = X.check(path, context(e, b, cname))
             except X.ExprError as exc:
                 rep.error(fw, f"{{{{{name}}}}}: {exc}")
                 continue
@@ -1375,6 +1720,8 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "transitions": "Transizioni", "transition": "Transizione", "from_to": "Da → A", "by": "Chi", "when": "Condizione",
         "guard": "Requisito", "comment": "Commento", "at": "Scadenza", "emits": "Eventi", "notifies": "Avvisa", "system": "sistema: {at}",
         "revert": "Ritorno a uno stato precedente: {by}; da uno stato finale: {final_by}; commento {comment}.",
+        "region": "Regione `{key}` (in parallelo agli stati del workflow): lo stato è l'attributo `{attr}`",
+        "region_note": "Una regione avanza con le sue transizioni, indipendentemente dallo stato principale; una guardia del workflow può leggerne lo stato (`{attr} = …`).",
         "comment_required": "obbligatorio", "comment_optional": "facoltativo",
         "derivations": "Attributi calcolati", "attribute": "Attributo", "formula": "Formula", "in_code": "*calcolato nel codice*",
         "events": "Eventi", "event": "Evento", "description": "Descrizione", "builtin_events": "predefinito",
@@ -1403,6 +1750,8 @@ DOC_TEXT: dict[str, dict[str, str]] = {
         "transitions": "Transitions", "transition": "Transition", "from_to": "From → To", "by": "Who", "when": "Condition",
         "guard": "Requirement", "comment": "Comment", "at": "Due", "emits": "Events", "notifies": "Notifies", "system": "system: {at}",
         "revert": "Back to a previous state: {by}; from a final state: {final_by}; comment {comment}.",
+        "region": "Region `{key}` (orthogonal to the states of the workflow): the state is the attribute `{attr}`",
+        "region_note": "A region advances through its own transitions, whatever the main state; a guard of the workflow may read its state (`{attr} = …`).",
         "comment_required": "required", "comment_optional": "optional",
         "derivations": "Derived attributes", "attribute": "Attribute", "formula": "Formula", "in_code": "*computed in code*",
         "events": "Events", "event": "Event", "description": "Description", "builtin_events": "built in",
@@ -1442,24 +1791,32 @@ def overlay_mark(o: dict[str, Any] | None) -> str:
     return " ".join(parts)
 
 
-def mermaid_workflow(w: dict[str, Any], lang: str) -> str:
-    """The workflow as a Mermaid state diagram."""
+def mermaid_workflow(w: dict[str, Any], lang: str, name: str = "workflow") -> str:
+    """The workflow as a Mermaid state diagram; with regions, a composite state with one concurrent region per flow
+    (`--`), the region states prefixed by the region key (ids are global in a diagram)."""
+    def flow(f: dict[str, Any], prefix: str, indent: str) -> list[str]:
+        key = lambda sn: f"{prefix}{sn}"  # noqa: E731
+        out = []
+        for sn, s in f["states"].items():
+            label = _lbl(s, sn, lang)
+            if label != key(sn):
+                out.append(f"{indent}{key(sn)}: {label}")
+        out += [f"{indent}[*] --> {key(sn)}" for sn, s in f["states"].items() if s["initial"]]
+        out += [f"{indent}{key(sn)} --> [*]" for sn, s in f["states"].items() if s["final"]]
+        for tn, tr in f["transitions"].items():
+            label = _lbl(tr, tn, lang)
+            suffix = " (auto)" if tr.get("at") is not None else ""
+            out += [f"{indent}{key(src)} --> {key(tr['to'])}: {label}{suffix}" for src in tr["from"]]
+        return out
+
     lines = ["stateDiagram-v2"]
-    initial = [s for s, spec in w["states"].items() if spec["initial"]]
-    for sn, s in w["states"].items():
-        label = _lbl(s, sn, lang)
-        if label != sn:
-            lines.append(f"  {sn}: {label}")
-    for sn in initial:
-        lines.append(f"  [*] --> {sn}")
-    for sn, s in w["states"].items():
-        if s["final"]:
-            lines.append(f"  {sn} --> [*]")
-    for tn, t in w["transitions"].items():
-        label = _lbl(t, tn, lang)
-        suffix = " (auto)" if t.get("at") is not None else ""
-        for src in t["from"]:
-            lines.append(f"  {src} --> {t['to']}: {label}{suffix}")
+    if not w.get("regions"):
+        return "\n".join(lines + flow(w, "", "  ")) + "\n"
+    lines.append(f"  state {name} {{")
+    parts = [flow(w, "", "    ")] + [flow(r, f"{rk}_", "    ") for rk, r in w["regions"].items()]
+    for i, part in enumerate(parts):
+        lines += (["    --"] if i else []) + part
+    lines.append("  }")
     return "\n".join(lines) + "\n"
 
 
@@ -1486,7 +1843,7 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
         out += [t["view_as"].format(who=who), ""]
     for cname, w in b["workflows"].items():
         out += [f"## {t['workflow'].format(cls=cname)}", "", t["state_attr"].format(attr=w["state"]), "",
-                "```mermaid", mermaid_workflow(w, lang).rstrip("\n"), "```", ""]
+                "```mermaid", mermaid_workflow(w, lang, cname).rstrip("\n"), "```", ""]
         rows = []
         for sn, s in w["states"].items():
             kind = t["initial"] if s["initial"] else t["final"] if s["final"] else ""
@@ -1519,6 +1876,25 @@ def to_markdown(raw: dict[str, Any], metamodel: dict[str, Any], lang: str | None
             out += [t["revert"].format(by=", ".join(_code(p) for p in rv["by"]),
                                        final_by=", ".join(_code(p) for p in rv["final_by"]) or "—",
                                        comment=t["comment_required"] if rv.get("comment") == "required" else t["comment_optional"]), ""]
+        for rk, r in w["regions"].items():
+            out += [f"### {t['region'].format(key=rk, attr=r['state'])}", "", t["region_note"].format(attr=r["state"]), ""]
+            rows = []
+            for sn, s in r["states"].items():
+                kind = t["initial"] if s["initial"] else t["final"] if s["final"] else ""
+                rem = s.get("reminder")
+                rem_text = t["reminder_text"].format(after=rem["after"], template=rem.get("template") or f"{sn}_reminder") if rem else ""
+                rows.append([_code(sn), _lbl(s, sn, lang), kind, ", ".join(_code(p) for p in s["owner"]),
+                             ", ".join(_code(p) for p in s["editable_by"]), rem_text])
+            out += E._table([t["state"], t["label"], t["kind"], t["owner"], t["editable_by"], t["reminder"]], rows) + [""]
+            rows = []
+            for tn, tr in r["transitions"].items():
+                who = ", ".join(_code(p) for p in tr["by"]) if tr["by"] else t["system"].format(at=_code(tr["at"]))
+                comment = t["comment_required"] if tr.get("comment") == "required" else ""
+                notifies = "; ".join(f"{', '.join(_code(p) for p in by_name[n]['notify'])} ({_code(by_name[n].get('template'))})"
+                                     for n in named.get(tn, []) if n in by_name)
+                rows.append([_code(tn), _lbl(tr, tn, lang), f"{', '.join(tr['from'])} → {tr['to']}", who,
+                             _code(tr.get("when")), _code(tr.get("guard")), comment, ", ".join(_code(x) for x in tr["emits"]), notifies])
+            out += E._table([t["transition"], t["label"], t["from_to"], t["by"], t["when"], t["guard"], t["comment"], t["emits"], t["notifies"]], rows) + [""]
     derived: list[list[str]] = []
     for cname, c in e["classes"].items():
         attrs, _ = E.features(e, cname)
@@ -1617,14 +1993,14 @@ def uses(b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
         if p in BUILTIN_PRINCIPALS:
             return
         if p.startswith("self."):
-            expr(p, X.Context(e, cname), kind, of)
+            expr(p, context(e, b, cname), kind, of)
             return
         m = ROLE_AT.match(p)
         role_spec = b["roles"].get(m.group("role")) if m else None
         if not m or role_spec is None:
             return
         if m.group("path"):
-            expr(m.group("path"), X.Context(e, cname), kind, of)
+            expr(m.group("path"), context(e, b, cname), kind, of)
             return
         scope = role_spec.get("scope")
         if scope in e["classes"]:
@@ -1637,17 +2013,38 @@ def uses(b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
         attrs, _ = E.features(e, cname)
         for an, text in ders.items():
             expect = X.feature_type(attrs[an], e, False) if an in attrs else None
-            expr(text, X.Context(e, cname), "derivation", f"{cname}.{an}", expect)
+            expr(text, context(e, b, cname), "derivation", f"{cname}.{an}", expect)
     for cname, w in b["workflows"].items():
         if cname not in e["classes"]:
             continue
-        ctx = X.Context(e, cname)
+        ctx = context(e, b, cname)
         attrs, refs = E.features(e, cname)
+        for rk, f_ in flows(w):
+            tag = f"{cname}.{rk}." if rk else f"{cname}."
+            for sn, s in f_["states"].items():
+                for p in s["owner"]:
+                    principal(p, cname, "owner", f"{tag}{sn}")
+                for p in s["editable_by"]:
+                    principal(p, cname, "editable_by", f"{tag}{sn}")
+            if rk:
+                add(cname, "attributes", str(f_["state"]), "state", f"{cname}.{rk}")
+            for tn, t in f_["transitions"].items():
+                of = f"{tag}{tn}"
+                for p in t["by"]:
+                    principal(p, cname, "by", of)
+                if t.get("when") is not None:
+                    expr(t["when"], ctx, "when", of, X.BOOL)
+                if t.get("guard") is not None:
+                    expr(t["guard"], ctx, "guard", of, X.BOOL)
+                if t.get("at") is not None:
+                    m = AT.match(str(t["at"]).strip())
+                    if m:
+                        expr(m.group("path"), ctx, "at", of)
+                rec = t.get("records") if isinstance(t.get("records"), dict) else {}
+                for key, f in rec.items():
+                    if f in attrs or f in refs:
+                        add(cname, "attributes" if f in attrs else "references", str(f), "records", of)
         for sn, s in w["states"].items():
-            for p in s["owner"]:
-                principal(p, cname, "owner", f"{cname}.{sn}")
-            for p in s["editable_by"]:
-                principal(p, cname, "editable_by", f"{cname}.{sn}")
             for f, o in state_overlay(s).items():
                 if f not in attrs and f not in refs:
                     continue
@@ -1660,18 +2057,6 @@ def uses(b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
                     add(cname, group, f, "hidden", f"{cname}.{sn}")
                 elif o["readonly"]:
                     add(cname, group, f, "readonly", f"{cname}.{sn}")
-        for tn, t in w["transitions"].items():
-            of = f"{cname}.{tn}"
-            for p in t["by"]:
-                principal(p, cname, "by", of)
-            if t.get("when") is not None:
-                expr(t["when"], ctx, "when", of, X.BOOL)
-            if t.get("guard") is not None:
-                expr(t["guard"], ctx, "guard", of, X.BOOL)
-            if t.get("at") is not None:
-                m = AT.match(str(t["at"]).strip())
-                if m:
-                    expr(m.group("path"), ctx, "at", of)
         rv = w.get("revert")
         if rv:
             for p in list(rv["by"]) + list(rv["final_by"]):
@@ -1702,21 +2087,24 @@ def runtime_json(raw: dict[str, Any], metamodel: dict[str, Any]) -> dict[str, An
     b["uses"] = uses(b, e)                 # on the texts, before they become typed dicts below
     for cname, ders in b["derivations"].items():
         attrs, _ = E.features(e, cname)
-        ctx = X.Context(e, cname)
+        ctx = context(e, b, cname)
         b["derivations"][cname] = {an: _typed(text, ctx, X.SqlContext(e, cname), X.feature_type(attrs[an], e, False))
                                    for an, text in ders.items()}
     for cname, w in b["workflows"].items():
-        ctx, sql_ctx = X.Context(e, cname), X.SqlContext(e, cname)
+        ctx, sql_ctx = context(e, b, cname), X.SqlContext(e, cname)
         named = transition_reactions(b, e, cname)          # who is notified when each transition fires (both forms)
         by_name = {r.get("name"): r for r in b["reactions"]}
         tctx = context(e, b, cname, "transitioned")
         tsql = X.SqlContext(e, cname, variables={"transition": "(p_extra -> 'transition' ->> 'key')"})
-        for tn, tr in w["transitions"].items():
-            for key in ("when", "guard"):
-                tr[key] = _typed(tr.get(key), ctx, sql_ctx, X.BOOL)
-            tr["notify_when"] = _typed(tr.get("notify_when"), tctx, tsql, X.BOOL)
-            tr["notifies"] = [{"name": n, "notify": list(by_name[n]["notify"]), "template": by_name[n].get("template"),
-                               "own": bool(by_name[n].get("_transition"))} for n in named.get(tn, []) if n in by_name]
+        for rk, f in flows(w):
+            for tn, tr in f["transitions"].items():
+                for key in ("when", "guard"):
+                    tr[key] = _typed(tr.get(key), ctx, sql_ctx, X.BOOL)
+                tr["notify_when"] = _typed(tr.get("notify_when"), tctx, tsql, X.BOOL)
+                tr["notifies"] = [{"name": n, "notify": list(by_name[n]["notify"]), "template": by_name[n].get("template"),
+                                   "own": bool(by_name[n].get("_transition"))} for n in named.get(tn, []) if n in by_name]
+                if rk:
+                    tr["region"] = rk
     for r in b["reactions"]:
         cname, event = str(r["event"]).split(".")
         ctx = context(e, b, cname, event)
@@ -1827,20 +2215,22 @@ def engine_version(raw: dict[str, Any], metamodel: dict[str, Any], cname: str) -
     b = bind(raw, e)
     w = b["workflows"][cname]
     entity = M.snake(cname)
-    ctx = X.Context(e, cname)
+    ctx = context(e, b, cname)
     states = []
-    for i, (sn, s) in enumerate(w["states"].items()):
-        rem = s.get("reminder")
-        days = None
-        if rem and isinstance(rem.get("after"), str):
-            m = DURATION.match(rem["after"])
-            days = int(m.group(1)) * {"d": 1, "h": 0, "w": 7}[m.group(2)] if m else None
-        states.append({"key": sn, "labels": s.get("label") if isinstance(s.get("label"), dict) else {},
-                       "kind": "initial" if s["initial"] else "final" if s["final"] else "normal",
-                       "color": s.get("color") or "#64748b", "owner": [principal_key(p) for p in s["owner"]],
-                       "editable_by": [principal_key(p) for p in s["editable_by"]], "requires": required_features(s),
-                       "model": state_overlay(s),
-                       "reminder_days": days, "reminder_template": (rem or {}).get("template"), "sort": i})
+    for rk, f in flows(w):
+        for i, (sn, s) in enumerate(f["states"].items()):
+            rem = s.get("reminder")
+            days = None
+            if rem and isinstance(rem.get("after"), str):
+                m = DURATION.match(rem["after"])
+                days = int(m.group(1)) * {"d": 1, "h": 0, "w": 7}[m.group(2)] if m else None
+            states.append({"key": f"{rk}.{sn}" if rk else sn, "labels": s.get("label") if isinstance(s.get("label"), dict) else {},
+                           "kind": "initial" if s["initial"] else "final" if s["final"] else "normal",
+                           "color": s.get("color") or "#64748b", "owner": [principal_key(p) for p in s["owner"]],
+                           "editable_by": [principal_key(p) for p in s["editable_by"]], "requires": required_features(s),
+                           "model": state_overlay(s),
+                           "reminder_days": days, "reminder_template": (rem or {}).get("template"), "sort": i,
+                           **({"region": rk} if rk else {})})
     notify: dict[str, list[dict[str, Any]]] = {}
     for r in b["reactions"]:
         if r["event"] != f"{cname}.transitioned" or not r.get("when"):
@@ -1850,22 +2240,25 @@ def engine_version(raw: dict[str, Any], metamodel: dict[str, Any], cname: str) -
         for key in keys or []:
             notify.setdefault(key, []).append({"to": [principal_key(p) for p in r["notify"]], "template": r["template"]})
     transitions = []
-    for i, (tn, tr) in enumerate(w["transitions"].items()):
-        guard = clauses(X.check(str(tr["guard"]), ctx, X.BOOL)[0], e, cname) if tr.get("guard") else []
-        cond = clauses(X.check(str(tr["when"]), ctx, X.BOOL)[0], e, cname) if tr.get("when") else []
-        at_field, at_offset = None, ""
-        if tr.get("at") is not None:
-            m = AT.match(str(tr["at"]).strip())
-            if m:
-                attrs, _ = E.features(e, cname)
-                at_field = E.field_key(m.group("path"), attrs.get(m.group("path")))
-                at_offset = offset_interval(f"{m.group('n')}{m.group('unit')}") if m.group("n") else ""
-        transitions.append({"key": tn, "labels": tr.get("label") if isinstance(tr.get("label"), dict) else {},
-                            "from_states": list(tr["from"]), "to_state": tr["to"],
-                            "allowed": [principal_key(p) for p in tr["by"]],
-                            "trigger": "timed" if tr.get("at") is not None else "manual", "at_field": at_field, "at_offset": at_offset,
-                            "comment": tr.get("comment") or "optional", "guard": guard, "condition": cond,
-                            "emits": [f"{entity}.{ev}" for ev in tr["emits"]], "notify": notify.get(tn, []), "sort": i})
+    for rk, f in flows(w):
+        for i, (tn, tr) in enumerate(f["transitions"].items()):
+            guard = clauses(X.check(str(tr["guard"]), ctx, X.BOOL)[0], e, cname) if tr.get("guard") else []
+            cond = clauses(X.check(str(tr["when"]), ctx, X.BOOL)[0], e, cname) if tr.get("when") else []
+            at_field, at_offset = None, ""
+            if tr.get("at") is not None:
+                m = AT.match(str(tr["at"]).strip())
+                if m:
+                    attrs, _ = E.features(e, cname)
+                    at_field = E.field_key(m.group("path"), attrs.get(m.group("path")))
+                    at_offset = offset_interval(f"{m.group('n')}{m.group('unit')}") if m.group("n") else ""
+            prefix = f"{rk}." if rk else ""
+            transitions.append({"key": tn, "labels": tr.get("label") if isinstance(tr.get("label"), dict) else {},
+                                "from_states": [prefix + s for s in tr["from"]], "to_state": prefix + str(tr["to"]),
+                                "allowed": [principal_key(p) for p in tr["by"]],
+                                "trigger": "timed" if tr.get("at") is not None else "manual", "at_field": at_field, "at_offset": at_offset,
+                                "comment": tr.get("comment") or "optional", "guard": guard, "condition": cond,
+                                "emits": [f"{entity}.{ev}" for ev in tr["emits"]], "notify": notify.get(tn, []), "sort": i,
+                                **({"region": rk} if rk else {})})
     return {"entity": entity, "states": states, "transitions": transitions}
 
 
@@ -1976,7 +2369,7 @@ def sql_view(raw: dict[str, Any], metamodel: dict[str, Any]) -> str:
     out: list[str] = []
     for cname, ders in b["derivations"].items():
         attrs, _ = E.features(e, cname)
-        ctx = X.Context(e, cname)
+        ctx = context(e, b, cname)
         out.append(f"-- {cname}: derived attributes (r = a row of {X.SqlContext(e, cname).table(cname)})")
         for an, text in ders.items():
             node, t = X.check(str(text), ctx, X.feature_type(attrs[an], e, False))
@@ -1985,7 +2378,7 @@ def sql_view(raw: dict[str, Any], metamodel: dict[str, Any]) -> str:
             out.append(f"{E.field_key(an, attrs[an])} := {f'coalesce({sql}, false)' if t == X.BOOL else sql};")
         out.append("")
     for cname, w in b["workflows"].items():
-        ctx, sql_ctx = X.Context(e, cname), X.SqlContext(e, cname)
+        ctx, sql_ctx = context(e, b, cname), X.SqlContext(e, cname)
         out.append(f"-- {cname}: transitions (condition hides, guard blocks)")
         for tn, tr in w["transitions"].items():
             for key in ("when", "guard"):

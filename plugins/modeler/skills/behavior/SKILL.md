@@ -42,7 +42,17 @@ mantieni nomi e lingua dell'utente.
 - Una `guard`/`when` che il motore runtime valuta come clausole è una congiunzione di test su singoli attributi
   del record; `or`, calcoli e navigazioni vanno in un attributo derivato (`npm run model:behavior -- --format
   engine` dice cosa il motore non valuta).
-- L'attributo di stato (`state:` del workflow) è un `EString` o un enum con un letterale per stato.
+- L'attributo di stato (`state:` del workflow) è un `EString` o un enum con un letterale per stato. Nelle guardie e
+  nelle condizioni un nome nudo accanto a un attributo di stato è uno dei suoi stati (`state = draft`,
+  `accountingState = checked`).
+- «Uno stato parallelo a …», «una spunta degli uffici mentre il RUP istruisce», «in parallelo all'istruttoria»: una
+  **regione** del workflow (`regions.<chiave>` con `state` proprio, `states`, `transitions`; riferimento «Workflows»),
+  non un flag booleano con due autotransizioni sullo stato principale: la regione ha `owner`/`reminder` (la desk e i
+  solleciti vedono chi aspetta), compare nel diagramma come riquadro tratteggiato accanto al workflow, e la transizione
+  principale la legge nella guardia con gli operatori del linguaggio (`linesWithoutCoan = 0 and accountingState = checked`).
+  L'attributo di stato della regione è un attributo della classe (metamodello, `/modeler:metamodel`), come `state`;
+  «chi e quando» sono `records: {by: <ref a User>, at: <DateTime>}` sulla transizione, non codice. In un'app con il
+  motore a mano la forma vecchia (flag + autotransizioni + guardia) resta valida; il modello la descrive come regione.
 - «Avvisa X quando Y», con Y una transizione: `notify: [X]` e `template: <chiave>` **sulla transizione** Y (con una
   condizione in più sul record `notify: {to: [X], template: …, when: …}`), non una reazione: il motore la vede come la
   reazione `notify_<transizione>` su `<Classe>.transitioned`, `behavior.json` porta `notifies` su ogni transizione
@@ -148,8 +158,13 @@ risolti, `model:drift`). Mai un `behavior.yaml` che cita feature che il metamode
 5. Test: la transizione bloccata dalla guardia, i destinatari della reazione, il sollecito, un testo reso (pgTAP o
    test dell'app); poi typecheck, lint e test dell'app.
 6. Le modifiche fatte dal modellatore web (`/admin/model`: pannello del workflow della classe selezionata, con le colonne
-   «Avvisa» e «Template» della transizione; ruoli e reazioni nella barra laterale) arrivano come proposta: si applicano con `/modeler:apply`, che poi segue questi
-   stessi passi.
+   «Avvisa» e «Template» della transizione; ruoli e reazioni nella barra laterale) o salvate da questa skill come
+   proposta arrivano come proposta: si applicano con `/modeler:apply`, che poi segue questi stessi passi. Dopo
+   `model:apply -- <file> --write`, **`git diff --stat domain.ecore.yaml behavior.yaml`**: `apply` cambia solo le righe
+   delle voci nuove o cambiate e conserva ogni commento (in un'app con il motore a mano i commenti di `behavior.yaml`
+   portano le regole del progetto: mai `model:engine -- --write`, elenco delle personalizzazioni); se il diff è più
+   ampio della modifica o `apply` elenca commenti «not kept», ripristina i due file, fai la modifica a mano e annota il
+   caso con `/core:harness-note`.
 
 Il comportamento (workflow, derivazioni, eventi, reazioni, testi) sta in `behavior.yaml`; le regole di dominio
 dichiarative in `rules` del metamodello; il codice che li applica oltre al motore è una personalizzazione

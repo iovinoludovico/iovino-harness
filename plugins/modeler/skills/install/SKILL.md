@@ -234,7 +234,9 @@ scritto da Claude: cosa cambia, `TODO(modeler)` lasciati, costo) e «Conferma e 
 fermate: PR aperta, su `main`, aggiornata e unibile; database locale ricostruito dalle migrazioni
 (`supabase db reset`, `supabase test db` se ci sono test, `model:drift` aligned); **DDL distruttivo non commentato →
 si ferma** (si rilascia solo dalla scheda Actions con l'input `allow_destructive`); migrazioni solo remote o fuori
-ordine → si ferma; `supabase db push --db-url` (prima il database, poi il codice); `gh pr merge --squash` con
+ordine → si ferma; `supabase db push --db-url … --yes` (prima il database, poi il codice; `--yes` perché dalla CLI 3.0
+`db push` verso un database remoto chiede una conferma che un run non presidiato non può dare: al primo run vero
+verifica nel log che il passo non si fermi alla domanda); `gh pr merge --squash` con
 `MODELER_GH_TOKEN` (il push su `main` avvia il deploy); attesa del run di deploy dello SHA del merge (15 min; un
 deploy fallito → errore sulla riga, migrazione già applicata e PR unita: rollback secondo `core:deploy`);
 `npm run model:done -- --write` chiude la proposta. La riga mostra «rilascio in corso», «unita, deploy in corso»,

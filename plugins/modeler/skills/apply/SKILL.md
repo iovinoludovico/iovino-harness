@@ -33,16 +33,21 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    `.modeler/proposals/applied/` insieme a quelle che contiene, `metamodel.json` aggiornato: da qui la proposta
    non compare più tra quelle in attesa nel modellatore locale). Se la proposta porta il comportamento, `apply` lo
    valida contro il metamodello proposto (se non è valido non scrive nulla, né metamodello né comportamento) e
-   riscrive `behavior.yaml` per intero (backup in `.modeler/backups/`; i commenti del file non si conservano e
-   vengono elencati): controlla `git diff behavior.yaml` e riporta a mano i commenti che contano. Poi `sync`
+   scrive anche `behavior.yaml` (backup di entrambi in `.modeler/backups/`). Poi `sync`
    rigenera `behavior.json` e `docs/BEHAVIOR.md`; se il comportamento è cambiato, il motore segue la skill `behavior`,
    punto 4: `npm run model:engine -- --write` con il motore generato (una migrazione sostituita), SQL da riportare
-   a mano con un motore scritto a mano (`CUSTOM(*-workflow)`: mai `engine --write`); poi `npm run model:drift`. Il file cambia solo nelle righe di ciò che è
-   cambiato (ordine, stile e commenti restano); le posizioni del diagramma salvate dall'editor non entrano (il
-   file tiene le sue). Se la modifica non si può scrivere riga per riga (intestazione del package, file con un
-   layout insolito) `--write` si ferma senza scrivere: applicala a mano, oppure, solo se l'utente accetta di
-   perdere ordine, virgolette e commenti, `--write --rewrite`. Se `git diff domain.ecore.yaml` mostra più delle
-   righe attese, fermati e segnalalo invece di committare. Se la proposta porta una collezione a `lower > 0` o a un
+   a mano con un motore scritto a mano (`CUSTOM(*-workflow)`: mai `engine --write`); poi `npm run model:drift`.
+   **Entrambi i file cambiano solo nelle righe di ciò che è cambiato**: un ruolo, una feature, uno stato, una
+   transizione, una reazione, un testo; una voce nuova o cambiata è scritta nello stile delle vicine (su una riga se lo
+   sono, per quanto lunga sia la `doc`, allineata alla stessa colonna), ordine e commenti restano, e le posizioni del
+   diagramma salvate dall'editor non entrano (il file tiene le sue). Se la modifica non si può scrivere riga per riga
+   (intestazione del package o `doc` del comportamento, file con un layout insolito) `--write` si ferma **senza
+   scrivere nessuno dei due file**: applicala a mano, oppure, solo se l'utente accetta di perdere ordine, virgolette e
+   commenti, `--write --rewrite`. **Subito dopo `--write`: `git diff --stat domain.ecore.yaml behavior.yaml`** e un
+   `git diff` dei due file: se le righe cambiate superano quelle della modifica (voci non toccate riscritte, stile
+   cambiato), o l'output di `apply` elenca commenti «not kept», ripristina i file (`git checkout -- domain.ecore.yaml
+   behavior.yaml`), fai la modifica a mano e annota il caso con `/core:harness-note`; non committare un diff
+   gonfiato. Se la proposta porta una collezione a `lower > 0` o a un
    `upper` finito (es. `orderLines` da `0..*` a `1..*`), il database non impone il vincolo: proponi subito la guardia
    sulla prima transizione del workflow (`orderLines.notEmpty()`; chiedi su quale) o la regola dell'app, con un test
    della transizione bloccata (skill `behavior`, punto 2); `validate` lo segnala finché manca. Se la proposta rende

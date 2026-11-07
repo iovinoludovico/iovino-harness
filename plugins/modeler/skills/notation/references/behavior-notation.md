@@ -164,6 +164,51 @@ unknown role in `users_by`. Without `view_as` nothing changes: `impersonator_id(
   has the «Notifies» column. A reaction stays explicit for what is not bound to one transition: several transitions
   (`transition in [a, b]`), `reverted`, a timed or external event, a condition on the record only.
 - `revert`: who can bring a record back to a previous state (`by`), also from a final one (`final_by`).
+- `records: {by: <reference to User>, at: <DateTime attribute>}` on a transition (of the workflow or of a region):
+  the engine writes who fired it and when into those features (one of the two at least); the application declares
+  nothing else («the three fields written in the transition» are not a customization any more).
+- **Regions** (`regions: {<key>: {state, states, transitions, label, doc}}`): a control that runs **in parallel**
+  with the main states (an accounting check of the offices while the record is handled, a signature collected
+  meanwhile) is an orthogonal region of the workflow, not a flag with two self-transitions on a main state. A region
+  has its **own state attribute** of the class (`EString` or enum, distinct from the main one and from the other
+  regions), its own states (one `initial`; a `final` is allowed but completes nothing: the record completes through
+  the main workflow only) with `owner`, `editable_by`, `reminder`, `label`, `color` (no `requires`/`model`: the
+  record's view belongs to the main states), and its own transitions with the same keys as the main ones.
+  **Transition keys are unique in the class** (main and regions together): the engine addresses every transition by
+  its key (`<entity>_perform_transition(id, 'check')`), `transition = check` in a reaction names it, the event
+  `<entity>.transitioned` carries `transition.region`. The region's column starts at its initial state on insert and
+  changes only through its transitions, whatever the main state; `<entity>_can_edit` unites the editors of the main
+  state and of every region state; the desk and the reminders see the region's `owner` (the reminder is remembered
+  as `<region>.<state>`). A **guard or condition combines the flows with the operators of the language** on the
+  state attributes, typed as the states of their flow: `guard: linesWithoutCoan = 0 and accountingState = checked`,
+  `when: state in [procurement, issued]` (a bare name next to a state attribute is one of its states; `state = draft`
+  is valid for the main attribute too). `BEHAVIOR.md` draws the regions as concurrent regions (`--`) of a composite
+  state and gives each a «Region» section; the modeler, `<WorkflowView>` and `<BehaviorView>` draw one dashed box per
+  region beside the main diagram (`regionStates={{accounting: row.accounting_state}}` fills the record's state in it);
+  `drift` compares the region's states (keyed `<region>.<state>`) and transitions with the published version. The
+  regions are edited in `behavior.yaml` (`/modeler:behavior`), not in the web modeler's tables yet. Example:
+  ```yaml
+  workflows:
+    Order:
+      state: state
+      states: {draft: {initial: true, owner: [rup]}, procurement: {owner: [rup]}, issued: {final: true}}
+      transitions:
+        start: {from: draft, to: procurement, by: [rup]}
+        issue: {from: procurement, to: issued, by: [rup], guard: linesWithoutCoan = 0 and accountingState = checked}
+      regions:
+        accounting:
+          state: accountingState
+          label: {it: Controllo contabile, en: Accounting check}
+          states:
+            pending: {initial: true, owner: [office], reminder: {after: 3d, template: accounting_pending}}
+            checked: {label: {it: Controllato, en: Checked}}
+          transitions:
+            check:   {from: pending, to: checked, by: [office], records: {by: accountingCheckedBy, at: accountingCheckedAt}}
+            uncheck: {from: checked, to: pending, by: [office], comment: required}
+  ```
+  Before the regions (modeler < 0.40) the same need was met by a boolean attribute plus two self-transitions on the
+  main state and a guard on the flag: an app with a hand-written engine may keep that form (nothing to migrate), the
+  modelled one is the region.
 
 ## Events, reactions, subscriptions
 - Every class emits `created`, `updated`, `deleted`; a class with a workflow also `transitioned`, `completed`
@@ -258,7 +303,8 @@ workflow, derivations or reactions (`<entity>` = the snake_case of the class, `i
   (one hop: a deeper navigation, a many-to-many reference or a user profile does not refresh them, noted in the
   output).
 - Workflow: the state is set to the initial one on insert and **changes only through
-  `<entity>_perform_transition(id, key, comment)`**, which checks the current state, who performs it, the `when`
+  `<entity>_perform_transition(id, key, comment)`** (a region's transition moves the region's column, by the same
+  key; `records` writes who and when), which checks the current state, who performs it, the `when`
   (hidden: "not available"), the `guard` (blocked: "requirements not met: <guard>"), the fields the target state
   `requires` and the literals its `model` allows (blocked: "required in state <state>: <fields>", `in` violations
   listed with them; the before-update trigger keeps them while the record stays there and refuses an update that
@@ -298,6 +344,8 @@ workflow, derivations or reactions (`<entity>` = the snake_case of the class, `i
 | "chi approva / gli uffici / il direttore del dipartimento" | `roles:` of the metamodel (with `scope` when held per instance of a class), then the principals here |
 | "passa da … a … quando …", "si può … solo se …" | a transition with `when` (hidden) or `guard` (blocked with an explanation) |
 | "dopo N giorni dalla data di fine", "scade il …" | a timed transition `at: <date attribute> + Nd` |
+| "in parallelo all'istruttoria", "una spunta degli uffici mentre …", "uno stato parallelo a …" | a region (`regions:`) on its own state attribute, read by the guard of the main transition (`accountingState = checked`) |
+| "chi ha messo la spunta e quando" | `records: {by: <ref to User>, at: <DateTime>}` on the transition |
 | "si calcola come", "è completo quando" | `derived: true` on the attribute (metamodel) and its formula in `derivations` |
 | "X è obbligatorio da quando è in …", "X non si tocca più dopo …", "in bozza X non compare", "qui Y vale solo a o b" | `requires` / `model` of that state (the class as seen from the state) |
 | "avvisa X quando Y", Y a transition | `notify: [X]` and `template` on the transition Y (`notify: {to, template, when}` with a condition of its own), its texts in `templates:` |

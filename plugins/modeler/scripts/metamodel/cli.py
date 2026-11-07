@@ -561,42 +561,53 @@ def cmd_apply(a) -> int:
     if not a.write:
         print("\n(dry run: pass --write to update the metamodel)")
         return 0
+    # both files are patched line by line (order, style and comments kept) and written only when both can be:
+    # a change that one of them cannot take this way stops here, with nothing written, unless --rewrite
+    text = patched = None
     if meta_path.exists():
         text = meta_path.read_text(encoding="utf-8")
         new = E.align_order(new, old)   # the proposal's key order (editor, jsonb) must not reorder the file
         patched = E.patch_text(text, new)
-        if patched is None and not a.rewrite:
+        if patched is None and not getattr(a, "rewrite", False):
             print(f"\nThis change cannot be written by editing only the changed lines of {E.METAMODEL_FILE} "
                   "(it touches the package header, or the file is not in the usual layout): nothing was written. "
                   "Apply it by hand, or pass --rewrite to rewrite the whole file (key order, quoting and comments "
                   "are not kept).", file=sys.stderr)
             return 1
-        bak = meta_path.parent / STATE_DIR / "backups" / f"{E.METAMODEL_FILE}.{dt.datetime.now():%Y%m%d-%H%M%S}"
+    btarget = bpath or B.behavior_path(meta_path)
+    # written when something changed: what diff lists, or what it does not (doc, presentation keys)
+    bwrite = bprop is not None and (bpath is None or bool(bchanges) or B.canonical(bold) != B.canonical(bprop))
+    btext = bpatched = None
+    if bwrite and btarget.exists():
+        btext = btarget.read_text(encoding="utf-8")
+        bpatched = B.patch_text(btext, bprop)
+        if bpatched is None and not getattr(a, "rewrite", False):
+            print(f"\nThis change cannot be written by editing only the changed lines of {B.BEHAVIOR_FILE} "
+                  "(it touches `metamodel`/`doc`, or the file is not in the usual layout: one role, state, transition, "
+                  "reaction or template per line): nothing was written. Apply it by hand, or pass --rewrite to rewrite "
+                  "the whole file (order, style and comments are not kept).", file=sys.stderr)
+            return 1
+
+    def _write(path: Path, name: str, current: str | None, patch: str | None, dump) -> None:
+        if current is None:             # no file yet
+            dump()
+            return
+        bak = meta_path.parent / STATE_DIR / "backups" / f"{name}.{dt.datetime.now():%Y%m%d-%H%M%S}"
         bak.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(meta_path, bak)
-        if patched is not None:         # only the lines of what changed: order, style and comments kept
-            meta_path.write_text(patched, encoding="utf-8")
-        else:
-            lost = E.comment_lines(text)
-            if lost:
-                print(f"\nwarning: {len(lost)} comment line(s) of {E.METAMODEL_FILE} are not kept (copy in {bak}):")
-                print("\n".join(f"  {line.strip()}" for line in lost[:10]))
-            E.dump(new, meta_path)
-    else:
-        E.dump(new, meta_path)
-    if bprop is not None and (bchanges or bpath is None):
-        # the behaviour is rewritten whole: its comments are not kept (the backup has them)
-        target = bpath or B.behavior_path(meta_path)
-        if target.exists():
-            bak = meta_path.parent / STATE_DIR / "backups" / f"{B.BEHAVIOR_FILE}.{dt.datetime.now():%Y%m%d-%H%M%S}"
-            bak.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(target, bak)
-            lost = E.comment_lines(target.read_text(encoding="utf-8"))
-            if lost:
-                print(f"\nwarning: {len(lost)} comment line(s) of {B.BEHAVIOR_FILE} are not kept (copy in {bak}):")
-                print("\n".join(f"  {line.strip()}" for line in lost[:10]))
-        B.dump(bprop, target)
-        print(f"wrote {target}")
+        shutil.copyfile(path, bak)
+        if patch is not None:           # only the lines of what changed: order, style and comments kept
+            path.write_text(patch, encoding="utf-8")
+            return
+        lost = E.comment_lines(current)
+        if lost:
+            print(f"\nwarning: {len(lost)} comment line(s) of {name} are not kept (copy in {bak}):")
+            print("\n".join(f"  {line.strip()}" for line in lost[:10]))
+        dump()
+
+    _write(meta_path, E.METAMODEL_FILE, text, patched, lambda: E.dump(new, meta_path))
+    if bwrite:
+        _write(btarget, B.BEHAVIOR_FILE, btext, bpatched, lambda: B.dump(bprop, btarget))
+        print(f"wrote {btarget}")
     moved = []
     pending = src.resolve().parent == proposals_dir(meta_path).resolve()   # not a downloaded file elsewhere
     for f in ([src] if pending else []) + included:

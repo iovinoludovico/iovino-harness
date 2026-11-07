@@ -87,8 +87,10 @@ sezione 4.
 Con una proposta in attesa chiedi con AskUserQuestion: «Applico ora (migrazione, sync, codice, drift)» (consigliato)
 o «La lascio in attesa nel modellatore». Nel secondo caso il resoconto finisce con il file della proposta e il
 rimando a `/modeler:apply`. Nel primo, e quando il file è stato modificato direttamente, i passi sono quelli
-della skill `apply`: `npm run model:apply -- <file> --write` (solo con la proposta; controlla `git diff
-domain.ecore.yaml`), poi:
+della skill `apply`: `npm run model:apply -- <file> --write` (solo con la proposta), poi **`git diff --stat
+domain.ecore.yaml behavior.yaml`**: il diff deve contenere solo le righe della modifica (voci nuove o cambiate, nello
+stile delle vicine, commenti intatti); se è più ampio o `apply` segnala commenti «not kept», ripristina i file e fai la
+modifica a mano (skill `apply`, punto 4). Poi:
 1. **Migrazione**: `npm run model:migrate` mostra la bozza generata dal confronto tra il metamodello committato
    (`HEAD`) e quello nuovo (`--from HEAD~1` se l'hai già committato, `--from empty` per lo schema intero); poi
    `npm run model:migrate -- --name <nome> --write` la salva in `supabase/migrations/`. Tabelle, colonne, FK con
