@@ -71,3 +71,35 @@ test("behaviorDiff: the lines a reviewer reads, as the CLI prints them", () => {
     JSON.stringify(Layout.behaviorSource(a)), JSON.stringify(Layout.behaviorSource(b)));
   assert.deepEqual(Layout.behaviorDiff(a, b), cli);
 });
+
+test("regions: drawn beside the main diagram, proposed and diffed as the CLI does", () => {
+  const a = runtime();
+  const b = structuredClone(a);
+  b.workflows.Invitation.regions = { accounting: { state: "accountingState", label: { it: "Controllo contabile" },
+    states: { pending: { initial: true, owner: ["office"] }, checked: { label: { it: "Controllato" } } },
+    transitions: { check: { from: ["pending"], to: "checked", by: ["office"], when: { text: "hours > 0" }, guard: null, region: "accounting",
+                            records: { by: "accountingCheckedBy", at: "accountingCheckedAt" }, notifies: [] },
+                   uncheck: { from: ["checked"], to: "pending", by: ["office"], comment: "required", region: "accounting" } } } };
+  const model = Layout.workflowModel(b.workflows.Invitation, "it");
+  assert.equal(model.regions.length, 1);
+  assert.deepEqual(model.regions[0].states.map((s) => s.key), ["pending", "checked"]);
+  assert.equal(model.regions[0].label, "Controllo contabile");
+  assert.equal(model.regions[0].state, "accountingState");
+  const L = Layout.workflowLayout(model.regions[0].states, model.regions[0].transitions, 400);
+  assert.equal(L.boxes.length, 2);
+  assert.equal(L.edges.length, 2);
+  assert.deepEqual(Layout.workflowModel(a.workflows.Invitation, "it").regions, []);
+  const src = Layout.behaviorSource(b);
+  assert.equal(src.workflows.Invitation.regions.accounting.transitions.check.when, "hours > 0");
+  assert.ok(!("region" in src.workflows.Invitation.regions.accounting.transitions.check));
+  assert.deepEqual(Layout.behaviorDiff(a, b), ["+ region Invitation.accounting on accountingState: 2 states, 2 transitions"]);
+  const c = structuredClone(b);
+  c.workflows.Invitation.regions.accounting.transitions.check.comment = "required";
+  c.workflows.Invitation.regions.accounting.states.done = { final: true };
+  delete c.workflows.Invitation.regions.accounting.transitions.uncheck;
+  assert.deepEqual(Layout.behaviorDiff(b, c), ["+ state Invitation.accounting.done", "~ transition Invitation.accounting.check: comment", "- transition Invitation.accounting.uncheck"]);
+  assert.deepEqual(Layout.behaviorDiff(b, a), ["- region Invitation.accounting"]);
+  const cli = py("a, b = json.loads(sys.argv[2]), json.loads(sys.argv[3]); print(json.dumps(B.diff(B.from_editor(a), B.from_editor(b))))",
+    JSON.stringify(Layout.behaviorSource(b)), JSON.stringify(Layout.behaviorSource(c)));
+  assert.deepEqual(Layout.behaviorDiff(b, c), cli);
+});

@@ -42,7 +42,17 @@ mantieni nomi e lingua dell'utente.
 - Una `guard`/`when` che il motore runtime valuta come clausole è una congiunzione di test su singoli attributi
   del record; `or`, calcoli e navigazioni vanno in un attributo derivato (`npm run model:behavior -- --format
   engine` dice cosa il motore non valuta).
-- L'attributo di stato (`state:` del workflow) è un `EString` o un enum con un letterale per stato.
+- L'attributo di stato (`state:` del workflow) è un `EString` o un enum con un letterale per stato. Nelle guardie e
+  nelle condizioni un nome nudo accanto a un attributo di stato è uno dei suoi stati (`state = draft`,
+  `accountingState = checked`).
+- «Uno stato parallelo a …», «una spunta degli uffici mentre il RUP istruisce», «in parallelo all'istruttoria»: una
+  **regione** del workflow (`regions.<chiave>` con `state` proprio, `states`, `transitions`; riferimento «Workflows»),
+  non un flag booleano con due autotransizioni sullo stato principale: la regione ha `owner`/`reminder` (la desk e i
+  solleciti vedono chi aspetta), compare nel diagramma come riquadro tratteggiato accanto al workflow, e la transizione
+  principale la legge nella guardia con gli operatori del linguaggio (`linesWithoutCoan = 0 and accountingState = checked`).
+  L'attributo di stato della regione è un attributo della classe (metamodello, `/modeler:metamodel`), come `state`;
+  «chi e quando» sono `records: {by: <ref a User>, at: <DateTime>}` sulla transizione, non codice. In un'app con il
+  motore a mano la forma vecchia (flag + autotransizioni + guardia) resta valida; il modello la descrive come regione.
 - «Avvisa X quando Y», con Y una transizione: `notify: [X]` e `template: <chiave>` **sulla transizione** Y (con una
   condizione in più sul record `notify: {to: [X], template: …, when: …}`), non una reazione: il motore la vede come la
   reazione `notify_<transizione>` su `<Classe>.transitioned`, `behavior.json` porta `notifies` su ogni transizione

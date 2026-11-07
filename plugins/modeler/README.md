@@ -96,7 +96,9 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   metamodel, backed up): both files change only in the lines of what changed, a new or changed entry written in the
   style of its neighbours, order and comments kept; when that is not possible `--write` stops (`--rewrite` to rewrite). `model:engine -- --write` generates the SQL engine itself as one idempotent migration: derived
   attributes computed by triggers (and refreshed when the rows they navigate to change), `<entity>_perform_transition`
-  with principals, conditions, guards, comments, history and events with the recipients of the reactions,
+  with principals, conditions, guards, comments, history and events with the recipients of the reactions, orthogonal
+  regions (`regions:`, a parallel flow on its own state attribute, read by the guards as `accountingState = checked`,
+  `records: {by, at}` for who fired a transition and when),
   `_available_transitions`, `_revert`, `_run_timed_transitions`, `_run_reminders`, lifecycle events; it relies on
   the app's `current_profile_id`, `has_role`, `role_members`, `emit_entity_event` (fallbacks where missing). What
   neither model expresses is a customization listed in `docs/customizations.md` and marked `CUSTOM(<id>)`.

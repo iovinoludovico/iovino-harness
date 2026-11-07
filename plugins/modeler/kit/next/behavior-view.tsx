@@ -22,9 +22,11 @@ type Transition = {
   notify?: string[]; template?: string | null;
   notifies?: { name: string; notify: string[]; template?: string | null; own?: boolean }[];   // who is told when it fires (both forms)
 };
+type Region = { state?: string; label?: Label; states?: Record<string, State>; transitions?: Record<string, Transition> };
 type Workflow = {
   state?: string; states?: Record<string, State>; transitions?: Record<string, Transition>;
   revert?: { by?: string[]; final_by?: string[]; comment?: string | null } | null;
+  regions?: Record<string, Region>;   // orthogonal regions: parallel flows of the same record, each on its own state attribute
 };
 type Reaction = { name?: string; event?: string; when?: Typed; notify?: string[]; template?: string; _transition?: string };
 type Subscription = { name?: string; url?: string; url_env?: string; events?: string[] };
@@ -65,6 +67,7 @@ const TEXT = {
     transitions: "Transizioni", transition: "Transizione", fromTo: "Da → A", by: "Chi", when: "Condizione", guard: "Requisito", notifies: "Avvisa",
     comment: "Commento", required: "obbligatorio", optional: "facoltativo", emits: "Eventi", system: (at: string) => `sistema: ${at}`,
     revert: (by: string, finalBy: string, c: string) => `Ritorno a uno stato precedente: ${by}; da uno stato finale: ${finalBy}; commento ${c}.`,
+    region: (k: string, a: string) => `Regione ${k} (in parallelo agli stati del workflow): lo stato è l'attributo ${a}.`,
     derivations: "Attributi calcolati", cls: "Classe", attribute: "Attributo", formula: "Formula", inCode: "calcolato nel codice",
     involved: "Classi coinvolte nel comportamento", feature: "Attributo o riferimento", usedBy: "Usato da",
     involvedNote: "Classi senza workflow di cui il comportamento legge o usa attributi e riferimenti (formule, condizioni, destinatari, ambiti dei ruoli).",
@@ -88,6 +91,7 @@ const TEXT = {
     transitions: "Transitions", transition: "Transition", fromTo: "From → To", by: "Who", when: "Condition", guard: "Requirement", notifies: "Notifies",
     comment: "Comment", required: "required", optional: "optional", emits: "Events", system: (at: string) => `system: ${at}`,
     revert: (by: string, finalBy: string, c: string) => `Back to a previous state: ${by}; from a final state: ${finalBy}; comment ${c}.`,
+    region: (k: string, a: string) => `Region ${k} (orthogonal to the states of the workflow): the state is the attribute ${a}.`,
     derivations: "Derived attributes", cls: "Class", attribute: "Attribute", formula: "Formula", inCode: "computed in code",
     involved: "Classes involved in the behaviour", feature: "Attribute or reference", usedBy: "Used by",
     involvedNote: "Classes without a workflow whose attributes and references the behaviour reads or points to (formulas, conditions, recipients, role scopes).",
@@ -274,6 +278,44 @@ export function BehaviorView({ behavior, metamodel, lang = "it", selected = null
                 {t.revert((rv.by ?? []).join(", ") || t.none, (rv.final_by ?? []).join(", ") || t.none, rv.comment === "required" ? t.required : t.optional)}
               </p>
             )}
+            {Object.entries(w.regions ?? {}).map(([rk, r]) => (
+              <div key={rk} className="space-y-2 rounded-md border border-dashed p-2">
+                <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label(r.label, rk, l)}</h4>
+                <p className="text-xs text-muted-foreground">⟳ {t.region(rk, r.state ?? "")}</p>
+                <Table
+                  head={[t.state, t.label, t.kind, t.owner, t.editableBy, t.reminder]}
+                  rows={Object.entries(r.states ?? {}).map(([sn, s]) => [
+                    <span key="s" className="inline-flex items-center gap-1">
+                      {s.color && <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />}
+                      <Code>{sn}</Code>
+                    </span>,
+                    label(s.label, sn, l),
+                    s.initial ? t.initial : s.final ? t.final : "",
+                    <Codes key="o" items={s.owner} />,
+                    <Codes key="e" items={s.editable_by} />,
+                    s.reminder?.after ? t.after(s.reminder.after, s.reminder.template ?? `${sn}_reminder`) : "",
+                  ])}
+                />
+                <Table
+                  head={[t.transition, t.label, t.fromTo, t.by, t.when, t.guard, t.comment, t.emits, t.notifies]}
+                  rows={Object.entries(r.transitions ?? {}).map(([tn, tr]) => [
+                    <Code key="t">{tn}</Code>,
+                    label(tr.label, tn, l),
+                    `${(tr.from ?? []).join(", ")} → ${tr.to ?? ""}`,
+                    tr.by?.length ? <Codes key="b" items={tr.by} /> : t.system(tr.at ?? ""),
+                    <Code key="w">{tr.when?.text}</Code>,
+                    <Code key="g">{tr.guard?.text}</Code>,
+                    tr.comment === "required" ? t.required : "",
+                    <Codes key="e" items={tr.emits} />,
+                    <span key="n">
+                      {(tr.notifies ?? []).map((n, i) => (
+                        <span key={n.name}>{i ? "; " : ""}<Codes items={n.notify} />{n.template ? <> (<Code>{n.template}</Code>)</> : null}</span>
+                      ))}
+                    </span>,
+                  ])}
+                />
+              </div>
+            ))}
           </div>
         );
       })}

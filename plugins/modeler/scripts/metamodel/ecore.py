@@ -324,12 +324,14 @@ def _entry_lines(name: str, value: Any, indent: int, like: str | None = None, fl
     inline = bool(m and m.group(4) is not None and not m.group(4).startswith("#"))
     if like is None:
         inline = flow
+    if isinstance(value, _Block):                  # a block by nature (a region, a class): never on one line
+        inline = False
     if inline and isinstance(value, dict) and not isinstance(value, _Flow):
         value = _Flow(value)
     elif m and not inline and isinstance(value, _Flow):
         value = _Block(value)
     one_line = inline or not isinstance(value, (dict, list)) or isinstance(value, _Flow)
-    lines = _yaml_lines({name: value}, indent, width=10 ** 6 if one_line else 120)
+    lines = _yaml_lines({name: value}, indent, width=10 ** 6)       # a flow mapping inside a block stays on its line
     if m and inline and len(lines) == 1:
         pad = len(m.group(3)) if col is None else max(1, col - indent - len(name) - 1)
         lines = [" " * indent + name + ":" + " " * pad + lines[0].split(":", 1)[1].lstrip()]

@@ -78,6 +78,8 @@ class _Class:
         self.attrs, self.refs = E.features(e, cname)
         self.w = b["workflows"].get(cname)
         self.state_col = E.field_key(self.w["state"], self.attrs[self.w["state"]]) if self.w else None
+        # the main workflow and its regions: [(region key or None, flow, state column)]
+        self.flows = [(rk, f, E.field_key(f["state"], self.attrs[f["state"]])) for rk, f in B.flows(self.w)] if self.w else []
         self.reactions = [r for r in b["reactions"] if str(r["event"]).split(".")[0] == cname]
         self.derivations = b["derivations"].get(cname, {})
         self.created_by = next((E.field_key(rn, r) for rn, r in self.refs.items()
@@ -89,11 +91,12 @@ class _Class:
     def principals_used(self) -> list[str]:
         """The principals that act on the class (workflow); recipients of notifications are resolved separately."""
         out: list[str] = []
-        if self.w:
-            for s in self.w["states"].values():
+        for _, f, _ in self.flows:
+            for s in f["states"].values():
                 out += s["owner"] + s["editable_by"]
-            for t in self.w["transitions"].values():
+            for t in f["transitions"].values():
                 out += t["by"]
+        if self.w:
             if self.w.get("revert"):
                 out += self.w["revert"]["by"] + self.w["revert"]["final_by"]
         seen: list[str] = []
@@ -108,7 +111,7 @@ class _Class:
         if path is None:
             refs = B._scope_reference(self.e, self.cname, scope)
             path = refs[0]
-        node, _ = X.check(path, X.Context(self.e, self.cname))
+        node, _ = X.check(path, B.context(self.e, self.b, self.cname))
         return X.compile_path(node, self.ctx(alias)).ids()
 
     def principal_case(self, p: str, alias: str = "r") -> str | None:
@@ -121,7 +124,7 @@ class _Class:
                 return None
             return f"case when {alias}.{self.created_by} = public.current_profile_id() then 'creator' end"
         if p.startswith("self."):
-            node, t = X.check(p, X.Context(self.e, self.cname))
+            node, t = X.check(p, B.context(self.e, self.b, self.cname))
             if not t.endswith(X.CLASS + "User"):
                 return None                                  # an Email attribute: a recipient, not an actor
             ps = X.compile_path(node, self.ctx(alias))
@@ -142,7 +145,7 @@ class _Class:
                 return None
             return f"select p.email as email, 'creator' as kind from public.profiles p where {test} and p.id = r.{self.created_by}"
         if p.startswith("self."):
-            node, t = X.check(p, X.Context(self.e, self.cname))
+            node, t = X.check(p, B.context(self.e, self.b, self.cname))
             ps = X.compile_path(node, self.ctx())
             base = t[len(X.COLLECTION):] if t.startswith(X.COLLECTION) else t
             if base == "email":
@@ -263,7 +266,7 @@ def _derivation_order(cls: _Class) -> list[str]:
     """Derived attributes in dependency order (a derivation after the ones of the same class it uses)."""
     deps: dict[str, set[str]] = {}
     nodes: dict[str, dict[str, Any]] = {}
-    ctx = X.Context(cls.e, cls.cname)
+    ctx = B.context(cls.e, cls.b, cls.cname)
     for an, text in cls.derivations.items():
         node, _ = X.check(str(text), ctx, X.feature_type(cls.attrs[an], cls.e, False))
         nodes[an] = node
@@ -280,7 +283,7 @@ def _derivation_order(cls: _Class) -> list[str]:
 def _derivations(cls: _Class, notes: list[str]) -> str:
     if not cls.derivations:
         return ""
-    ctx = X.Context(cls.e, cls.cname)
+    ctx = B.context(cls.e, cls.b, cls.cname)
     lines = [f"-- ---- {cls.cname}: derived attributes ----",
              f"create or replace function public.{cls.key}_derive()", "returns trigger", "language plpgsql", "set search_path = ''", "as $$", "begin"]
     refresh: dict[str, set[str]] = {}            # referenced class -> references of this class that lead to it
@@ -360,7 +363,7 @@ def _template_vars(cls: _Class) -> str:
                     head, _, path = name.partition(".")
                     if head in ("self", cls.key) and path and path != "id" and path not in paths:
                         try:
-                            node, _ = X.check(path, X.Context(cls.e, cls.cname))
+                            node, _ = X.check(path, B.context(cls.e, cls.b, cls.cname))
                             paths[path] = f"({X.to_sql(node, cls.ctx())})::text"
                         except X.ExprError:
                             continue                                   # validate reports it
@@ -372,7 +375,7 @@ def _template_vars(cls: _Class) -> str:
     for path, sql in paths.items():
         pairs += [(_lit(f"self.{path}"), sql), (_lit(f"{cls.key}.{path}"), sql)]
     if cls.w:
-        tl = "\n".join(f"      when {_lit(tn)} then {_lit(B._lbl(tr, tn, lang))}" for tn, tr in cls.w["transitions"].items())
+        tl = "\n".join(f"      when {_lit(tn)} then {_lit(B._lbl(tr, tn, lang))}" for _, f, _ in cls.flows for tn, tr in f["transitions"].items())
         sl = "\n".join(f"      when {_lit(sn)} then {_lit(B._lbl(st, sn, lang))}" for sn, st in cls.w["states"].items())
         pairs += [("'transition.key'", "p_extra -> 'transition' ->> 'key'"), ("'transition.from'", "p_extra -> 'transition' ->> 'from'"),
                   ("'transition.to'", "p_extra -> 'transition' ->> 'to'"),
@@ -419,7 +422,7 @@ $$;
 def _recipients(cls: _Class) -> str:
     branches: list[str] = []
     seen: set[str] = set()
-    reminded = {s: spec for s, spec in (cls.w or {"states": {}})["states"].items() if spec.get("reminder")}
+    reminded = {f"{rk}.{s}" if rk else s: spec for rk, f, _ in cls.flows for s, spec in f["states"].items() if spec.get("reminder")}
     wanted = [p for r in cls.reactions for p in r["notify"]] + [p for spec in reminded.values() for p in spec["owner"]]
     for p in wanted:
         if p in seen:
@@ -480,9 +483,9 @@ end;"""
                   "  end if;"]
     if reminded:
         cases = "\n".join(f"      when {_lit(st)} then {_arr([B.principal_key(p) for p in spec['owner']])}" for st, spec in reminded.items())
-        lines += ["  -- a reminder goes to the owners of the state",
+        lines += ["  -- a reminder goes to the owners of the state (of the workflow, or `<region>.<state>` of a region)",
                   f"  if p_type = {_lit(cls.key + '.reminder')} then",
-                  f"    v := v || public.{cls.key}_recipients(r, case r.{cls.state_col}\n{cases}\n      else '{{}}'::text[] end, p_extra -> 'reminder' ->> 'template', p_extra);",
+                  f"    v := v || public.{cls.key}_recipients(r, case p_extra -> 'reminder' ->> 'state'\n{cases}\n      else '{{}}'::text[] end, p_extra -> 'reminder' ->> 'template', p_extra);",
                   "  end if;"]
     lines += ["  -- one entry per address (the first reaction wins)",
               "  return coalesce((select jsonb_agg(x) from (select distinct on (x ->> 'email') x from jsonb_array_elements(v) x order by x ->> 'email') d), '[]'::jsonb);",
@@ -509,7 +512,7 @@ def _requires(cls: _Class, state: dict[str, Any], alias: str) -> list[tuple[str,
     `exists (…)` for a collection)."""
     out: list[tuple[str, str]] = []
     for f, text in B.requires_tests(cls.e, cls.cname, state):
-        node, _ = X.check(text, X.Context(cls.e, cls.cname), X.BOOL)
+        node, _ = X.check(text, B.context(cls.e, cls.b, cls.cname), X.BOOL)
         out.append((f, X.to_sql(node, cls.ctx(alias))))
     return out
 
@@ -544,12 +547,17 @@ def _field_policy(cls: _Class) -> str:
 
 
 def _workflow(cls: _Class, msgs: dict[str, str], notes: list[str]) -> str:
+    """The workflow of a class: the main flow and its regions (`regions:`), each on its own state column. Every
+    transition is addressed by its key (unique in the class) through the same `<entity>_perform_transition`; a
+    region's transition moves the region's column, the main one completes the record in a final state."""
     w = cls.w
     assert w is not None
     k, tbl, sc = cls.key, cls.table, cls.state_col
+    flows = cls.flows                                            # [(region key or None, flow, column)]
+    regions = len(flows) > 1
     initial = next(s for s, spec in w["states"].items() if spec["initial"])
     finals = [s for s, spec in w["states"].items() if spec["final"]]
-    ctx = X.Context(cls.e, cls.cname)
+    ctx = B.context(cls.e, cls.b, cls.cname)
     out = f"-- ---- {cls.cname}: workflow ----\n"
     # the state is set on insert and changes only through the transitions
     required: list[str] = []                                   # the state's model while the record is there
@@ -565,56 +573,79 @@ def _workflow(cls: _Class, msgs: dict[str, str], notes: list[str]) -> str:
             if o["readonly"]:
                 required.append(f"  if tg_op = 'UPDATE' and new.{sc} = {_lit(sn)} and old.{sc} = {_lit(sn)} and new.{col} is distinct from old.{col} then\n"
                                 f"    raise exception {_lit(msgs['readonly'])}, {_lit(sn)}, {_lit(f)} using errcode = '23514';\n  end if;")
+    inits = "".join(f"    if new.{col} is null then new.{col} := {_lit(next(s for s, spec in f['states'].items() if spec['initial']))}; end if;\n"
+                    for _, f, col in flows)
+    changed = " or ".join(f"new.{col} is distinct from old.{col}" for _, _, col in flows)
     out += _fn(f"{k}_workflow_guard", "", "trigger", f"""begin
   if tg_op = 'INSERT' then
-    if new.{sc} is null then new.{sc} := {_lit(initial)}; end if;
-  elsif new.{sc} is distinct from old.{sc} and coalesce(current_setting('app.in_transition', true), '') <> 'on' then
+{inits}  elsif {f'({changed})' if regions else changed} and coalesce(current_setting('app.in_transition', true), '') <> 'on' then
     raise exception {_lit(msgs['state'].replace('%', k))};
   end if;
 {chr(10).join(required) + chr(10) if required else ''}  return new;
 end;""")
     out += (f"drop trigger if exists {k}_10_workflow on {tbl};\n"
             f"create trigger {k}_10_workflow before insert or update on {tbl} for each row execute function public.{k}_workflow_guard();\n")
-    # who may edit a record in its state
-    cases = "\n".join(f"    when {_lit(s)} then {_arr([B.principal_key(p) for p in spec['editable_by']])}" for s, spec in w["states"].items())
+    # who may edit a record in its state (the editors of the main state and of each region's state)
+    editors = []
+    for _, f, col in flows:
+        cases = "\n".join(f"    when {_lit(s)} then {_arr([B.principal_key(p) for p in spec['editable_by']])}" for s, spec in f["states"].items())
+        editors.append(f"case r.{col}\n{cases}\n    else '{{}}'::text[] end")
     out += _fn(f"{k}_can_edit", f"r {tbl}", "boolean",
-               f"  select public.{k}_principals(r) && (array['admin'] || case r.{sc}\n{cases}\n    else '{{}}'::text[] end);", "sql", stable=True)
+               f"  select public.{k}_principals(r) && (array['admin'] || {' || '.join(editors)});", "sql", stable=True)
     out += _field_policy(cls)                                   # what the forms show in the record's state
-    # one block per transition
+    # one block per transition, of the main workflow or of a region
     blocks: list[str] = []
     avail: list[str] = []
-    for tn, t in w["transitions"].items():
-        cond = "true"
-        guard = "true"
-        if t.get("when") is not None:
-            node, _ = X.check(str(t["when"]), ctx, X.BOOL)
-            cond = f"coalesce({X.to_sql(node, cls.ctx())}, false)"
-        if t.get("guard") is not None:
-            node, _ = X.check(str(t["guard"]), ctx, X.BOOL)
-            guard = f"coalesce({X.to_sql(node, cls.ctx())}, false)"
-        timed = t.get("at") is not None
-        req = _requires(cls, w["states"].get(t["to"]) or {}, "r")     # the fields the target state requires
-        req += [(f, f"(r.{col} is null or r.{col} in ({lits}))") for f, col, lits in _allowed(cls, w["states"].get(t["to"]) or {}, "r")]
-        missing = ("array_remove(array[" + ", ".join(f"case when not coalesce({sql}, false) then {_lit(f)} end" for f, sql in req)
-                   + "]::text[], null)") if req else "'{}'::text[]"
-        blocks.append(f"""  {'if' if not blocks else 'elsif'} p_key = {_lit(tn)} then
+    for rk, f, col in flows:
+        for tn, t in f["transitions"].items():
+            cond = "true"
+            guard = "true"
+            if t.get("when") is not None:
+                node, _ = X.check(str(t["when"]), ctx, X.BOOL)
+                cond = f"coalesce({X.to_sql(node, cls.ctx())}, false)"
+            if t.get("guard") is not None:
+                node, _ = X.check(str(t["guard"]), ctx, X.BOOL)
+                guard = f"coalesce({X.to_sql(node, cls.ctx())}, false)"
+            timed = t.get("at") is not None
+            target = w["states"].get(t["to"]) if rk is None else None       # a region's state has no requires/model
+            req = _requires(cls, target or {}, "r")                         # the fields the target state requires
+            req += [(f_, f"(r.{c} is null or r.{c} in ({lits}))") for f_, c, lits in _allowed(cls, target or {}, "r")]
+            missing = ("array_remove(array[" + ", ".join(f"case when not coalesce({sql}, false) then {_lit(f_)} end" for f_, sql in req)
+                       + "]::text[], null)") if req else "'{}'::text[]"
+            rec = t.get("records") if isinstance(t.get("records"), dict) else {}
+            rec_by = E.field_key(str(rec["by"]), cls.refs.get(str(rec["by"]))) if rec.get("by") else None
+            rec_at = E.field_key(str(rec["at"]), cls.attrs.get(str(rec["at"]))) if rec.get("at") else None
+            blocks.append(f"""  {'if' if not blocks else 'elsif'} p_key = {_lit(tn)} then
     v_from := {_arr(t['from'])}; v_to := {_lit(t['to'])}; v_allowed := {_arr([B.principal_key(p) for p in t['by']])};
     v_timed := {'true' if timed else 'false'}; v_comment := {_lit(t.get('comment') or 'optional')}; v_emits := {_arr([f'{k}.{ev}' for ev in t['emits']])};
     v_cond := {cond};
     v_guard := {guard}; v_guard_text := {_lit(X.to_text(X.parse(str(t['guard']))) if t.get('guard') is not None else '')};
-    v_missing := {missing};""")
-        if not timed:
-            label = t.get("label") if isinstance(t.get("label"), dict) else {}
-            guard_ok = f"({guard} and cardinality({missing}) = 0)" if req else guard
-            missing_key = f", 'missing', to_jsonb({missing})" if req else ""
-            avail.append(f"""    select jsonb_build_object('key', {_lit(tn)}, 'to', {_lit(t['to'])}, 'label', {_lit(B.json_text(label))}::jsonb,
-                             'comment', {_lit(t.get('comment') or 'optional')}, 'guard_ok', {guard_ok}, 'guard', {_lit(X.to_text(X.parse(str(t['guard']))) if t.get('guard') is not None else '')}{missing_key}) as j
-     where r.{sc} = any ({_arr(t['from'])}) and {cond} and v_p && (array['admin'] || {_arr([B.principal_key(p) for p in t['by']])})""")
+    v_missing := {missing};
+    v_col := {_lit(col)}; v_region := {_lit(rk) if rk else 'null'}; v_rec_by := {_lit(rec_by) if rec_by else 'null'}; v_rec_at := {_lit(rec_at) if rec_at else 'null'};""")
+            if not timed:
+                label = t.get("label") if isinstance(t.get("label"), dict) else {}
+                guard_ok = f"({guard} and cardinality({missing}) = 0)" if req else guard
+                missing_key = f", 'missing', to_jsonb({missing})" if req else ""
+                region_key = f", 'region', {_lit(rk)}" if rk else ""
+                avail.append(f"""    select jsonb_build_object('key', {_lit(tn)}, 'to', {_lit(t['to'])}, 'label', {_lit(B.json_text(label))}::jsonb,
+                             'comment', {_lit(t.get('comment') or 'optional')}, 'guard_ok', {guard_ok}, 'guard', {_lit(X.to_text(X.parse(str(t['guard']))) if t.get('guard') is not None else '')}{missing_key}{region_key}) as j
+     where r.{col} = any ({_arr(t['from'])}) and {cond} and v_p && (array['admin'] || {_arr([B.principal_key(p) for p in t['by']])})""")
     final_test = f"v_to = any ({_arr(finals)})"
+    if regions:
+        final_test = f"v_region is null and {final_test}"
+        state_expr = "case v_col " + " ".join(f"when {_lit(col)} then r.{col}" for _, _, col in flows) + " end"
+        update = "\n".join(f"  {'if' if i == 0 else 'elsif'} v_col = {_lit(col)} then update {tbl} set {col} = v_to where id = p_id;"
+                           for i, (_, _, col) in enumerate(flows)) + "\n  end if;"
+        extra_region = ", 'region', v_region"
+    else:
+        state_expr = f"r.{sc}"
+        update = f"  update {tbl} set {sc} = v_to where id = p_id;"
+        extra_region = ""
     out += _fn(f"{k}_perform_transition", "p_id uuid, p_key text, p_comment text default null, p_system boolean default false", "uuid", f"""declare
   r public.{tbl.split('.', 1)[1]}%rowtype;
   v_from text[]; v_to text; v_allowed text[]; v_timed boolean; v_comment text; v_emits text[];
   v_cond boolean; v_guard boolean; v_guard_text text; v_missing text[];
+  v_col text; v_region text; v_rec_by text; v_rec_at text;
   v_state text; v_hist uuid; v_extra jsonb; v_ev text;
   v_actor uuid := public.current_profile_id();
 begin
@@ -624,7 +655,8 @@ begin
   else
     raise exception {_lit(msgs['unknown'])}, p_key;
   end if;
-  if not (r.{sc} = any (v_from)) then raise exception {_lit(msgs['unavailable'])}, p_key; end if;
+  v_state := {state_expr};
+  if not (v_state = any (v_from)) then raise exception {_lit(msgs['unavailable'])}, p_key; end if;
   if v_timed and not p_system then raise exception {_lit(msgs['timed'])}; end if;
   if not v_timed and not p_system and not (public.{k}_principals(r) && (array['admin'] || v_allowed)) then
     raise exception {_lit(msgs['forbidden'])} using errcode = '42501';
@@ -633,16 +665,20 @@ begin
   if not v_guard then raise exception {_lit(msgs['guard'])}, v_guard_text; end if;
   if cardinality(v_missing) > 0 then raise exception {_lit(msgs['required'])}, v_to, array_to_string(v_missing, ', ') using errcode = '23514'; end if;
   if v_comment = 'required' and nullif(trim(coalesce(p_comment, '')), '') is null then raise exception {_lit(msgs['comment'])}; end if;
-  v_state := r.{sc};
   perform set_config('app.in_transition', 'on', true);
-  update {tbl} set {sc} = v_to where id = p_id;
+{update}
+  if v_rec_by is not null or v_rec_at is not null then   -- records: who fired the transition and when
+    execute format('update {tbl} set %s where id = $1', concat_ws(', ',
+      case when v_rec_by is not null then format('%I = %L', v_rec_by, v_actor) end,
+      case when v_rec_at is not null then format('%I = now()', v_rec_at) end)) using p_id;
+  end if;
   perform set_config('app.in_transition', 'off', true);
   insert into {cls.schema}.{HISTORY} (entity, entity_id, kind, transition, from_state, to_state, actor_id, comment)
   values ({_lit(k)}, p_id, case when p_system and v_actor is null then 'system' else 'transition' end, p_key, v_state, v_to, v_actor,
           nullif(trim(coalesce(p_comment, '')), ''))
   returning id into v_hist;
   select * into r from {tbl} where id = p_id;
-  v_extra := jsonb_build_object('transition', jsonb_build_object('key', p_key, 'from', v_state, 'to', v_to, 'timed', v_timed),
+  v_extra := jsonb_build_object('transition', jsonb_build_object('key', p_key, 'from', v_state, 'to', v_to, 'timed', v_timed{extra_region}),
                                 'actor', v_actor, 'comment', nullif(trim(coalesce(p_comment, '')), ''));
   perform public.{k}_emit({_lit(k + '.transitioned')}, r, v_extra);
   if {final_test} then perform public.{k}_emit({_lit(k + '.completed')}, r, v_extra); end if;
@@ -662,16 +698,17 @@ begin
 end;""", stable=True)
     # timed transitions and reminders
     timed_loops: list[str] = []
-    for tn, t in w["transitions"].items():
-        if t.get("at") is None:
-            continue
-        m = B.AT.match(str(t["at"]).strip())
-        col = E.field_key(m.group("path"), cls.attrs[m.group("path")])
-        offset = B.offset_interval(f"{m.group('n')}{m.group('unit')}") if m.group("n") else ""
-        due = f"x.{col}" + (f" + interval {_lit(offset)}" if offset else "")
-        if m.group("sign") == "-":
-            due = f"x.{col} - interval {_lit(offset)}"
-        timed_loops.append(f"""  for v_id in select x.id from {tbl} x where x.{sc} = any ({_arr(t['from'])}) and {due} <= now() loop
+    for rk, f, col in flows:
+        for tn, t in f["transitions"].items():
+            if t.get("at") is None:
+                continue
+            m = B.AT.match(str(t["at"]).strip())
+            at_col = E.field_key(m.group("path"), cls.attrs[m.group("path")])
+            offset = B.offset_interval(f"{m.group('n')}{m.group('unit')}") if m.group("n") else ""
+            due = f"x.{at_col}" + (f" + interval {_lit(offset)}" if offset else "")
+            if m.group("sign") == "-":
+                due = f"x.{at_col} - interval {_lit(offset)}"
+            timed_loops.append(f"""  for v_id in select x.id from {tbl} x where x.{col} = any ({_arr(t['from'])}) and {due} <= now() loop
     begin
       perform public.{k}_perform_transition(v_id, {_lit(tn)}, null, true);
       v_count := v_count + 1;
@@ -681,32 +718,30 @@ end;""", stable=True)
   end loop;""")
     out += _fn(f"{k}_run_timed_transitions", "", "int", "declare\n  v_id uuid;\n  v_count int := 0;\nbegin\n"
                + ("\n".join(timed_loops) if timed_loops else "  -- no timed transitions") + "\n  return v_count;\nend;")
-    rem_states = {s: spec["reminder"] for s, spec in w["states"].items() if spec.get("reminder")}
-    rem_cases = "\n".join(f"      when {_lit(s)} then interval {_lit(B.offset_interval(spec['after']))}" for s, spec in rem_states.items())
-    tmpl_cases = "\n".join(f"      when {_lit(s)} then {_lit(spec.get('template') or s + '_reminder')}" for s, spec in rem_states.items())
-    if rem_states:
-        body = f"""declare
-  v_rec record;
-  r public.{tbl.split('.', 1)[1]}%rowtype;
-  v_n int;
-  v_count int := 0;
-begin
-  for v_rec in
-    select x.id, x.{sc} as state,
-           case x.{sc}
+    rem_loops: list[str] = []
+    for rk, f, col in flows:
+        rem_states = {s: spec["reminder"] for s, spec in f["states"].items() if spec.get("reminder")}
+        if not rem_states:
+            continue
+        prefix = f"{_lit(rk + '.')} || " if rk else ""       # a region's state is remembered as `<region>.<state>`
+        rem_cases = "\n".join(f"      when {_lit(s)} then interval {_lit(B.offset_interval(spec['after']))}" for s, spec in rem_states.items())
+        tmpl_cases = "\n".join(f"      when {_lit(s)} then {_lit(spec.get('template') or s + '_reminder')}" for s, spec in rem_states.items())
+        rem_loops.append(f"""  for v_rec in
+    select x.id, {prefix}x.{col} as state,
+           case x.{col}
 {rem_cases}
            end as after,
-           case x.{sc}
+           case x.{col}
 {tmpl_cases}
            end as template
       from {tbl} x
-     where x.{sc} = any ({_arr(list(rem_states))})
+     where x.{col} = any ({_arr(list(rem_states))})
        and coalesce((select max(h.created_at) from {cls.schema}.{HISTORY} h where h.entity = {_lit(k)} and h.entity_id = x.id), x.created_at)
-           <= now() - (case x.{sc}
+           <= now() - (case x.{col}
 {rem_cases}
            end)
-       and not exists (select 1 from {cls.schema}.{REMINDERS} rs where rs.entity = {_lit(k)} and rs.entity_id = x.id and rs.state = x.{sc}
-                         and rs.last_at > now() - (case x.{sc}
+       and not exists (select 1 from {cls.schema}.{REMINDERS} rs where rs.entity = {_lit(k)} and rs.entity_id = x.id and rs.state = {prefix}x.{col}
+                         and rs.last_at > now() - (case x.{col}
 {rem_cases}
            end))
   loop
@@ -717,7 +752,15 @@ begin
     perform public.{k}_emit({_lit(k + '.reminder')}, r, jsonb_build_object('reminder', jsonb_build_object('state', v_rec.state, 'after', v_rec.after::text,
                                                                                            'template', v_rec.template, 'count', v_n)));
     v_count := v_count + 1;
-  end loop;
+  end loop;""")
+    if rem_loops:
+        body = f"""declare
+  v_rec record;
+  r public.{tbl.split('.', 1)[1]}%rowtype;
+  v_n int;
+  v_count int := 0;
+begin
+{chr(10).join(rem_loops)}
   return v_count;
 end;"""
     else:

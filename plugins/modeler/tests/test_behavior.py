@@ -43,6 +43,27 @@ def errors(b: dict, m: dict | None = None) -> list[str]:
     return B.validate(b, m if m is not None else meta()).errors
 
 
+def region_model() -> tuple[dict, dict]:
+    """The fixture with an accounting check running in parallel with the invitation's workflow (the harness note of
+    2026-10-29): a region on `accountingState`, two self-standing transitions of the offices, and the submit guard
+    reading the region's state."""
+    m, b = meta(), behavior()
+    m["classes"]["Invitation"]["attributes"]["accountingState"] = {"type": "EString", "lower": 1}
+    m["classes"]["Invitation"]["attributes"]["accountingCheckedAt"] = "DateTime"
+    m["classes"]["Invitation"]["references"]["accountingCheckedBy"] = "User"
+    w = b["workflows"]["Invitation"]
+    w["regions"] = {"accounting": {
+        "state": "accountingState", "label": {"it": "Controllo contabile", "en": "Accounting check"},
+        "states": {"pending": {"initial": True, "owner": ["office"], "label": {"it": "Da controllare", "en": "To check"},
+                               "reminder": {"after": "3d", "template": "visit_confirmation_reminder"}},
+                   "checked": {"label": {"it": "Controllato", "en": "Checked"}, "color": "#16a34a"}},
+        "transitions": {"check": {"from": "pending", "to": "checked", "by": ["office"], "label": {"it": "Spunta", "en": "Check"},
+                                  "records": {"by": "accountingCheckedBy", "at": "accountingCheckedAt"}},
+                        "uncheck": {"from": "checked", "to": "pending", "by": ["office"], "comment": "required"}}}}
+    w["transitions"]["submit"]["guard"] = "dataComplete and accountingState = checked"
+    return m, b
+
+
 class ExpressionTests(unittest.TestCase):
     def setUp(self):
         self.e = E.expand(meta())
@@ -872,6 +893,120 @@ class PatchTextTests(unittest.TestCase):
         out = B.patch_text(self.text + "\n\n# trailing note\n", new)
         self.assertIsNotNone(out)
         self.assertTrue(out.endswith("# trailing note\n"), out[-60:])
+
+
+class RegionsTests(unittest.TestCase):
+    """Orthogonal regions: a parallel flow of the same record on its own state attribute."""
+
+    def test_the_state_attributes_are_typed_as_the_states(self):
+        m, b = region_model()
+        e, x = E.expand(m), B.expand(b)
+        ctx = B.context(e, x, "Invitation")
+        node, _ = X.check("state = draft and accountingState in [pending]", ctx, X.BOOL)
+        self.assertEqual(X.to_sql(node, X.SqlContext(e, "Invitation")), "(r.state = 'draft' and r.accounting_state in ('pending'))")
+        self.assertEqual(B.clauses(node, e, "Invitation"), [{"field": "state", "op": "eq", "value": "draft"},
+                                                            {"field": "accounting_state", "op": "in", "value": ["pending"]}])
+        with self.assertRaises(X.ExprError):
+            X.check("accountingState = draft", ctx, X.BOOL)                 # a state of the workflow, not of the region
+        with self.assertRaises(X.ExprError):
+            X.check("state = draft", X.Context(e, "Invitation"), X.BOOL)      # without the behaviour: a plain string
+        self.assertEqual(errors(b, m), [])
+        # the reactions name the region's transitions too
+        b["reactions"].append({"name": "notify_checked", "event": "Invitation.transitioned", "when": "transition = check", "notify": ["self.issuer"], "template": "bookings_changed"})
+        self.assertEqual(errors(b, m), [])
+        self.assertEqual(B.transition_reactions(B.expand(b), e, "Invitation")["check"], ["notify_checked"])
+
+    def test_validate_the_region(self):
+        m, b = region_model()
+        r = b["workflows"]["Invitation"]["regions"]["accounting"]
+        bad = copy.deepcopy(b); bad["workflows"]["Invitation"]["regions"]["accounting"]["state"] = "state"
+        self.assertTrue(any("already holds the state of the workflow" in x for x in errors(bad, m)), errors(bad, m))
+        bad = copy.deepcopy(b); bad["workflows"]["Invitation"]["regions"]["accounting"]["state"] = "nope"
+        self.assertTrue(any("regions.accounting.state: 'nope' is not an attribute" in x for x in errors(bad, m)), errors(bad, m))
+        bad = copy.deepcopy(b); bad["workflows"]["Invitation"]["regions"]["accounting"]["transitions"]["submit"] = {"from": "pending", "to": "checked", "by": ["office"]}
+        self.assertTrue(any("regions.accounting.transitions.submit: a transition with this key exists in the workflow" in x for x in errors(bad, m)), errors(bad, m))
+        bad = copy.deepcopy(b); bad["workflows"]["Invitation"]["regions"]["accounting"]["states"]["pending"]["requires"] = ["notes"]
+        self.assertTrue(any("regions.accounting.states.pending.requires: the record's view" in x for x in errors(bad, m)), errors(bad, m))
+        bad = copy.deepcopy(b); bad["workflows"]["Invitation"]["regions"]["accounting"]["transitions"]["check"]["to"] = "draft"
+        self.assertTrue(any("to: unknown state 'draft' (the states of region accounting)" in x for x in errors(bad, m)), errors(bad, m))
+        bad = copy.deepcopy(b); bad["workflows"]["Invitation"]["regions"]["accounting"]["states"]["pending"]["initial"] = False
+        self.assertTrue(any("regions.accounting.states: exactly one state is `initial: true`" in x for x in errors(bad, m)), errors(bad, m))
+        # a region needs no final state; `records` wants a reference to User and a date attribute
+        del r["states"]["checked"]["color"]
+        self.assertEqual(errors(b, m), [])
+        bad = copy.deepcopy(b); bad["workflows"]["Invitation"]["regions"]["accounting"]["transitions"]["check"]["records"] = {"by": "guest", "at": "notes"}
+        found = errors(bad, m)
+        self.assertTrue(any("records.by: 'guest' is not a single-valued reference of Invitation to User" in x for x in found), found)
+        self.assertTrue(any("records.at: 'notes' is not a Date or DateTime attribute" in x for x in found), found)
+        bad = copy.deepcopy(b); bad["workflows"]["Invitation"]["transitions"]["submit"]["records"] = {"at": "accountingCheckedAt"}   # on a main transition too
+        self.assertEqual(errors(bad, m), [])
+        bad = copy.deepcopy(b); bad["workflows"]["Invitation"]["regions"]["accounting"]["extra"] = 1
+        self.assertTrue(any("regions.accounting: unknown keys: extra" in x for x in errors(bad, m)), errors(bad, m))
+
+    def test_the_region_in_the_files_the_docs_and_the_runtime(self):
+        import difflib
+        m, b = region_model()
+        e = E.expand(m)
+        # the file: a block of the same shape as the workflow, written and patched line by line
+        text = B.dumps(b)
+        self.assertIn("    regions:\n      accounting:\n        state: accountingState\n", text)
+        self.assertIn("          check: {from: pending, to: checked, by: [office], label: {it: Spunta, en: Check}, records: {by: accountingCheckedBy, at: accountingCheckedAt}}", text)
+        self.assertEqual(B.canonical(B.loads(text)), B.canonical(b))
+        patched = B.patch_text(BEHAVIOR.read_text(), b)
+        lines = [x for x in difflib.unified_diff(BEHAVIOR.read_text().splitlines(), patched.splitlines(), n=0) if x[:1] in "+-" and not x.startswith(("+++", "---"))]
+        self.assertEqual([x for x in lines if x.startswith("-")], ["-      submit:            {from: draft, to: pending_director, by: [self.issuer], guard: dataComplete, label: {it: Emetti, en: Submit}}"])
+        self.assertIn("+    regions:", lines)
+        self.assertIn("+          check: {from: pending, to: checked, by: [office], label: {it: Spunta, en: Check}, records: {by: accountingCheckedBy, at: accountingCheckedAt}}", lines)
+        b2 = copy.deepcopy(b); b2["workflows"]["Invitation"]["regions"]["accounting"]["transitions"]["check"]["comment"] = "required"
+        again = B.patch_text(patched, b2)
+        lines = [x for x in difflib.unified_diff(patched.splitlines(), again.splitlines(), n=0) if x[:1] in "+-" and not x.startswith(("+++", "---"))]
+        self.assertEqual(len(lines), 2, lines)                                               # the one transition line
+        # diff and the editor round trip
+        self.assertEqual(B.diff(behavior(), b), ["~ transition Invitation.submit: guard", "+ region Invitation.accounting on accountingState: 2 states, 2 transitions"])
+        self.assertEqual(B.diff(b, b2), ["~ transition Invitation.accounting.check: comment"])
+        rj = B.runtime_json(b, m)
+        self.assertEqual(rj["workflows"]["Invitation"]["regions"]["accounting"]["transitions"]["check"]["region"], "accounting")
+        self.assertEqual(rj["workflows"]["Invitation"]["transitions"]["submit"]["guard"]["sql"], "(r.data_complete and r.accounting_state = 'checked')")
+        self.assertEqual(B.diff(b, B.from_editor(rj)), [])
+        self.assertIn("state", [u["kind"] for u in rj["uses"]["Invitation"]["attributes"]["accountingState"]])
+        self.assertIn("records", [u["kind"] for u in rj["uses"]["Invitation"]["references"]["accountingCheckedBy"]])
+        # the docs: a concurrent region in the diagram, its own tables
+        md = B.to_markdown(b, m, "en")
+        self.assertIn("  state Invitation {", md)
+        self.assertIn("    --\n    accounting_pending: To check", md)
+        self.assertIn("### Region `accounting` (orthogonal to the states of the workflow): the state is the attribute `accountingState`", md)
+        self.assertIn("| `check` | Check | pending → checked | `office` |", md)
+        # the engine's version: the region's states keyed by the region, its transitions with their region
+        v = B.engine_version(b, m, "Invitation")
+        self.assertIn({"key": "check", "region": "accounting", "from_states": ["accounting.pending"], "to_state": "accounting.checked"},
+                      [{k: t[k] for k in ("key", "region", "from_states", "to_state")} for t in v["transitions"] if t.get("region")])
+        self.assertEqual([s["key"] for s in v["states"] if s.get("region")], ["accounting.pending", "accounting.checked"])
+        self.assertEqual(next(t["guard"] for t in v["transitions"] if t["key"] == "submit"),
+                         [{"field": "data_complete", "op": "is_true"}, {"field": "accounting_state", "op": "eq", "value": "checked"}])
+
+    def test_the_engine_moves_the_region_on_its_own_column(self):
+        from metamodel import engine as N
+        m, b = region_model()
+        sql, _ = N.engine_sql(b, m)
+        for frag in ["if new.state is null then new.state := 'draft'; end if;",
+                     "if new.accounting_state is null then new.accounting_state := 'pending'; end if;",
+                     "elsif (new.state is distinct from old.state or new.accounting_state is distinct from old.accounting_state) and coalesce(current_setting('app.in_transition', true), '') <> 'on' then",
+                     "else '{}'::text[] end || case r.accounting_state\n    when 'pending' then '{}'::text[]",
+                     "elsif p_key = 'check' then\n    v_from := array['pending']::text[]; v_to := 'checked'; v_allowed := array['office']::text[];",
+                     "v_col := 'accounting_state'; v_region := 'accounting'; v_rec_by := 'accounting_checked_by'; v_rec_at := 'accounting_checked_at';",
+                     "v_col := 'state'; v_region := null; v_rec_by := null; v_rec_at := null;",
+                     "v_state := case v_col when 'state' then r.state when 'accounting_state' then r.accounting_state end;",
+                     "if v_col = 'state' then update public.invitations set state = v_to where id = p_id;\n  elsif v_col = 'accounting_state' then update public.invitations set accounting_state = v_to where id = p_id;\n  end if;",
+                     "execute format('update public.invitations set %s where id = $1', concat_ws(', ',",
+                     "'timed', v_timed, 'region', v_region)", "if v_region is null and v_to = any (array['closed', 'cancelled']::text[]) then",
+                     "'guard', '', 'region', 'accounting') as j\n     where r.accounting_state = any (array['pending']::text[])",
+                     "v_guard := coalesce((r.data_complete and r.accounting_state = 'checked'), false); v_guard_text := 'dataComplete and accountingState = checked';",
+                     "select x.id, 'accounting.' || x.accounting_state as state,", "when 'accounting.pending' then array['office']::text[]",
+                     "when 'check' then 'Check'"]:
+            self.assertIn(frag, sql, frag)
+        plain, _ = N.engine_sql(behavior(), meta())
+        self.assertIn("  update public.invitations set state = v_to where id = p_id;\n", plain)        # one flow: the plain update
+        self.assertNotIn("'region'", plain)
 
 
 class RolesFromTheMetamodelTests(unittest.TestCase):
@@ -1763,6 +1898,67 @@ class EngineDatabaseTests(WorkflowDatabaseTests):
         self.assertIn(fragment, out.stderr)
 
     ADMIN = "00000000-0000-0000-0000-00000000000e"
+
+    def test_region_end_to_end(self):
+        from metamodel import engine as N
+        from metamodel import sqlgen as G
+        m, b = region_model()
+        sql, _ = G.migration({"package": "invitations", "classes": {}}, m, "whole")
+        self.psql(self.dsn, "create table public.profiles (id uuid primary key default gen_random_uuid(), email text);"
+                            "create table public.user_roles (profile_id uuid references public.profiles (id), role text not null, scope_id uuid);"
+                            "do $r$ begin if not exists (select 1 from pg_roles where rolname = 'authenticated') then "
+                            "create role authenticated nologin; end if; end $r$;")
+        self.psql(self.dsn, sql)
+        engine, _ = N.engine_sql(b, m)
+        self.psql(self.dsn, engine)
+        self.psql(self.dsn, f"insert into public.profiles (id, email) values ('{self.ISSUER}', 'issuer@x.org'), ('{self.DIRECTOR}', 'dir@x.org'), "
+                            f"('{self.OFFICE}', 'office@x.org'), ('{self.OTHER}', 'other@x.org');"
+                            "insert into public.departments (code, name) values ('cs', 'CS');"
+                            f"insert into public.user_roles select '{self.DIRECTOR}', 'director', id from public.departments;"
+                            f"insert into public.user_roles values ('{self.OFFICE}', 'office', null);"
+                            "insert into public.invitation_reasons (code, label, compensation_type) values ('sem', 'Seminar', 'hourly');"
+                            "insert into public.guests (last_name, first_name, email, home_institution) values ('Doe', 'J', 'guest@y.org', 'Y');")
+        self.ok(self.ISSUER, "insert into public.invitations (code, start_date, end_date, hours, hourly_rate, meals_method, meals_amount, "
+                             "department, guest, reason, issuer, created_by) select 'INV-1', '2027-01-10', '2027-01-13', 2, 50, 'receipts', 80, "
+                             f"d.id, g.id, rz.id, '{self.ISSUER}', '{self.ISSUER}' from public.departments d, public.guests g, public.invitation_reasons rz;")
+        self.ok(self.ISSUER, "with f as (insert into public.funds (name) values ('F1') returning id) "
+                             f"insert into public.invitation_funds (amount, invitation, fund, created_by) select 180, i.id, f.id, '{self.ISSUER}' "
+                             "from public.invitations i, f;")
+        inv = "(select id from public.invitations)"
+        # both columns start at their initial state; the region's one changes only through its transitions
+        self.assertEqual(self.ok(self.ISSUER, "select state || '|' || accounting_state || '|' || data_complete from public.invitations;"), "draft|pending|true")
+        self.fails(self.ISSUER, "update public.invitations set accounting_state = 'checked';", "The state changes only through the transitions")
+        # the office sees the region's transition (with its region), the issuer does not; submit waits for the check
+        avail = self.ok(self.OFFICE, f"select public.invitation_available_transitions({inv});")
+        self.assertIn('"key": "check"', avail)                                           # jsonb orders the keys its own way
+        self.assertIn('"region": "accounting"', avail)
+        self.assertNotIn('"key": "check"', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
+        self.assertIn('"guard_ok": false', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
+        self.fails(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');", "Requirements not met: dataComplete and accountingState = checked")
+        self.fails(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'check');", "Operation not allowed")
+        # the reminder of the region's state goes to the offices, keyed by the region
+        self.ok(self.OFFICE, "update public.invitations set created_at = now() - interval '4 days';")
+        self.assertEqual(self.ok(self.OFFICE, "select public.invitation_run_reminders();"), "1")
+        ev = self.ok(self.OFFICE, "select data from public.events where type = 'invitation.reminder';")
+        self.assertIn('"state": "accounting.pending"', ev)
+        self.assertIn("office@x.org", ev)
+        self.assertEqual(self.ok(self.OFFICE, "select state from public.workflow_reminders;"), "accounting.pending")
+        # the check: the region moves, the main state stays, who and when are recorded, the event names the region
+        self.ok(self.OFFICE, f"select public.invitation_perform_transition({inv}, 'check');")
+        self.assertEqual(self.ok(self.OFFICE, "select state || '|' || accounting_state || '|' || accounting_checked_by || '|' || (accounting_checked_at > now() - interval '1 minute') from public.invitations;"),
+                         f"draft|checked|{self.OFFICE}|true")
+        self.assertEqual(self.ok(self.OFFICE, "select transition || '|' || from_state || '|' || to_state from public.workflow_history order by created_at desc limit 1;"), "check|pending|checked")
+        ev = self.ok(self.OFFICE, "select data from public.events where type = 'invitation.transitioned' and data -> 'transition' ->> 'key' = 'check';")
+        self.assertIn('"region": "accounting"', ev)
+        self.assertEqual(self.ok(self.OFFICE, "select count(*) from public.events where type = 'invitation.completed';"), "0")
+        self.assertIn('"guard_ok": true', self.ok(self.ISSUER, f"select public.invitation_available_transitions({inv});"))
+        self.ok(self.ISSUER, f"select public.invitation_perform_transition({inv}, 'submit');")
+        self.assertEqual(self.ok(self.ISSUER, "select state || '|' || accounting_state from public.invitations;"), "pending_director|checked")
+        # back to pending with a comment, whatever the main state
+        self.fails(self.OFFICE, f"select public.invitation_perform_transition({inv}, 'uncheck');", "Comment required")
+        self.ok(self.OFFICE, f"select public.invitation_perform_transition({inv}, 'uncheck', 'wrong fund');")
+        self.assertEqual(self.ok(self.ISSUER, "select state || '|' || accounting_state from public.invitations;"), "pending_director|pending")
+        self.assertEqual(self.ok(self.OFFICE, "select public.invitation_can_edit(i) from public.invitations i;"), "f")   # neither state lets the office edit
 
     def view_as_checks(self, inv):
         """«View as» on the same database: an administrator acts as the issuer, the office restricts its role."""

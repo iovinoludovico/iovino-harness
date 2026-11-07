@@ -11,6 +11,10 @@
 //   import metamodel from "@/lib/modeler/metamodel.json";
 //   <WorkflowView behavior={behavior} metamodel={metamodel} entity="Task" state={row.state} lang="it" />
 //
+// A workflow with regions (`regions:` of behavior.yaml, parallel flows on their own state attributes) is drawn with
+// one dashed box per region beside the main diagram; `regionStates={{ accounting: row.accounting_state }}` fills the
+// record's state in each of them.
+//
 // `metamodel` is optional: with it the tooltip of a notification names a `self.fund.manager` recipient with the labels
 // of the features («Fondo › Responsabile»), as the modeler's panel does; without it the path is shown as written.
 
@@ -23,13 +27,14 @@ type Props = {
   metamodel?: unknown;        // src/lib/modeler/metamodel.json: the labels of the self.… recipients in the tooltips
   entity: string;             // the class name (key of behavior.workflows)
   state: string | null;       // the current value of the state attribute of the record
+  regionStates?: Record<string, string | null>;   // the record's state in each region, by region key
   lang?: string;
   theme?: "light" | "dark";   // omitted: the element follows the page (html.dark / data-theme / the body's background)
   className?: string;
   style?: CSSProperties;
 };
 
-type ViewElement = HTMLElement & { workflow: unknown; roles: unknown; metamodel: unknown; state: string | null };
+type ViewElement = HTMLElement & { workflow: unknown; roles: unknown; metamodel: unknown; state: string | null; regionStates: unknown };
 
 declare module "react" {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -45,7 +50,7 @@ declare module "react" {
   }
 }
 
-export function WorkflowView({ behavior, metamodel, entity, state, lang = "it", theme, className, style }: Props) {
+export function WorkflowView({ behavior, metamodel, entity, state, regionStates, lang = "it", theme, className, style }: Props) {
   const ref = useRef<ViewElement | null>(null);
   const [ready, setReady] = useState(false);
   const workflow = useMemo(() => (behavior as Behavior | null)?.workflows?.[entity] ?? null, [behavior, entity]);
@@ -64,8 +69,9 @@ export function WorkflowView({ behavior, metamodel, entity, state, lang = "it", 
       ref.current.roles = roles;         // the recipients of the notifications with the labels of the roles
       ref.current.metamodel = metamodel ?? null;   // and of the features along a self.… path
       ref.current.workflow = workflow;
+      ref.current.regionStates = regionStates ?? null;
     }
-  }, [ready, workflow, roles, metamodel]);
+  }, [ready, workflow, roles, metamodel, regionStates]);
 
   if (!workflow) return null;
   return (

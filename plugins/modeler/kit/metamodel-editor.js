@@ -420,10 +420,16 @@
       return p;
     };
     // a workflow of behavior.json as the layout reads it; ctx (principalLabel) gives every notification its `text`
-    const workflowModel = (w, lang = "it", ctx = {}) => ({
+    const flowModel = (w, lang, ctx) => ({
       states: Object.entries(w?.states || {}).map(([key, s]) => ({ key, label: wfLabel(s, key, lang), color: s.color || WF.color, kind: s.initial ? "initial" : s.final ? "final" : "state" })),
       transitions: Object.entries(w?.transitions || {}).map(([key, t]) => ({ key, label: wfLabel(t, key, lang), from: t.from || [], to: t.to, timed: t.at != null,
         notifies: wfNotifies(t).map((n) => ({ ...n, text: (n.notify || []).map((p) => principalLabel(p, { ...ctx, lang })).join(", ") })) })),
+    });
+    // the regions (`regions` of a workflow: orthogonal flows of the same record, each on its own state attribute) are
+    // drawn each in a dashed box beside the main diagram, never as loops on a main state
+    const workflowModel = (w, lang = "it", ctx = {}) => ({
+      ...flowModel(w, lang, ctx),
+      regions: Object.entries(w?.regions || {}).map(([key, r]) => ({ key, label: wfLabel(r, key, lang), state: r.state || null, ...flowModel(r, lang, ctx) })),
     });
     // the notifications a transition fires: its own `notify`/`template` (edited here) and the reactions naming it (`notifies` of behavior.json)
     const wfNotifies = (t) => [...((t.notify || []).length ? [{ notify: t.notify, template: t.template || null, own: true }] : []),
@@ -1148,12 +1154,13 @@
     if (!Object.keys(b.roles).length) delete b.roles;
     for (const ders of Object.values(b.derivations || {})) for (const an of Object.keys(ders)) ders[an] = exprText(ders[an]);
     for (const w of Object.values(b.workflows || {})) {
-      for (const t of Object.values(w.transitions || {})) {
+      for (const f of [w, ...Object.values(w.regions || {})]) for (const t of Object.values(f.transitions || {})) {
         t.when = exprText(t.when); t.guard = exprText(t.guard);
         const nwhen = exprText(t.notify_when);
-        delete t.notifies; delete t._notify_extra; delete t.notify_when;
+        delete t.notifies; delete t._notify_extra; delete t.notify_when; delete t.region;
         if (nwhen && (t.notify || []).length) { t.notify = { to: t.notify, template: t.template ?? null, when: nwhen }; delete t.template; }
       }
+      if (w.regions && !Object.keys(w.regions).length) delete w.regions;
       for (const st of Object.values(w.states || {})) {
         for (const [f, o] of Object.entries(st.model || {})) {
           const c = {};
@@ -1203,9 +1210,25 @@
       for (const sn of Object.keys(ow.states || {})) if (!w.states?.[sn]) out.push(`- state ${cn}.${sn}`);
       for (const [tn, tr] of Object.entries(w.transitions || {})) {
         if (!ow.transitions?.[tn]) out.push(`+ transition ${cn}.${tn}: ${[].concat(tr.from || []).join(", ")} -> ${tr.to}`);
-        else { const ks = keysChanged(ow.transitions[tn], tr, ["from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "notify", "template"]); if (ks.length) out.push(`~ transition ${cn}.${tn}: ${ks.join(", ")}`); }
+        else { const ks = keysChanged(ow.transitions[tn], tr, ["from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "notify", "template", "records"]); if (ks.length) out.push(`~ transition ${cn}.${tn}: ${ks.join(", ")}`); }
       }
       for (const tn of Object.keys(ow.transitions || {})) if (!w.transitions?.[tn]) out.push(`- transition ${cn}.${tn}`);
+      for (const [rk, r] of Object.entries(w.regions || {})) {
+        const orr = ow.regions?.[rk];
+        if (!orr) { out.push(`+ region ${cn}.${rk} on ${r.state}: ${Object.keys(r.states || {}).length} states, ${Object.keys(r.transitions || {}).length} transitions`); continue; }
+        if (orr.state !== r.state) out.push(`~ region ${cn}.${rk}: state attribute ${orr.state} -> ${r.state}`);
+        for (const [sn, st] of Object.entries(r.states || {})) {
+          if (!orr.states?.[sn]) out.push(`+ state ${cn}.${rk}.${sn}`);
+          else { const ks = keysChanged(orr.states[sn], st, ["initial", "final", "label", "color", "owner", "editable_by", "reminder"]); if (ks.length) out.push(`~ state ${cn}.${rk}.${sn}: ${ks.join(", ")}`); }
+        }
+        for (const sn of Object.keys(orr.states || {})) if (!r.states?.[sn]) out.push(`- state ${cn}.${rk}.${sn}`);
+        for (const [tn, tr] of Object.entries(r.transitions || {})) {
+          if (!orr.transitions?.[tn]) out.push(`+ transition ${cn}.${rk}.${tn}: ${[].concat(tr.from || []).join(", ")} -> ${tr.to}`);
+          else { const ks = keysChanged(orr.transitions[tn], tr, ["from", "to", "by", "when", "guard", "comment", "at", "emits", "label", "notify", "template", "records"]); if (ks.length) out.push(`~ transition ${cn}.${rk}.${tn}: ${ks.join(", ")}`); }
+        }
+        for (const tn of Object.keys(orr.transitions || {})) if (!r.transitions?.[tn]) out.push(`- transition ${cn}.${rk}.${tn}`);
+      }
+      for (const rk of Object.keys(ow.regions || {})) if (!w.regions?.[rk]) out.push(`- region ${cn}.${rk}`);
       if (!same(ow.revert, w.revert)) out.push(`~ workflow ${cn}: revert`);
     }
     for (const cn of Object.keys(aw)) if (!bw[cn]) out.push(`- workflow ${cn}`);
@@ -1249,7 +1272,7 @@
       dropClass: "classe rimossa: la tabella e i suoi dati andranno eliminati",
       dropFeature: "rimosso: la colonna e i suoi dati andranno eliminati",
       dropLiteral: "letterale rimosso: i record con questo valore vanno migrati",
-      behavior: "Comportamento", workflow: "Workflow", states: "stati", transitions: "transizioni",
+      behavior: "Comportamento", workflow: "Workflow", states: "stati", transitions: "transizioni", regions: "regioni", region: "regione",
       derived: "calcolato", inCode: "calcolato nel codice", formula: "formula",
       legendWf: "classe con workflow", legendInvolved: "coinvolta nel comportamento", legendStruct: "solo struttura",
       usedBy: "usato da", derivation: "derivazione", guard: "requisito", when: "condizione", at: "scadenza", by: "chi",
@@ -1293,7 +1316,7 @@
       dropClass: "class removed: its table and data will be dropped",
       dropFeature: "removed: the column and its data will be dropped",
       dropLiteral: "literal removed: records with this value must be migrated",
-      behavior: "Behaviour", workflow: "Workflow", states: "states", transitions: "transitions",
+      behavior: "Behaviour", workflow: "Workflow", states: "states", transitions: "transitions", regions: "regions", region: "region",
       derived: "derived", inCode: "computed in code", formula: "formula",
       legendWf: "class with a workflow", legendInvolved: "involved in the behaviour", legendStruct: "structure only",
       usedBy: "used by", derivation: "derivation", guard: "requirement", when: "condition", at: "due", by: "who",
@@ -1352,6 +1375,8 @@
 .wfe.out { stroke-width:2.6; }
 .wfs.far, .wfst.far, .wfkey.far { opacity:.55; }
 .wfring { fill:none; stroke-width:6; stroke-opacity:.25; pointer-events:none; }
+.wfregion { margin:4px 10px 8px; border:1px dashed var(--muted); border-radius:8px; padding:2px 4px 4px; }
+.wfrhead { padding:2px 6px; font-size:11px; color:var(--muted); white-space:nowrap; }
 .wfkey.cur { fill:#fff; fill-opacity:.85; }
 .ehit { stroke:transparent; stroke-width:10; fill:none; pointer-events:stroke; cursor:pointer; }
 svg.hover .wfe:not(.hi), svg.hover .wfa:not(.hi), svg.hover .wfdot:not(.hi), svg.hover .wfl:not(.hi), svg.hover .wfl-bg:not(.hi), svg.hover .wfn:not(.hi) { opacity:.15; }
@@ -2300,15 +2325,18 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       panel.classList.add("on");
       const width = Math.max(240, Math.floor(panel.clientWidth) - 2 * WF_PAD);
       const key = `${cn}|${this._lang()}|${width}`;
-      let L = this._wfCache.get(key);
-      if (!L) {
-        const model = Layout.workflowModel(wf, this._lang(), this._principalCtx(cn));
-        L = Layout.workflowLayout(model.states, model.transitions, width, { measure: textMeasure() });
-        this._wfCache.set(key, L);
+      let cached = this._wfCache.get(key);
+      if (!cached) {
+        const model = Layout.workflowModel(wf, this._lang(), this._principalCtx(cn)), measure = textMeasure();
+        cached = { L: Layout.workflowLayout(model.states, model.transitions, width, { measure }),
+                   regions: model.regions.map((r) => ({ ...r, L: Layout.workflowLayout(r.states, r.transitions, width - 2 * WF_PAD, { measure }) })) };
+        this._wfCache.set(key, cached);
       }
+      const { L, regions } = cached;
       const t = this.t;
       const head = el("div", { class: "wfhead" }, el("strong", {}, cn),
-        el("span", {}, `«workflow» ⟳ ${wf.state} · ${L.boxes.length} ${t.states}, ${Object.keys(wf.transitions || {}).length} ${t.transitions}`),
+        el("span", {}, `«workflow» ⟳ ${wf.state} · ${L.boxes.length} ${t.states}, ${Object.keys(wf.transitions || {}).length} ${t.transitions}`
+          + (regions.length ? `, ${regions.length} ${t.regions}` : "")),
         Object.values(wf.states || {}).some((st) => Object.keys(Layout.stateView(st)).length) ? el("span", { class: "hint" }, t.stateViewHint) : null);
       const edit = this.readonly ? null : this._workflowEditor(cn, wf);
       const scroll = { top: body.scrollTop, left: body.scrollLeft };   // an edit re-renders the panel: keep where the user was
@@ -2318,11 +2346,16 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
         node.addEventListener("mouseenter", () => { this._wfView = { cn, state: node.dataset.state }; this._renderDiagram(); });
         node.addEventListener("mouseleave", () => { if (this._wfView?.state === node.dataset.state) { this._wfView = null; this._renderDiagram(); } });
       }
-      body.replaceChildren(head, diagram, ...(edit ? [edit] : []));
+      // the regions: a dashed box each, with its own diagram (edited in behavior.yaml: the tables below are the main flow's)
+      const regionBoxes = regions.map((r) => el("div", { class: "wfregion" },
+        el("div", { class: "wfrhead" }, `«${t.region}» ${r.label} ⟳ ${r.state || "?"} · ${r.L.boxes.length} ${t.states}, ${r.transitions.length} ${t.transitions}`),
+        workflowSvg(`${cn}.${r.key}`, r.L, { notifyText: t.notifiesTo })));
+      body.replaceChildren(head, diagram, ...regionBoxes, ...(edit ? [edit] : []));
       body.scrollTop = scroll.top; body.scrollLeft = scroll.left;
       // the height the user dragged, else what the diagram (and the editing tables) need, up to half of the editor
       const wrapH = this.shadowRoot.querySelector(".wrap")?.clientHeight || 600;
-      const h = this._wfUserH ?? Math.round(Math.min(Math.max(220, wrapH * 0.5), Math.max(160, L.height + WF_HEAD + (edit ? edit.scrollHeight || 220 : 0))));
+      const regionsH = regions.reduce((sum, r) => sum + r.L.height + WF_HEAD + 12, 0);
+      const h = this._wfUserH ?? Math.round(Math.min(Math.max(220, wrapH * 0.5), Math.max(160, L.height + regionsH + WF_HEAD + (edit ? edit.scrollHeight || 220 : 0))));
       if (panel.style.height !== `${h}px`) panel.style.height = `${h}px`;
       this._applyHover();
     }
@@ -2587,6 +2620,7 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       this._mm = null;             // the metamodel (metamodel.json): the labels of the `self.…` recipients (optional)
       this._cache = new Map();     // layouts per language and width
       this._last = null;           // "<lang>|<width>|<state>" of the diagram drawn (no redraw when unchanged)
+      this._regionStates = null;   // {region key: current state of the record in that region} (optional)
       this._hover = null;
       this._ro = null;
       this.attachShadow({ mode: "open" });
@@ -2642,6 +2676,13 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
     // the current state as a property too: React sets the property once the element is upgraded, the attribute before
     get state() { return this.getAttribute("state"); }
     set state(v) { if (v == null || v === "") this.removeAttribute("state"); else this.setAttribute("state", String(v)); }
+    // the record's state in each region ({accounting: "pending"}): the box of that state is filled in the region's diagram
+    get regionStates() { return this._regionStates ? clone(this._regionStates) : null; }
+    set regionStates(v) {
+      this._regionStates = v && typeof v === "object" ? clone(v) : null;
+      this._last = null;
+      if (this.isConnected) this._render();
+    }
     _applyHover() { this._hover = applyHover([...this.shadowRoot.querySelectorAll("svg")], this._hover); }
     _render() {
       const body = this.shadowRoot.querySelector(".wfview");
@@ -2649,19 +2690,29 @@ svg.hover .edge:not(.hi), svg.hover .elabel:not(.hi), svg.hover .junction:not(.h
       if (!this._wf || !Object.keys(this._wf.states || {}).length) { body.replaceChildren(); this._last = null; return; }
       const lang = (this.getAttribute("lang") || "it").slice(0, 2);
       const width = Math.max(240, Math.floor(this.clientWidth) - 2 * WF_PAD);
-      const key = `${lang}|${width}`, state = this.getAttribute("state") || null, drawn = `${key}|${state}`;
+      const key = `${lang}|${width}`, state = this.getAttribute("state") || null;
+      const drawn = `${key}|${state}|${JSON.stringify(this._regionStates || {})}`;
       if (drawn === this._last) return;
-      let L = this._cache.get(key);
-      if (!L) {
+      let cached = this._cache.get(key);
+      if (!cached) {
         const model = Layout.workflowModel(this._wf, lang, { roles: this._roles, lang, texts: (T[lang] || T.it).principals,
                                                               mm: this._mm, cn: this.getAttribute("name") || null });
-        L = Layout.workflowLayout(model.states, model.transitions, width, { measure: textMeasure() });
-        this._cache.set(key, L);
+        const measure = textMeasure();
+        cached = { L: Layout.workflowLayout(model.states, model.transitions, width, { measure }),
+                   regions: model.regions.map((r) => ({ ...r, L: Layout.workflowLayout(r.states, r.transitions, width - 2 * WF_PAD, { measure }) })) };
+        this._cache.set(key, cached);
       }
+      const { L, regions } = cached;
       const known = state === null || L.boxes.some((b) => b.key === state);   // an unknown value: neutral diagram, flagged
       if (known) this.removeAttribute("data-state-missing"); else this.setAttribute("data-state-missing", state);
-      const notifyText = lang === "en" ? "notifies" : "avvisa";
-      body.replaceChildren(workflowSvg(this.getAttribute("name") || "", L, { notifyText, ...(known ? { current: state, focus: new Set(Layout.workflowFocus(L.edges, state)) } : {}) }));
+      const notifyText = lang === "en" ? "notifies" : "avvisa", name = this.getAttribute("name") || "";
+      const regionText = lang === "en" ? "region" : "regione";
+      const boxes = regions.map((r) => {   // one dashed box per region, the record's state in it filled like the main one
+        const cur = this._regionStates?.[r.key] ?? null, ok = cur !== null && r.L.boxes.some((b) => b.key === cur);
+        return el("div", { class: "wfregion" }, el("div", { class: "wfrhead" }, `«${regionText}» ${r.label} ⟳ ${r.state || "?"}`),
+          workflowSvg(`${name}.${r.key}`, r.L, { notifyText, ...(ok ? { current: cur, focus: new Set(Layout.workflowFocus(r.L.edges, cur)) } : {}) }));
+      });
+      body.replaceChildren(workflowSvg(name, L, { notifyText, ...(known ? { current: state, focus: new Set(Layout.workflowFocus(L.edges, state)) } : {}) }), ...boxes);
       this._last = drawn;
       this._applyHover();
     }

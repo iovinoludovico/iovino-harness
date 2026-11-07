@@ -34,6 +34,7 @@ BOOL = "bool"
 COLLECTION = "collection:"       # collection:<type>
 CLASS = "class:"                 # class:<name>
 ENUM = "enum:"                   # enum:<name>  (enum:@<var> for a variable with a fixed set of names)
+STATE_ENUM = "@state:"           # enum:@state:<attribute>: a state attribute, whose names are the workflow's states
 CALLS = {"isSet", "isEmpty", "notEmpty", "size", "sum"}
 FUNCTIONS = {"round": (1, 2), "coalesce": (2, 99)}
 
@@ -293,11 +294,14 @@ class Context:
     cls: str
     variables: dict[str, str] = field(default_factory=dict)
     names: dict[str, list[str]] = field(default_factory=dict)      # "@transition" -> [keys]
+    state_attrs: dict[str, list[str]] = field(default_factory=dict)   # state attribute of a workflow (or region) -> its state keys
 
     def literals(self, t: str) -> list[str] | None:
         if not t.startswith(ENUM):
             return None
         name = t[len(ENUM):]
+        if name.startswith(STATE_ENUM):
+            return self.state_attrs.get(name[len(STATE_ENUM):], [])
         if name.startswith("@"):
             return self.names.get(name, [])
         spec = self.e["enums"].get(name)
@@ -343,6 +347,8 @@ def _navigate(ctx: Context, node: dict[str, Any], text: str) -> str:
             attrs, refs = E.features(ctx.e, cname)
             if seg in attrs:
                 nt = feature_type(attrs[seg], ctx.e, False)
+                if i == 0 and seg in ctx.state_attrs and attrs[seg].get("upper", 1) == 1 and not nt.startswith(ENUM):
+                    nt = ENUM + STATE_ENUM + seg          # `state = draft`: the states of the workflow are its literals
                 hops.append([str(attrs[seg].get("_owner", cname)), seg])
             elif seg in refs:
                 nt = feature_type(refs[seg], ctx.e, True)
