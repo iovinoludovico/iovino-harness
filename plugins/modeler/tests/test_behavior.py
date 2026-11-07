@@ -793,6 +793,87 @@ class BehaviorTests(unittest.TestCase):
             B.loads("- just a list\n")
 
 
+class PatchTextTests(unittest.TestCase):
+    """`patch_text` rewrites only the lines of what changed in a behaviour written by hand."""
+
+    def setUp(self):
+        self.text = BEHAVIOR.read_text()
+
+    def changed(self, new):
+        import difflib
+        out = B.patch_text(self.text, new)
+        self.assertIsNotNone(out)
+        self.assertEqual(B.canonical(B.loads(out)), B.canonical(new))
+        return [x for x in difflib.unified_diff(self.text.splitlines(), out.splitlines(), n=0)
+                if x[:1] in "+-" and not x.startswith(("+++", "---"))]
+
+    def test_the_same_model_leaves_the_file_as_it_is(self):
+        self.assertEqual(B.patch_text(self.text, B.loads(self.text)), self.text)
+        new = B.loads(self.text)
+        new["workflows"]["Invitation"]["transitions"]["submit"]["guard"] = "  dataComplete "   # the same expression
+        new["workflows"]["Invitation"]["transitions"]["withdraw"]["from"] = ["draft", "rejected"]
+        self.assertEqual(self.changed(new), [])
+
+    def test_every_section_is_edited_entry_by_entry(self):
+        new = B.loads(self.text)
+        new["roles"]["auditor"] = {"label": {"it": "Revisore"}}
+        new["roles"]["office"]["doc"] = "Gli uffici"
+        del new["roles"]["director"]
+        new["derivations"]["Invitation"]["reasonCode"] = "reason.code.upper()"
+        new["derivations"]["Guest"] = {"fullName": "firstName + ' ' + lastName"}
+        new["workflows"]["Invitation"]["state"] = "status"
+        new["workflows"]["Invitation"]["states"]["paused"] = {"label": {"it": "Sospeso"}, "owner": ["office"]}
+        new["workflows"]["Invitation"]["states"]["awaiting_confirmation"]["color"] = "#000000"     # a block entry stays a block
+        del new["workflows"]["Invitation"]["transitions"]["rebook"]
+        new["workflows"]["Invitation"]["transitions"]["pause"] = {"from": "in_management", "to": "paused", "by": ["office"]}
+        new["workflows"]["Invitation"]["revert"] = {"by": ["office"]}
+        new["events"]["Invitation"]["paused"] = {"doc": "In pausa"}
+        new["reactions"][1]["notify"] = ["office", "director"]
+        new["reactions"].append({"name": "notify_paused", "event": "Invitation.transitioned", "when": "transition = pause", "notify": [self_ := "self.issuer"], "template": "bookings_changed"})
+        del new["reactions"][0]
+        del new["subscriptions"]
+        new["templates"]["bookings_changed"]["it"]["subject"] = "Cambiato"
+        new["templates"]["new_one"] = {"it": {"subject": "Oggetto", "body": "Testo"}}
+        del new["templates"]["visit_confirmed"]
+        new["view_as"] = {"users_by": ["office"]}
+        lines = self.changed(new)
+        added = [x for x in lines if x.startswith("+")]
+        removed = [x for x in lines if x.startswith("-")]
+        self.assertEqual(len(added), 18, added)                   # 16 entries, the blank line before view_as, Guest:
+        self.assertEqual(len(removed), 16, removed)
+        self.assertIn("+  auditor:  {label: {it: Revisore}}", added)                              # aligned like its neighbours
+        self.assertIn("+  office:   {label: {it: Uffici amministrativi, en: Administrative offices}, doc: Gli uffici}", added)
+        self.assertIn("+    reasonCode: reason.code.upper()", added)
+        self.assertIn("+  Guest:", added)
+        self.assertIn("+    state: status", added)
+        self.assertIn("+        color: '#000000'", added)
+        self.assertIn("-        color: \"#7c3aed\"", removed)
+        self.assertIn("+      paused:                {label: {it: Sospeso}, owner: [office]}", added)
+        self.assertIn("+      pause:             {from: in_management, to: paused, by: [office]}", added)
+        self.assertIn("+    revert: {by: [office]}", added)
+        self.assertIn("+    paused: {doc: In pausa}", added)
+        self.assertIn("+view_as: {users_by: [office]}", added)
+        self.assertTrue(any(x.startswith("+  - {name: notify_paused,") for x in added), added)
+        self.assertTrue(any(x.startswith("-  - {name: notify_submitted,") for x in removed), removed)
+        self.assertIn("-subscriptions:", removed)
+        self.assertIn("+  new_one:", added)
+        self.assertIn("+    it: {subject: Oggetto, body: Testo}", added)                         # the language lines of the neighbours
+        self.assertTrue(all("# " not in x for x in removed))                                       # no comment touched
+        self.assertNotIn("+      approve:", "".join(added))                                        # untouched transitions stay
+
+    def test_what_cannot_be_edited_line_by_line(self):
+        new = B.loads(self.text)
+        new["doc"] = "Other"
+        self.assertIsNone(B.patch_text(self.text, new))
+        new = B.loads(self.text)
+        new["workflows"]["Invitation"]["states"]["paused"] = {"owner": ["office"]}
+        inline = self.text.replace("    states:\n", "    states: {draft: {initial: true}}\n", 1)
+        self.assertIsNone(B.patch_text("not: [a, mapping", new))
+        out = B.patch_text(self.text + "\n\n# trailing note\n", new)
+        self.assertIsNotNone(out)
+        self.assertTrue(out.endswith("# trailing note\n"), out[-60:])
+
+
 class RolesFromTheMetamodelTests(unittest.TestCase):
     """The roles are declared in the metamodel (`roles:`): the behaviour resolves its principals against them."""
 

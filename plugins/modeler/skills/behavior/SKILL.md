@@ -148,8 +148,13 @@ risolti, `model:drift`). Mai un `behavior.yaml` che cita feature che il metamode
 5. Test: la transizione bloccata dalla guardia, i destinatari della reazione, il sollecito, un testo reso (pgTAP o
    test dell'app); poi typecheck, lint e test dell'app.
 6. Le modifiche fatte dal modellatore web (`/admin/model`: pannello del workflow della classe selezionata, con le colonne
-   «Avvisa» e «Template» della transizione; ruoli e reazioni nella barra laterale) arrivano come proposta: si applicano con `/modeler:apply`, che poi segue questi
-   stessi passi.
+   «Avvisa» e «Template» della transizione; ruoli e reazioni nella barra laterale) o salvate da questa skill come
+   proposta arrivano come proposta: si applicano con `/modeler:apply`, che poi segue questi stessi passi. Dopo
+   `model:apply -- <file> --write`, **`git diff --stat domain.ecore.yaml behavior.yaml`**: `apply` cambia solo le righe
+   delle voci nuove o cambiate e conserva ogni commento (in un'app con il motore a mano i commenti di `behavior.yaml`
+   portano le regole del progetto: mai `model:engine -- --write`, elenco delle personalizzazioni); se il diff è più
+   ampio della modifica o `apply` elenca commenti «not kept», ripristina i due file, fai la modifica a mano e annota il
+   caso con `/core:harness-note`.
 
 Il comportamento (workflow, derivazioni, eventi, reazioni, testi) sta in `behavior.yaml`; le regole di dominio
 dichiarative in `rules` del metamodello; il codice che li applica oltre al motore è una personalizzazione

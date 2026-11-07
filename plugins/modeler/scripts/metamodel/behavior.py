@@ -79,14 +79,8 @@ def loads(text: str) -> dict[str, Any]:
     return M.loads(text)
 
 
-class _Flow(dict):
-    """A mapping written on one line (flow style) by dumps()."""
-
-
-def _dumper():
-    yaml, Dumper = E._flow_dumper()
-    Dumper.add_representer(_Flow, lambda d, data: d.represent_mapping("tag:yaml.org,2002:map", data.items(), flow_style=True))
-    return yaml, Dumper
+_Flow = E._Flow            # a mapping written on one line (flow style) by dumps()
+_dumper = E._flow_dumper
 
 
 def _expr_text(x: Any) -> str:
@@ -175,51 +169,282 @@ def from_editor(doc: dict[str, Any]) -> dict[str, Any]:
     return _clean(raw)
 
 
+_HEADER = ["# Behaviour of the domain (behavior.yaml): roles, derivations, workflows, events, reactions.",
+           "# Edit it from the prompt (/modeler:behavior), in the app's modeler (/admin/model) or by hand; `npm run",
+           "# model:validate` checks it against domain.ecore.yaml."]
+SECTIONS = ("metamodel", "doc", "roles", "view_as", "derivations", "workflows", "events", "reactions", "subscriptions", "templates")
+
+
+def _flow_map(m: dict[str, Any]) -> dict[str, Any]:
+    """A block of entries each written on one line (states, transitions, events, roles)."""
+    return E._Block({k: (_Flow(v) if isinstance(v, dict) else v) for k, v in m.items()})
+
+
+def _workflow_body(w: dict[str, Any]) -> dict[str, Any]:
+    """A workflow as dumps writes it: its keys one per line, states and transitions one per line each."""
+    body = E._Block({k: v for k, v in w.items() if k not in ("states", "transitions", "revert")})
+    body["states"] = _flow_map(w.get("states", {}))
+    body["transitions"] = _flow_map(w.get("transitions", {}))
+    if w.get("revert"):
+        body["revert"] = _Flow(w["revert"])
+    return body
+
+
+def _styled(r: dict[str, Any]) -> dict[str, Any]:
+    """The sections of a (clean, tidy) behaviour with the block/flow style dumps gives them."""
+    block = E._Block
+    out: dict[str, Any] = {}
+    if r.get("roles"):
+        out["roles"] = _flow_map(r["roles"])
+    if r.get("view_as") is not None:
+        out["view_as"] = _Flow(r["view_as"] if isinstance(r["view_as"], dict) else {})
+    if r.get("derivations"):
+        out["derivations"] = block({cn: block(ders) for cn, ders in r["derivations"].items()})
+    if r.get("workflows"):
+        out["workflows"] = block({cn: _workflow_body(w) for cn, w in r["workflows"].items()})
+    if r.get("events"):
+        out["events"] = block({cn: _flow_map(evs) for cn, evs in r["events"].items()})
+    for key in ("reactions", "subscriptions"):
+        if r.get(key):
+            out[key] = [_Flow(item) for item in r[key]]
+    if r.get("templates"):
+        out["templates"] = block({key: block({lang: block(tx) for lang, tx in langs.items()}) for key, langs in r["templates"].items()})
+    return out
+
+
+def _section_lines(key: str, value: Any) -> list[str]:
+    """The lines of one top-level section as dumps writes it (no blank line around it)."""
+    yaml, Dumper = _dumper()
+    dump = lambda v: yaml.dump(v, Dumper=Dumper, sort_keys=False, allow_unicode=True, width=200).rstrip("\n")  # noqa: E731
+    if key in ("reactions", "subscriptions"):
+        return [f"{key}:"] + ["  - " + dump(item) for item in value]
+    if key in ("roles", "view_as"):
+        return dump(E._Block({key: value})).split("\n")
+    out = [f"{key}:"]
+    for name, body in value.items():
+        out += ["  " + line for line in dump(E._Block({name: body})).split("\n")]
+    return out
+
+
 def dumps(raw: dict[str, Any]) -> str:
     """behavior.yaml from its structure: one section per key, one block per class, states, transitions,
     reactions and subscriptions one per line (flow style), as the notation reference writes them.
-    Comments are not kept: callers back the file up and say so."""
-    yaml, Dumper = _dumper()
-    dump = lambda v: yaml.dump(v, Dumper=Dumper, sort_keys=False, allow_unicode=True, width=200).rstrip("\n")  # noqa: E731
-    block = E._Block                                                     # a mapping written one key per line
-    flow_map = lambda m: block({k: (_Flow(v) if isinstance(v, dict) else v) for k, v in m.items()})  # noqa: E731
+    Comments are not kept: callers back the file up and say so (apply edits the changed lines: patch_text)."""
+    yaml, _ = _dumper()
     r = _clean(_tidy(raw))
-    out = ["# Behaviour of the domain (behavior.yaml): roles, derivations, workflows, events, reactions.",
-           "# Edit it from the prompt (/modeler:behavior), in the app's modeler (/admin/model) or by hand; `npm run",
-           "# model:validate` checks it against domain.ecore.yaml.", ""]
+    out = list(_HEADER) + [""]
     for key in ("metamodel", "doc"):
         if r.get(key):   # a scalar: never a flow mapping at the top level (it would end the document)
             scalar = yaml.safe_dump(r[key], allow_unicode=True, width=1000).strip()
             out.append(f"{key}: {scalar.split(chr(10))[0] if scalar.endswith('...') else scalar}")
-    if r.get("roles"):
-        out += ["", dump(block({"roles": flow_map(r["roles"])}))]
-    if r.get("view_as") is not None:
-        out += ["", dump(block({"view_as": _Flow(r["view_as"] if isinstance(r["view_as"], dict) else {})}))]
-    if r.get("derivations"):
-        out += ["", "derivations:"]
-        for cn, ders in r["derivations"].items():
-            out += ["  " + line for line in dump(block({cn: block(ders)})).split("\n")]
-    if r.get("workflows"):
-        out += ["", "workflows:"]
-        for cn, w in r["workflows"].items():
-            body = block({k: v for k, v in w.items() if k not in ("states", "transitions", "revert")})
-            body["states"] = flow_map(w.get("states", {}))
-            body["transitions"] = flow_map(w.get("transitions", {}))
-            if w.get("revert"):
-                body["revert"] = _Flow(w["revert"])
-            out += ["  " + line for line in dump(block({cn: body})).split("\n")]
-    if r.get("events"):
-        out += ["", "events:"]
-        for cn, evs in r["events"].items():
-            out += ["  " + line for line in dump(block({cn: flow_map(evs)})).split("\n")]
-    for key in ("reactions", "subscriptions"):
-        if r.get(key):
-            out += ["", f"{key}:"] + ["  - " + dump(_Flow(item)) for item in r[key]]
-    if r.get("templates"):
-        out += ["", "templates:"]
-        for key, langs in r["templates"].items():
-            out += ["  " + line for line in dump(block({key: block({lang: block(tx) for lang, tx in langs.items()})})).split("\n")]
+    for key, value in _styled(r).items():
+        out += [""] + _section_lines(key, value)
     return "\n".join(out).rstrip("\n") + "\n"
+
+
+# --------------------------------------------------------------------------- #
+# Surgical rewrite: only the lines of what changed
+# --------------------------------------------------------------------------- #
+_EXPR_KEYS = ("when", "guard", "at", "notify_when")
+
+
+def _norm(v: Any, key: str | None = None) -> Any:
+    """The canonical behaviour with every expression in its canonical text: what two files mean."""
+    if isinstance(v, dict):
+        return {k: _norm(x, k) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm(x) for x in v]
+    if key in _EXPR_KEYS and isinstance(v, str):
+        return _expr_text(v)
+    return v
+
+
+def canonical(raw: dict[str, Any]) -> dict[str, Any]:
+    """expand() with the expressions (guards, conditions, derivations) in their canonical text."""
+    x = _norm(expand(raw))
+    x["derivations"] = {cn: {an: _expr_text(ex) for an, ex in ders.items()} for cn, ders in x["derivations"].items()}
+    x["reactions"] = [r for r in x["reactions"] if not r.get("_transition")]     # the file writes them on the transition
+    return x
+
+
+class _Patch:
+    """Edits (start, end, replacement) on the lines of a behaviour file, mapping by mapping."""
+
+    def __init__(self, lines: list[str]):
+        self.lines = lines
+        self.edits: list[tuple[int, int, list[str]]] = []
+
+    def block(self, start: int) -> bool:
+        """The key at `start` opens a block (its value is not written on the same line)."""
+        return not E._inline(self.lines[start])
+
+    def delete(self, start: int, end: int) -> None:
+        self.edits.append((*E._removal(self.lines, start, end), []))
+
+    def mapping(self, start: int, end: int, indent: int, old: dict[str, Any], new: dict[str, Any], raw: dict[str, Any],
+                flow: bool, deeper=None) -> bool:
+        """The entries of the block lines[start+1:end] at `indent`, compared on `old`/`new` (canonical) and written
+        from `raw` (styled): deleted, replaced (or edited inside by `deeper(key, (s, e))` when it returns True) and
+        added after the last one, in the style of their neighbours. False when the block is not laid out as
+        expected (one key per entry): the caller rewrites it whole."""
+        entries = E._children(self.lines, start + 1, end, indent)
+        if set(entries) != set(old):
+            return False
+        for k in old:
+            s, e = entries[k]
+            if k not in new:
+                self.delete(s, e)
+            elif old[k] != new[k]:
+                if deeper is not None and self.block(s) and deeper(k, (s, e)):
+                    continue
+                self.edits.append((s, e, E._entry_lines(k, raw[k], indent, self.lines[s], flow)))
+        added = [k for k in new if k not in old]
+        if added:
+            last = max(e for _, e in entries.values()) if entries else start + 1
+            like, col = E._like(self.lines, entries)
+            self.edits.append((last, last, [ln for k in added for ln in E._entry_lines(k, raw[k], indent, like, flow, col)]))
+        return True
+
+    def items(self, start: int, end: int, indent: int) -> list[tuple[int, int]]:
+        """The `- item` entries of the list block lines[start+1:end] at `indent`, each up to its last content line."""
+        out: list[tuple[int, int]] = []
+        head = " " * indent + "- "
+        last = start
+        for i in range(start + 1, end):
+            line = self.lines[i]
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            depth = len(line) - len(line.lstrip())
+            if line.startswith(head):
+                if out:
+                    out[-1] = (out[-1][0], last + 1)
+                out.append((i, end))
+            elif depth <= indent:
+                break
+            last = i
+        if out:
+            out[-1] = (out[-1][0], last + 1)
+        return out
+
+    def sequence(self, start: int, end: int, indent: int, old: list[Any], new: list[Any], raw: list[Any]) -> bool:
+        """A list of named items (reactions, subscriptions): matched by name (by position when unnamed)."""
+        items = self.items(start, end, indent)
+        if len(items) != len(old):
+            return False
+        key = lambda r, i: str(r.get("name") or f"#{i}")  # noqa: E731
+        olds = {key(r, i): (r, items[i]) for i, r in enumerate(old)}
+        news = {key(r, i): (r, raw[i]) for i, r in enumerate(new)}
+        if len(olds) != len(old) or len(news) != len(new):
+            return False
+        yaml, Dumper = _dumper()
+        line = lambda item: " " * indent + "- " + yaml.dump(_Flow(item), Dumper=Dumper, sort_keys=False, allow_unicode=True, width=10 ** 6).strip()  # noqa: E731
+        for k, (r, (s, e)) in olds.items():
+            if k not in news:
+                self.delete(s, e)
+            elif r != news[k][0]:
+                self.edits.append((s, e, [line(news[k][1])]))
+        added = [k for k in news if k not in olds]
+        if added:
+            last = max(e for _, e in items) if items else start + 1
+            self.edits.append((last, last, [line(news[k][1]) for k in added]))
+        return True
+
+    def apply(self) -> str:
+        lines = list(self.lines)
+        for s, e, repl in sorted(self.edits, key=lambda x: (x[0], x[1]), reverse=True):
+            lines[s:e] = repl
+        return "\n".join(lines)
+
+
+def patch_text(text: str, new: dict[str, Any]) -> str | None:
+    """`text` (the current behavior.yaml) changed into `new` rewriting only what differs: one role, derivation,
+    state, transition, event, reaction, subscription or template text, else the block of one class, else a section.
+    Comments, order and the style of the untouched lines stay. None when the file is not laid out as dumps writes
+    it or the change touches `metamodel`/`doc`: the caller stops, or rewrites the whole file on request."""
+    try:
+        old = loads(text)
+    except Exception:  # noqa: BLE001 - an unreadable file is left to a full rewrite
+        return None
+    if not isinstance(old, dict):
+        return None
+    r = _clean(_tidy(new))
+    a, b = canonical(old), canonical(r)
+    if a["metamodel"] != b["metamodel"] or a["doc"] != b["doc"]:
+        return None
+    styled = _styled(r)
+    lines = text.split("\n")
+    top = E._children(lines, 0, len(lines), 0)
+    p = _Patch(lines)
+
+    def section(key: str, present: bool, edit) -> bool:
+        """A top-level section: removed, edited inside (`edit(start, end)` → True) or rewritten, added."""
+        if key in top and not present:
+            p.delete(*top[key])
+        elif key in top:
+            s, e = top[key]
+            if not (p.block(s) and edit(s, e)):
+                p.edits.append((s, e, _section_lines(key, styled[key])))
+        elif present:
+            after = [top[k][0] for k in SECTIONS[SECTIONS.index(key) + 1:] if k in top]
+            if after:
+                p.edits.append((after[0], after[0], _section_lines(key, styled[key]) + [""]))
+            else:
+                at = max(e for _, e in top.values()) if top else len(lines)
+                p.edits.append((at, at, [""] + _section_lines(key, styled[key])))
+        return True
+
+    if a["roles"] != b["roles"]:
+        section("roles", bool(b["roles"]), lambda s, e: p.mapping(s, e, 2, a["roles"], b["roles"], styled.get("roles", {}), True))
+    if a["view_as"] != b["view_as"]:
+        if "view_as" in top and b["view_as"] is None:
+            p.delete(*top["view_as"])
+        elif "view_as" in top:
+            p.edits.append((*top["view_as"], E._entry_lines("view_as", styled["view_as"], 0, lines[top["view_as"][0]], True)))
+        else:
+            section("view_as", True, lambda s, e: False)
+    if a["derivations"] != b["derivations"]:
+        def der_class(cn: str, rng: tuple[int, int]) -> bool:
+            return p.mapping(*rng, 4, a["derivations"][cn], b["derivations"][cn], styled["derivations"][cn], False)
+        section("derivations", bool(b["derivations"]),
+                lambda s, e: p.mapping(s, e, 2, a["derivations"], b["derivations"], styled.get("derivations", {}), False, der_class))
+    if a["workflows"] != b["workflows"]:
+        def wf_class(cn: str, rng: tuple[int, int]) -> bool:
+            ow, nw, sw = a["workflows"][cn], b["workflows"][cn], styled["workflows"][cn]
+            keys = lambda w: {k: v for k, v in w.items() if v not in (None, [], {}) or k in ("states", "transitions")}  # noqa: E731
+
+            def inside(k: str, r2: tuple[int, int]) -> bool:
+                if k in ("states", "transitions"):
+                    return p.mapping(*r2, 6, ow[k], nw[k], sw[k], True)
+                return False
+            return p.mapping(*rng, 4, keys(ow), keys(nw), sw, True, inside)
+        section("workflows", bool(b["workflows"]),
+                lambda s, e: p.mapping(s, e, 2, a["workflows"], b["workflows"], styled.get("workflows", {}), False, wf_class))
+    if a["events"] != b["events"]:
+        def ev_class(cn: str, rng: tuple[int, int]) -> bool:
+            return p.mapping(*rng, 4, a["events"][cn], b["events"][cn], styled["events"][cn], True)
+        section("events", bool(b["events"]),
+                lambda s, e: p.mapping(s, e, 2, a["events"], b["events"], styled.get("events", {}), False, ev_class))
+    for key in ("reactions", "subscriptions"):
+        if a[key] != b[key]:
+            section(key, bool(b[key]), lambda s, e, key=key: p.sequence(s, e, 2, a[key], b[key], styled.get(key, [])))
+    if a["templates"] != b["templates"]:
+        if "templates" in top and p.block(top["templates"][0]):      # a new template follows the language lines of the others
+            keys = E._children(lines, top["templates"][0] + 1, top["templates"][1], 2)
+            langs = [E._children(lines, s + 1, e, 4) for s, e in keys.values() if p.block(s)]
+            if langs and all(E._inline(lines[s]) for ls in langs for s, _ in ls.values()):
+                styled["templates"] = E._Block({k: E._Block({lang: _Flow(tx) for lang, tx in v.items()}) for k, v in styled["templates"].items()})
+
+        def tpl_key(k: str, rng: tuple[int, int]) -> bool:
+            return p.mapping(*rng, 4, a["templates"][k], b["templates"][k], styled["templates"][k], True)
+        section("templates", bool(b["templates"]),
+                lambda s, e: p.mapping(s, e, 2, a["templates"], b["templates"], styled.get("templates", {}), False, tpl_key))
+    out = p.apply()
+    try:
+        if canonical(loads(out)) != b:          # never write a file that does not read back as the proposal
+            return None
+    except Exception:  # noqa: BLE001
+        return None
+    return out
 
 
 def dump(raw: dict[str, Any], path: str | Path) -> None:

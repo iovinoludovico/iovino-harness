@@ -93,7 +93,8 @@ Model-based development of Next.js + Supabase apps driven by a **domain metamode
   behaviour is listed (roles, workflows, derivations, classes involved, events, reactions), following the class
   selected, and edited: states, transitions, revert, formulas, events, roles and reactions; a save is a proposal
   with metamodel and behaviour, and `apply` writes `behavior.yaml` as well (validated against the proposed
-  metamodel, backed up, comments listed). `model:engine -- --write` generates the SQL engine itself as one idempotent migration: derived
+  metamodel, backed up): both files change only in the lines of what changed, a new or changed entry written in the
+  style of its neighbours, order and comments kept; when that is not possible `--write` stops (`--rewrite` to rewrite). `model:engine -- --write` generates the SQL engine itself as one idempotent migration: derived
   attributes computed by triggers (and refreshed when the rows they navigate to change), `<entity>_perform_transition`
   with principals, conditions, guards, comments, history and events with the recipients of the reactions,
   `_available_transitions`, `_revert`, `_run_timed_transitions`, `_run_reminders`, lifecycle events; it relies on

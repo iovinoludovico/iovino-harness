@@ -1315,11 +1315,15 @@ class AppTests(unittest.TestCase):
             self.assertEqual(cli.cmd_apply(argparse.Namespace(path=str(self.app), proposal=None, write=True)), 0)
         text = (self.app / "behavior.yaml").read_text()
         self.assertIn("+ transition Invitation.pause: in_management -> paused", out.getvalue())
-        self.assertIn("3 comment line(s) of behavior.yaml are not kept", out.getvalue())        # the hand one and the header
+        self.assertNotIn("not kept", out.getvalue())                                               # edited line by line
         self.assertNotIn("~ derivation", out.getvalue())                                           # same formulas, written otherwise
-        self.assertIn("paused: {label: {it: Sospeso, en: Paused}, owner: [office]}", text)
-        self.assertIn("pause: {from: in_management, to: paused, by: [office], label: {it: Sospendi}}", text)
-        self.assertNotIn("hand comment", text)
+        self.assertRegex(text, r"\n      paused: +\{label: \{it: Sospeso, en: Paused\}, owner: \[office\]\}\n")
+        self.assertRegex(text, r"\n      pause: +\{from: in_management, to: paused, by: \[office\], label: \{it: Sospendi\}\}\n")
+        self.assertTrue(text.startswith("# hand comment\n"))                                       # comments kept
+        before = (fixtures / "invitations.behavior.yaml").read_text()
+        changed = [line for line in difflib.unified_diff(before.splitlines(), text.splitlines(), n=0)
+                   if line[:1] in "+-" and not line.startswith(("+++", "---"))]
+        self.assertEqual(sorted(x[:1] for x in changed), ["+", "+", "+", "+"], changed)         # the hand comment and the three entries
         self.assertTrue(any(f.name.startswith("behavior.yaml.") for f in (self.app / ".modeler" / "backups").iterdir()))
         self.assertIn('"paused"', (self.app / "src/lib/modeler/behavior.json").read_text())           # synced
         self.assertIn("`paused`", (self.app / "docs/BEHAVIOR.md").read_text())
@@ -1397,6 +1401,80 @@ class AppTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_apply(ns), 0)
         self.assertIn("Another package description", meta_path.read_text())
+
+    def test_apply_adds_a_role_and_a_transition_in_the_style_of_the_files(self):
+        # the harness note of 2026-11-05: files in flow style with comments, a proposal from the prompt with a new
+        # role, a new feature and a new transition: only the added lines change, every comment stays
+        fixtures = Path(__file__).resolve().parent / "fixtures"
+        meta_text = (fixtures / "invitations.ecore.yaml").read_text().replace(
+            "roles:\n", "roles:  # who does what (see behavior.yaml)\n", 1).replace(
+            "classes:\n", "classes:\n  # the organisation\n", 1)
+        beh_text = "# Engine written by hand: never `model:engine -- --write`\n" + (fixtures / "invitations.behavior.yaml").read_text().replace(
+            "    transitions:\n", "    transitions:\n      # CUSTOM(accounting-check) writes the three fields\n", 1)
+        (self.app / "domain.ecore.yaml").write_text(meta_text)
+        (self.app / "behavior.yaml").write_text(beh_text)
+        cli.install(self.app)
+        meta = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
+        beh = json.loads((self.app / "src/lib/modeler/behavior.json").read_text())
+        meta["roles"]["auditor"] = {"label": {"it": "Revisore", "en": "Auditor"},
+                                   "doc": "Chi controlla i conti degli inviti prima dell'emissione, uno per dipartimento, nominato dal direttore"}
+        meta["roles"]["office"]["doc"] = "Gli uffici amministrativi"
+        meta["classes"]["Invitation"]["attributes"]["accountingChecked"] = {
+            "type": "EBoolean", "default": False,
+            "doc": "Spunta degli uffici al termine del controllo contabile: senza di essa l'ordine non si emette"}
+        beh["workflows"]["Invitation"]["transitions"]["accounting_check"] = {
+            "from": ["draft"], "to": "draft", "by": ["auditor"], "when": "not accountingChecked", "label": {"it": "Controllo contabile"}}
+        (self.app / "p.json").write_text(json.dumps({"metamodel": meta, "behavior": beh}))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ns = argparse.Namespace(path=str(self.app), proposal=str(self.app / "p.json"), write=True, rewrite=False)
+            self.assertEqual(cli.cmd_apply(ns), 0)
+        self.assertNotIn("not kept", out.getvalue())
+        for name, before in ((E.METAMODEL_FILE, meta_text), (B.BEHAVIOR_FILE, beh_text)):
+            after = (self.app / name).read_text()
+            changed = [line for line in difflib.unified_diff(before.splitlines(), after.splitlines(), n=0)
+                       if line[:1] in "+-" and not line.startswith(("+++", "---"))]
+            self.assertTrue(all(len(x.split("\n")) == 1 for x in changed))
+            for line in before.splitlines():
+                if line.lstrip().startswith("#"):
+                    self.assertIn(line, after.splitlines(), name)                  # every comment stays
+            if name == E.METAMODEL_FILE:
+                self.assertEqual(sorted(x[:1] for x in changed), ["+", "+", "+", "-"], changed)
+                self.assertRegex(after, r"\n  office: +\{label: \{it: Uffici amministrativi, en: Administrative offices\}, doc: Gli uffici amministrativi\}\n")
+                self.assertRegex(after, r"\n  auditor: +\{label: \{it: Revisore, en: Auditor\}, doc: [^\n]*direttore'?\}\n")   # one line, however long the doc
+                self.assertRegex(after, r"\n      accountingChecked: \{type: EBoolean, default: false, doc: [^\n]*emette'?\}\n")
+                self.assertNotIn("\n  issuer:\n", after)                              # the untouched roles stay as they were
+            else:
+                self.assertEqual([x[:1] for x in changed], ["+"], changed)
+                self.assertRegex(after, r"\n      accounting_check: +\{from: draft, to: draft, by: \[auditor\], when: not accountingChecked, label: \{it: Controllo contabile\}\}\n")
+
+    def test_apply_stops_instead_of_rewriting_the_behaviour(self):
+        fixtures = Path(__file__).resolve().parent / "fixtures"
+        (self.app / "domain.ecore.yaml").write_text((fixtures / "invitations.ecore.yaml").read_text())
+        beh_text = "# hand comment\n" + (fixtures / "invitations.behavior.yaml").read_text()
+        (self.app / "behavior.yaml").write_text(beh_text)
+        cli.install(self.app)
+        meta_before = (self.app / "domain.ecore.yaml").read_text()
+        meta = json.loads((self.app / "src/lib/modeler/metamodel.json").read_text())
+        beh = json.loads((self.app / "src/lib/modeler/behavior.json").read_text())
+        meta["roles"]["auditor"] = {"label": {"it": "Revisore"}}
+        beh["doc"] = "Another description of the behaviour"                      # the header: not editable line by line
+        (self.app / "p.json").write_text(json.dumps({"metamodel": meta, "behavior": beh}))
+        ns = argparse.Namespace(path=str(self.app), proposal=str(self.app / "p.json"), write=True, rewrite=False)
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(cli.cmd_apply(ns), 1)
+        self.assertIn("behavior.yaml", err.getvalue())
+        self.assertIn("--rewrite", err.getvalue())
+        self.assertEqual((self.app / "behavior.yaml").read_text(), beh_text)
+        self.assertEqual((self.app / "domain.ecore.yaml").read_text(), meta_before)      # neither file: the metamodel waits too
+        ns.rewrite = True
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.cmd_apply(ns), 0)
+        self.assertIn("comment line(s) of behavior.yaml are not kept", out.getvalue())
+        self.assertIn("Another description of the behaviour", (self.app / "behavior.yaml").read_text())
+        self.assertIn("auditor", (self.app / "domain.ecore.yaml").read_text())
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class EditorLayoutTests(unittest.TestCase):

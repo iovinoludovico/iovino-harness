@@ -247,11 +247,16 @@ def _flow_dumper():
     Dumper.add_representer(dict, rep_dict)
     Dumper.add_representer(list, rep_list)
     Dumper.add_representer(_Block, lambda d, data: d.represent_mapping("tag:yaml.org,2002:map", data.items(), flow_style=False))
+    Dumper.add_representer(_Flow, lambda d, data: d.represent_mapping("tag:yaml.org,2002:map", data.items(), flow_style=True))
     return yaml, Dumper
 
 
 class _Block(dict):
     """A mapping always written in block style."""
+
+
+class _Flow(dict):
+    """A mapping always written in flow style (on one line when the width allows it)."""
 
 
 def dumps(raw: dict[str, Any]) -> str:
@@ -298,11 +303,55 @@ def comment_lines(text: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 # Surgical rewrite: only the lines of what changed
 # --------------------------------------------------------------------------- #
-def _yaml_lines(value: dict[str, Any], indent: int) -> list[str]:
+def _yaml_lines(value: dict[str, Any], indent: int, width: int = 120) -> list[str]:
     """`value` ({name: spec}) as dumps writes it (one block entry per name), indented by `indent` spaces."""
     yaml, Dumper = _flow_dumper()
-    chunk = yaml.dump(_Block(value), Dumper=Dumper, sort_keys=False, allow_unicode=True, width=120)
+    chunk = yaml.dump(_Block(value), Dumper=Dumper, sort_keys=False, allow_unicode=True, width=width)
     return [" " * indent + line for line in chunk.rstrip("\n").split("\n")]
+
+
+_ENTRY_LINE = re.compile(r"^(\s*)([A-Za-z_]\w*):(\s*)(\S.*)?$")
+
+
+def _entry_lines(name: str, value: Any, indent: int, like: str | None = None, flow: bool = False,
+                 col: int | None = None) -> list[str]:
+    """`name: value` written in the style of `like`, the first line of the entry it replaces (or follows, see
+    `_like`): a mapping written on one line there (`key: {…}`) is written on one line here too, however long, with
+    the same spacing after the key (or its value at column `col`, where the neighbours align theirs); a mapping
+    written as a block there stays a block. Without a line to follow: as dumps writes it, or on one line when
+    `flow` says so. A scalar always stays on one line."""
+    m = _ENTRY_LINE.match(like or "")
+    inline = bool(m and m.group(4) is not None and not m.group(4).startswith("#"))
+    if like is None:
+        inline = flow
+    if inline and isinstance(value, dict) and not isinstance(value, _Flow):
+        value = _Flow(value)
+    elif m and not inline and isinstance(value, _Flow):
+        value = _Block(value)
+    one_line = inline or not isinstance(value, (dict, list)) or isinstance(value, _Flow)
+    lines = _yaml_lines({name: value}, indent, width=10 ** 6 if one_line else 120)
+    if m and inline and len(lines) == 1:
+        pad = len(m.group(3)) if col is None else max(1, col - indent - len(name) - 1)
+        lines = [" " * indent + name + ":" + " " * pad + lines[0].split(":", 1)[1].lstrip()]
+    return lines
+
+
+def _like(lines: list[str], entries: dict[str, tuple[int, int]]) -> tuple[str | None, int | None]:
+    """What an added entry follows in style: the last entry written on one line (else the last entry) and the
+    column of the values when the entries written on one line align them (two or more, all at the same column)."""
+    starts = sorted(s for s, _ in entries.values())
+    inline = [s for s in starts if _inline(lines[s])]
+    cols = {len(m.group(1)) + len(m.group(2)) + 1 + len(m.group(3)) for s in inline if (m := _ENTRY_LINE.match(lines[s]))}
+    col = cols.pop() if len(cols) == 1 and len(inline) > 1 else None
+    return (lines[(inline or starts)[-1]] if starts else None), col
+
+
+def _removal(lines: list[str], start: int, end: int) -> tuple[int, int]:
+    """The lines to delete with the entry lines[start:end]: the blank line after it goes too when the entry sat
+    between two blank lines (two of them would remain)."""
+    if end < len(lines) and not lines[end].strip() and (start == 0 or not lines[start - 1].strip()):
+        end += 1
+    return start, end
 
 
 def _yaml_list_lines(value: list[Any], indent: int) -> list[str]:
@@ -313,11 +362,12 @@ def _yaml_list_lines(value: list[Any], indent: int) -> list[str]:
 
 
 def _children(lines: list[str], start: int, end: int, indent: int) -> dict[str, tuple[int, int]]:
-    """The keys written at exactly `indent` spaces in lines[start:end]: {key: (first line, end line)}.
-    Blank and comment lines stay with the key above them."""
+    """The keys written at exactly `indent` spaces in lines[start:end]: {key: (first line, end line)}: the entry's
+    lines up to its last line of content (the blank and comment lines after it belong to nobody)."""
     out: dict[str, tuple[int, int]] = {}
     key_re = re.compile(rf"^ {{{indent}}}([A-Za-z_][\w]*)\s*:")
     current = None
+    last = start
     for i in range(start, end):
         line = lines[i]
         if not line.strip() or line.lstrip().startswith("#"):
@@ -326,14 +376,14 @@ def _children(lines: list[str], start: int, end: int, indent: int) -> dict[str, 
         m = key_re.match(line)
         if m and depth == indent:
             if current:
-                out[current] = (out[current][0], i)
+                out[current] = (out[current][0], last + 1)
             current = m.group(1)
             out[current] = (i, end)
         elif depth < indent:
             break
+        last = i
     if current:
-        out[current] = (out[current][0], max(i for i in range(out[current][0], end)
-                                              if lines[i].strip() and not lines[i].lstrip().startswith("#")) + 1)
+        out[current] = (out[current][0], last + 1)
     return out
 
 
@@ -377,13 +427,13 @@ def patch_text(text: str, new: dict[str, Any]) -> str | None:
             new_feats = cb["classes"][cname].get(kind, {})
             for fname in ca[kind]:
                 if fname not in cn[kind]:
-                    found.append((*feats[fname], []))
+                    found.append((*_removal(lines, *feats[fname]), []))
                 elif ca[kind][fname] != cn[kind][fname]:
-                    found.append((*feats[fname], _yaml_lines({fname: new_feats[fname]}, 6)))
+                    found.append((*feats[fname], _entry_lines(fname, new_feats[fname], 6, lines[feats[fname][0]])))
             added = [f for f in cn[kind] if f not in ca[kind]]
             if added:
                 last = max(e for _, e in feats.values()) if feats else ks + 1
-                found.append((last, last, [x for f in added for x in _yaml_lines({f: new_feats[f]}, 6)]))
+                found.append((last, last, [x for f in added for x in _entry_lines(f, new_feats[f], 6, *_like(lines, feats))]))
         return found
 
     for section in ("classes", "enums"):
@@ -397,7 +447,7 @@ def patch_text(text: str, new: dict[str, Any]) -> str | None:
             return None
         for name in a[section]:
             if name not in b[section]:
-                edits.append((*blocks[name], []))
+                edits.append((*_removal(lines, *blocks[name]), []))
             elif a[section][name] != b[section][name]:
                 fe = feature_edits(name, *blocks[name]) if section == "classes" else None
                 edits += fe if fe is not None else [(*blocks[name], _yaml_lines({name: cb[section][name]}, 2))]
@@ -406,13 +456,27 @@ def patch_text(text: str, new: dict[str, Any]) -> str | None:
             last = max(e for _, e in blocks.values()) if blocks else ss + 1
             edits.append((last, last, [x for n in added for x in _yaml_lines({n: cb[section][n]}, 2)]))
     if a["roles"] != b["roles"]:                     # the roles: their own top-level block, before the classes
-        block = ["roles:"] + [x for rn in cb.get("roles", {}) for x in _yaml_lines({rn: cb["roles"][rn]}, 2)] if b["roles"] else []
-        if "roles" in top:
+        new_roles = cb.get("roles", {})
+        block = ["roles:"] + [x for rn in new_roles for x in _yaml_lines({rn: new_roles[rn]}, 2)] if b["roles"] else []
+        if "roles" in top and not b["roles"]:
+            edits.append((*_removal(lines, *top["roles"]), []))
+        elif "roles" in top and _inline(lines[top["roles"][0]]):
+            edits.append((*top["roles"], block))
+        elif "roles" in top:                         # only the roles that changed, in the style of their neighbours
             rs, re_ = top["roles"]
-            end = re_
-            while block and end > rs + 1 and not lines[end - 1].strip():
-                end -= 1                             # the blank line before the next section stays
-            edits.append((rs, end, block))
+            entries = _children(lines, rs + 1, re_, 2)
+            if set(entries) != set(a["roles"]):
+                return None
+            for rn in a["roles"]:
+                if rn not in b["roles"]:
+                    edits.append((*_removal(lines, *entries[rn]), []))
+                elif a["roles"][rn] != b["roles"][rn]:
+                    edits.append((*entries[rn], _entry_lines(rn, new_roles[rn], 2, lines[entries[rn][0]], flow=True)))
+            added = [rn for rn in b["roles"] if rn not in a["roles"]]
+            if added:
+                last = max(e for _, e in entries.values()) if entries else rs + 1
+                like, col = _like(lines, entries)
+                edits.append((last, last, [x for rn in added for x in _entry_lines(rn, new_roles[rn], 2, like, True, col)]))
         elif block and "classes" in top:
             edits.append((top["classes"][0], top["classes"][0], block + [""]))
         elif block:
