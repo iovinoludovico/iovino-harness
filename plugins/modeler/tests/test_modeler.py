@@ -629,7 +629,7 @@ class AppTests(unittest.TestCase):
         rel = M.import_yaml().safe_load((self.app / ".github/workflows/modeler-release.yml").read_text())
         self.assertEqual(set((rel.get("on", rel.get(True))).keys()), {"repository_dispatch", "workflow_dispatch"})
         self.assertEqual(rel["jobs"]["release"]["environment"], "modeler-release")
-        for needle in ("db push --db-url", "gh pr merge", "model:done -- --write", "--merged --write", "--deployed --write"):
+        for needle in ("db push --db-url \"$MODELER_PROD_DB\" --dry-run", "db push --db-url \"$MODELER_PROD_DB\" --yes", "gh pr merge", "model:done -- --write", "--merged --write", "--deployed --write"):
             self.assertIn(needle, (self.app / ".github/workflows/modeler-release.yml").read_text())
         self.assertTrue(any(w.endswith("_model_change_requests_apply.sql") for w in written))
         wf = (self.app / ".github/workflows/modeler-apply.yml").read_text()

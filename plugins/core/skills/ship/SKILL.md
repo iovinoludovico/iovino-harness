@@ -26,11 +26,15 @@ e `gh pr merge`: è voluto).
   (`docker build --target <stage>` e un avvio contro il database locale, skill `core:deploy` sezione 2b).
 - Se il repository ha `scripts/release.py` (repository harness): `python3 scripts/release.py`, poi `--write`, che crea
   il commit `chore(release): …`. Senza, il pre-push blocca.
-- App con Supabase cloud collegato (`supabase/.temp/project-ref`): `supabase migration list --linked`. Se il branch
-  porta migrazioni non ancora remote, esegui qui i punti 2-4 della skill `core:db-push` (pre-controlli, elenco,
-  rischi) e chiedi **una sola conferma** «migrazioni in produzione + push e PR»; con il sì applica le migrazioni
-  (`supabase db push`) e prosegui. Prima il database, poi il codice: non pubblicare codice che usa migrazioni non
-  ancora applicate.
+- App con Supabase cloud collegato (`supabase/.temp/project-ref`): prima controlla come dice `core:db-push` punto 1
+  la versione della CLI (dalla 3.0 i comandi del database agiscono sul locale senza `--remote`; con la 2.x il flag è
+  `--linked`) e che `SUPABASE_DB_PASSWORD` sia nell'ambiente: se manca **non lanciare** `migration list --remote`
+  (resterebbe appeso a chiedere la password), dai il comando all'utente per il suo terminale e leggi l'output che
+  incolla. Poi `supabase migration list --remote`. Se il branch porta migrazioni non ancora remote, esegui qui i
+  punti 2-4 della skill `core:db-push` (pre-controlli, elenco, rischi) e chiedi **una sola conferma** «migrazioni in
+  produzione + push e PR»; con il sì applica le migrazioni (`supabase db push --remote --yes`, o l'utente nel suo
+  terminale senza password nell'ambiente) e prosegui. Prima il database, poi il codice: non pubblicare codice che
+  usa migrazioni non ancora applicate.
 
 ## 3. Push e pull request
 - Mostra in un blocco ```text l'elenco `git log --oneline origin/main..HEAD`: è ciò che verrà pubblicato.
