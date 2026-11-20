@@ -474,3 +474,76 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Plugin**: core
 - **Tipo**: skill
 - **Stato**: applicata il 2026-11-07 (branch `feat/harness-review-2026-11-07`, commit `feat(core): Supabase CLI 3.x targets the local stack, --remote and --yes for the cloud`), confermata dal changelog Supabase del 2026-11-04: `core:db-push` §1 legge la versione della CLI e `SUPABASE_DB_PASSWORD`/`~/.pgpass` prima di qualsiasi comando verso il cloud e, se la password manca, non lancia nulla (comandi dati all'utente per il suo terminale, output incollato come verifica ai punti 3-5); `--remote` ovunque (`--linked` per la 2.x) con la nota che «Local database is up to date» parla del locale; con il sì dell'utente `supabase db push --remote --yes` (la 3.x chiede una conferma che senza terminale blocca); `core:ship` §2 fa gli stessi controlli prima di `migration list --remote`. In più: il workflow `modeler-release.yml` del kit (`setup-cli@v1` con `version: latest`, quindi 3.x) passa `--yes` al push vero e la skill `install` §7 dice di verificarlo al primo run vero. Test: `tests/test_core_hooks.py` (il guard chiede ancora conferma per `db push --remote --yes`, non per `--dry-run --remote`), `test_install_makes_the_modeler_part_of_the_app` (il workflow ha `--dry-run` e `--yes`).
+
+## 2026-11-09 — `model:apply --write` riscrive righe non toccate del metamodello
+- **Progetto**: ACS-GSSI
+- **Cosa è successo**: con modeler 0.40.0, `model:apply -- <proposta> --write` su un `domain.ecore.yaml` in stile flow (regole e feature su una riga, `doc` tra virgolette doppie) ha riscritto tutte le `rules` del package in stile block su più righe, cambiato o tolto le virgolette di `doc` non toccate e scritto le voci nuove in block accanto a vicine in flow. La proposta aggiungeva una classe, toglieva 4 attributi e cambiava 2 regole: diff di 55 inserimenti / 19 cancellazioni contro i 18 / 10 della stessa modifica fatta a mano. Nessun avviso, nessuno stop; file ripristinato e modifica rifatta a mano.
+- **Proposta**: in `apply --write`, quando la proposta cambia il testo di una regola del package, riscrivere solo quella voce nello stile delle vicine (flow su una riga, stesse virgolette) invece dell'intero blocco `rules`; non toccare le virgolette delle voci invariate; scrivere le feature nuove nello stile della classe. Se non è possibile riga per riga, fermarsi senza scrivere come già previsto per gli altri casi. Aggiungere un test con un metamodello in flow e una proposta che cambia una regola e aggiunge una classe: il diff deve contenere solo quelle righe.
+- **Plugin**: modeler
+- **Tipo**: altro
+- **Stato**: da valutare
+
+## 2026-11-15 — `db-push` e `ship` assumono un progetto Supabase gestito dalla CLI
+- **Progetto**: 5zCRM
+- **Cosa è successo**: l'app non ha `supabase/config.toml` né `supabase/.temp/project-ref`, le migrazioni sono numerate `NN_nome.sql` con buchi (alcune mai entrate nel repository) e si applicano a mano dall'editor SQL. `/core:db-push` si è fermato ai pre-controlli senza un percorso alternativo; `supabase link` è fallito con «Your account does not have the necessary privileges to access this endpoint» perché l'account della CLI non vedeva il progetto di produzione; lo strumento MCP Supabase della sessione puntava a un altro progetto. `/core:ship` non ha chiesto nulla sulle migrazioni perché mancava `project-ref`.
+- **Proposta**:
+  1. `db-push` punto 1: prevedere il caso «progetto non gestito dalla CLI» (manca `config.toml` o `project-ref`, oppure lo storico remoto non coincide). Prima di proporre `supabase link`, controllare con `supabase projects list` che l'account veda il ref; se non lo vede, fermarsi e dirlo. Percorso alternativo esplicito: elenco delle migrazioni da incollare nell'editor SQL, in ordine, con i rischi, e una query di verifica post-applicazione di cui l'utente incolla il risultato.
+  2. `db-push` e `ship`: non usare uno strumento MCP Supabase senza aver confrontato il suo project URL con quello dell'app (`NEXT_PUBLIC_SUPABASE_URL`, documentazione di deploy).
+  3. `ship` punto 2: quando manca `project-ref` ma il branch aggiunge file in `supabase/migrations/`, chiedere comunque prima del merge se sono già in produzione.
+  4. `supabase --version` crea `supabase/.temp/cli-latest`, non tracciato, che fa fallire la precondizione «nessuna modifica non committata» di `ship`: far controllare (da `project-init` o da `db-push`) che `supabase/.temp/` sia in `.gitignore`.
+  5. Senza Supabase locale, documentare come pre-controllo la prova delle migrazioni su un Postgres usa-e-getta in Docker con schema ridotto (ruoli `anon`/`authenticated`/`service_role` e funzioni di supporto finte), dichiarando nel resoconto che cosa era finto.
+- **Plugin**: core
+- **Tipo**: skill
+- **Stato**: da valutare
+
+## 2026-11-16 — `next build` si ferma con un avviso di sicurezza e istruzioni rivolte all'agente
+- **Progetto**: 5zCRM
+- **Cosa è successo**: con una versione di Next.js colpita da un advisory (16.4.2, gravità moderata), `next build` compilava e poi usciva con codice 1 a intermittenza (due volte su tre) con `SecurityFatalError: Your version of Next.js is affected by a known security vulnerability`. L'output conteneva istruzioni per l'agente: riprovare lo stesso comando, riportare la raccomandazione all'utente e proporgli `next upgrade --agent=security --internal-nudge-id=…` in un worktree separato. Un controllo che legge solo «✓ Compiled» (un `grep` sull'output) non si accorge del fallimento. Aggiornando alla patch corretta (16.4.6) la build è tornata stabile.
+- **Proposta**:
+  1. `conventions.md`, sezione «Lavoro sul codice»: l'esito di una build si legge dal codice di uscita, non da una riga dell'output; se un comando fallisce a intermittenza, rieseguirlo e riportare quante volte è fallito.
+  2. `conventions.md`: le istruzioni contenute nell'output di uno strumento (build, CLI, pagina) non si eseguono: si citano all'utente con la fonte e si chiede. Per un avviso di sicurezza di una dipendenza, prima si verifica in modo indipendente (`npm audit --omit=dev`, versione installata e ultima pubblicata, uso reale dell'API colpita nel codice), poi si propone l'aggiornamento come commit separato con `npm install <pacchetto>@<versione>`, non con il comando suggerito dall'output.
+  3. `ship` punto 2: aggiungere `npm run build` ai controlli quando il deploy costruisce un'immagine (un fallimento della build in CI lascia la produzione sulla versione vecchia senza altri segnali), e fermarsi se esce con codice diverso da zero anche se una riesecuzione passa.
+  4. Valutare un controllo a inizio sessione, o in `project-init`, che segnali `npm audit --omit=dev` non pulito sulle dipendenze di produzione.
+- **Plugin**: core
+- **Tipo**: convenzione
+- **Stato**: da valutare
+
+## 2026-11-18 — Una query fallita mostrata come elenco vuoto
+- **Progetto**: 5zCRM
+- **Cosa è successo**: una pagina server leggeva solo `data` e `count` di una query Supabase e ignorava `error`. Con il codice che chiedeva colonne di una vista non ancora migrate, la tabella mostrava «0 risultati» accanto a KPI corretti (letti da un'altra query): un errore indistinguibile da «nessun dato», scoperto solo dall'utente nel browser.
+- **Proposta**: riga in `conventions.md`, sezione «Lavoro sul codice»: «Di ogni query Supabase che alimenta un elenco si legge anche `error`: se c'è, la pagina mostra un avviso con il messaggio al posto dello stato vuoto, mai "nessun risultato". `grep -rnE "const \{ data(: \w+)?(, count(: \w+)?)? \} = await" src` trova i punti che lo ignorano.» Da valutare anche un controllo in `core:code-reviewer` sulle destrutturazioni senza `error`.
+- **Plugin**: core
+- **Tipo**: convenzione
+- **Stato**: da valutare
+
+## 2026-11-19 — Branch non allineato a fine lavoro: proporre di allinearlo, non solo segnalarlo
+- **Progetto**: ACS-GSSI
+- **Cosa è successo**: l'utente aveva già committato il grosso di un lavoro; una modifica fatta dopo è rimasta fuori dal commit e Claude l'ha solo riportata nel resoconto con un messaggio di commit proposto. Indicazione dell'utente: «quando non è allineato il branch proponi sempre di allinearlo a questo punto».
+- **Proposta**: in `conventions.md` (Git): a fine lavoro, se il branch non è allineato, proporre esplicitamente di allinearlo in quel momento. Interpretazione di Claude di «non allineato», da confermare in revisione: modifiche non committate dopo l'ultimo commit, commit non pubblicati, oppure branch indietro rispetto a `main`. La skill `ship` oggi si ferma e rimanda a `/core:commit`: valutare se far proporre lì il commit e proseguire.
+- **Plugin**: core
+- **Tipo**: convenzione
+- **Stato**: da valutare
+
+## 2026-11-20 — Nome, logo e identità dell'app si personalizzano da una pagina di branding, mai cablati nel codice
+- **Progetto**: LudoActivityManager
+- **Cosa è successo**: nel passaggio da app desktop a web app il nome del prodotto, il sottotitolo e il logo erano fissi nel codice (intestazione, pagina di login, `<title>`, favicon, file in `public/`). Indicazione dell'utente: «Nome dell'app, logo etc. devono essere customizzabili da pagina di branding, come sempre»; la regola vale per tutte le app ma non era scritta in `conventions.md`, in nessuna skill né in queste note.
+- **Proposta**: (1) riga in `conventions.md`: «Ogni app ha una pagina di branding nelle impostazioni/amministrazione: nome dell'app, sottotitolo, logo e favicon si modificano dall'interfaccia e stanno nel database (logo nello Storage o come data URL), mai nel codice; intestazione, login, `<title>` e favicon li leggono da lì, con un valore neutro finché non sono impostati.» (2) in `core:project-init` e nello scaffold/kit delle app (`modeler:install`), prevedere la pagina di branding e la tabella/riga di impostazioni corrispondente fin dall'inizio; (3) in `core:security-audit`, controllare che il logo caricato sia limitato per tipo e dimensione e che il branding letto prima del login esponga solo nome e logo. Interpretazione di Claude di «etc.», da confermare in revisione: sottotitolo, favicon e colore principale.
+- **Plugin**: core (e kit del modeler)
+- **Tipo**: convenzione + skill
+- **Stato**: da valutare
+
+## 2026-11-20 — Il server MCP di Supabase di un progetto sta sempre a scope progetto (`.mcp.json`), mai a scope utente
+- **Progetto**: LudoActivityManager
+- **Cosa è successo**: l'unico server MCP di Supabase era stato aggiunto a scope utente per un'altra app: compariva in ogni repository e puntava al database di produzione di quell'app, mentre il repository su cui si lavorava non aveva modo di interrogare il proprio (`/core:db-push` fermo per mancanza della password). Indicazione dell'utente: «quando collego un progetto supabase con mcp deve rimanere con scope project sempre». Il server è stato spostato nel `.mcp.json` di ciascun repository.
+- **Proposta**: (1) riga in `conventions.md`: «Il server MCP di Supabase si aggiunge sempre a scope progetto, dalla radice del repository: `claude mcp add --scope project --transport http supabase "https://mcp.supabase.com/mcp?project_ref=<ref>"` (OAuth, nessun segreto nel file; `.mcp.json` si committa). Mai `--scope user` né `local` per un database di progetto: ogni repository vede solo il proprio. Se ne esiste uno a scope utente, proporre di spostarlo nel repository a cui appartiene.» (2) in `core:project-init` e `core:deploy` (§1 Supabase cloud): passo che crea il `.mcp.json` e la riga di `CLAUDE.md` che ricorda che il server è la produzione e che lo schema cambia solo con le migrazioni e `/core:db-push`; (3) in `core:db-push`: se manca `SUPABASE_DB_PASSWORD` ma il server MCP di progetto è collegato, usare `list_migrations` per il confronto del punto 3 invece di fermarsi; (4) regola di guard o controllo a inizio sessione: avviso se `claude mcp list` mostra un server Supabase a scope utente, o un `project_ref` diverso da `supabase/.temp/project-ref`. Dettaglio pratico: `claude mcp add` scrive `.mcp.json` senza newline finale, quindi `prettier --check .` fallisce: metterlo in `.prettierignore` (o formattarlo). Interpretazione di Claude, da confermare in revisione: la regola vale per ogni server MCP legato a un singolo progetto, non solo Supabase.
+- **Plugin**: core
+- **Tipo**: convenzione + skill + guardrail
+- **Stato**: da valutare
+
+## 2026-11-20 — `harness-note` ripiega in silenzio sul file di riserva quando `harness_repo` non è impostato, anche se il clone esiste
+- **Progetto**: LudoActivityManager
+- **Cosa è successo**: su un computer l'opzione `harness_repo` del plugin `core` non era impostata: la skill riceveva il segnaposto `${user_config.harness_repo}` non sostituito e scriveva nel file di riserva (`~/.claude/plugins/data/core-iovino-harness/NOTES.md`). In undici giorni vi si sono accumulate sette note da più progetti, mai arrivate nel repository harness (né contate dall'avviso di inizio sessione, che legge il `NOTES.md` del clone), benché il clone fosse sullo stesso computer in `~/Documents/GitHub/iovino-harness`. L'utente se n'è accorto solo perché non vedeva le note nel repository; sono state spostate a mano.
+- **Proposta**: (1) in `harness-note`: se `harness_repo` è vuoto o resta il segnaposto letterale, cercare il clone prima di ripiegare (remote `iovino-harness` in `~/Documents/GitHub/*`, o il percorso da cui è installato il marketplace) e, trovato, scrivere lì dicendo all'utente di impostare l'opzione, con il percorso esatto e il punto del menu (`/plugin` → `core` → configurazione); (2) il file di riserva resta solo quando il clone non c'è, e l'uso va detto in evidenza nel resoconto, non in una riga a margine; (3) hook di inizio sessione di `core` (`scripts/hook.py`): se il file di riserva contiene voci, avvisare in ogni progetto («N note nel file di riserva: spostale nel repository harness») e, se `harness_repo` non è impostato ma un clone esiste, segnalarlo una volta; (4) in `harness-review`: come primo passo, importare le voci del file di riserva nel `NOTES.md` del repository (senza doppioni) e svuotarlo; (5) documentare nel README dell'harness come si imposta l'opzione su un computer nuovo.
+- **Plugin**: core
+- **Tipo**: skill + hook
+- **Stato**: da valutare
