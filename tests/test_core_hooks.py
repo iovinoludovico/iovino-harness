@@ -160,6 +160,33 @@ class SessionTests(unittest.TestCase):
             res = run("session", {"cwd": d}, {"CLAUDE_PLUGIN_OPTION_HARNESS_REPO": ""})
             self.assertNotIn("note da valutare", res.stdout)
 
+    def test_supabase_mcp_server_out_of_its_project(self):
+        # the harness note of 2026-11-20: the MCP server of a project database lives in that repository's .mcp.json
+        with tempfile.TemporaryDirectory() as d:
+            home, app = Path(d) / "home", Path(d) / "app"
+            home.mkdir()
+            subprocess.run(["git", "init", "-q", "-b", "main", str(app)], check=True)
+            env = {"HOME": str(home), "CLAUDE_PLUGIN_OPTION_HARNESS_REPO": ""}
+            url = "https://mcp.supabase.com/mcp?project_ref="
+            (app / ".mcp.json").write_text(json.dumps({"mcpServers": {"supabase": {"type": "http", "url": url + "abcd"}}}))
+            (app / "supabase/.temp").mkdir(parents=True)
+            (app / "supabase/.temp/project-ref").write_text("abcd\n")
+            res = run("session", {"cwd": str(app)}, env)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertNotIn("MCP", res.stdout.split("## Progetto corrente")[1])   # project scope, same project
+            (app / "supabase/.temp/project-ref").write_text("zzzz\n")
+            res = run("session", {"cwd": str(app)}, env)
+            self.assertIn("punta a `abcd`, il progetto collegato dalla CLI è `zzzz`", res.stdout)
+            (home / ".claude.json").write_text(json.dumps({
+                "mcpServers": {"db": {"type": "http", "url": url + "other"}, "todoist": {"command": "x"}},
+                "projects": {str(app.resolve()): {"mcpServers": {"supabase-local": {"command": "npx"}}}}}))
+            res = run("session", {"cwd": str(app.resolve())}, env)
+            self.assertIn("Server MCP di Supabase a scope utente (db)", res.stdout)
+            self.assertIn("Server MCP di Supabase a scope locale (supabase-local)", res.stdout)
+            self.assertNotIn("todoist", res.stdout)
+            (home / ".claude.json").write_text("not json")
+            self.assertEqual(run("session", {"cwd": str(app)}, env).returncode, 0)
+
     def test_not_a_repo(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "CLAUDE.md").write_text("x")

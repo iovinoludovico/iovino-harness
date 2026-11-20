@@ -113,6 +113,46 @@ def note_states(notes: Path) -> dict[str, int]:
     return counts
 
 
+def _mcp_servers(data: object) -> dict:
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    return servers if isinstance(servers, dict) else {}
+
+
+def _json_file(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def supabase_mcp_warnings(root: Path) -> list[str]:
+    """A Supabase MCP server belongs to one repository (.mcp.json): at user or local scope it shows up elsewhere and
+    reaches the production database of another app; one that points to another project than the linked one is wrong."""
+    def supabase(servers: dict) -> dict[str, str]:
+        return {str(n): json.dumps(s) for n, s in servers.items() if "supabase" in (str(n) + json.dumps(s)).lower()}
+
+    out: list[str] = []
+    config = _json_file(Path.home() / ".claude.json")
+    user = supabase(_mcp_servers(config))
+    projects = config.get("projects") if isinstance(config, dict) else None
+    local = supabase(_mcp_servers(projects.get(str(root)))) if isinstance(projects, dict) else {}
+    for scope, found in (("utente", user), ("locale", local)):
+        if found:
+            out.append(f"- Server MCP di Supabase a scope {scope} ({', '.join(sorted(found))}): un database di progetto "
+                       "sta a scope progetto (`.mcp.json` del suo repository). Segnalalo all'utente e proponi di "
+                       "spostarlo; non usarlo senza aver confrontato il suo `project_ref` con quello dell'app")
+    refs = {m for spec in supabase(_mcp_servers(_json_file(root / ".mcp.json"))).values()
+            for m in re.findall(r"project_ref=([A-Za-z0-9]+)", spec)}
+    try:
+        linked = (root / "supabase" / ".temp" / "project-ref").read_text(encoding="utf-8").strip()
+    except OSError:
+        linked = ""
+    if linked and refs and linked not in refs:
+        out.append(f"- Il server MCP di Supabase in `.mcp.json` punta a `{', '.join(sorted(refs))}`, il progetto collegato "
+                   f"dalla CLI è `{linked}`: non usarlo finché l'utente non ha chiarito quale è la produzione")
+    return out
+
+
 def plugin_version(plugin_root: Path) -> str:
     try:
         return str(json.loads((plugin_root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"])
@@ -187,6 +227,7 @@ def cmd_session(data: dict) -> int:
             deferred = f" (più {counts['deferred']} rinviate)" if counts["deferred"] else ""
             info.append(f"- {counts['open']} note da valutare in NOTES.md{deferred}: segnalalo all'utente e proponi "
                         "`/core:harness-review`")
+    info += supabase_mcp_warnings(root)
     info += harness_versions()
     parts.append("## Progetto corrente\n" + "\n".join(info))
 

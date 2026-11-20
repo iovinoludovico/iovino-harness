@@ -35,6 +35,10 @@ e `gh pr merge`: è voluto).
   produzione + push e PR»; con il sì applica le migrazioni (`supabase db push --remote --yes`, o l'utente nel suo
   terminale senza password nell'ambiente) e prosegui. Prima il database, poi il codice: non pubblicare codice che
   usa migrazioni non ancora applicate.
+- App con Supabase ma senza `supabase/.temp/project-ref` (progetto non gestito dalla CLI): se il branch aggiunge
+  file in `supabase/migrations/` (`git diff --name-only --diff-filter=A origin/main...HEAD -- supabase/migrations`),
+  chiedi comunque prima del merge se sono già in produzione; se no, `core:db-push` punto 1 (percorso dall'editor SQL).
+  Un server MCP di Supabase si usa solo dopo aver confrontato il suo `project_ref` con quello dell'app.
 
 ## 3. Push e pull request
 - Mostra in un blocco ```text l'elenco `git log --oneline origin/main..HEAD`: è ciò che verrà pubblicato.

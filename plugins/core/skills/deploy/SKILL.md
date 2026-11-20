@@ -38,7 +38,12 @@ predefinito stanno in `deploy/.env.production.example`, solo come documentazione
    dell'app (in locale lo attiva `config.toml`, sul cloud va attivato nel pannello; le registrazioni restano attive
    solo se l'hook è attivo). `supabase config push` non si usa: `config.toml` contiene gli URL locali.
 4. Schema: `supabase link --project-ref <ref>` (l'utente, in un suo terminale), poi `/core:db-push`.
-5. Impostazioni dell'app nel database (es. `app_settings.app_base_url`): il valore dello scaffold va sostituito
+5. Server MCP del progetto, a scope progetto: dalla radice del repository `claude mcp add --scope project
+   --transport http supabase "https://mcp.supabase.com/mcp?project_ref=<ref>"` (OAuth, nessun segreto; `.mcp.json` si
+   committa e va in `.prettierignore`, `claude mcp add` lo scrive senza newline finale). Mai a scope utente: comparirebbe
+   in ogni repository puntando a questa produzione. In `CLAUDE.md`: il server è la produzione, si legge soltanto, lo
+   schema cambia solo con le migrazioni e `/core:db-push`.
+6. Impostazioni dell'app nel database (es. `app_settings.app_base_url`): il valore dello scaffold va sostituito
    con l'URL pubblico reale, nel SQL Editor o con una migrazione.
 
 ## 2. GitHub (una volta)
