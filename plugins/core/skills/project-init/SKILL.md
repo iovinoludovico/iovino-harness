@@ -19,6 +19,9 @@ Obiettivo: un CLAUDE.md **breve** (idealmente sotto le 80 righe) che dica a una 
   si committa e va in `.prettierignore`) e scrivi in «Regole specifiche del progetto»: "Il server MCP `supabase` è il
   database di produzione: si legge soltanto; lo schema cambia solo con le migrazioni e `/core:db-push`".
 - Deploy: Dockerfile, compose, GHCR, Watchtower, script di deploy.
+- App web: se nome del prodotto, sottotitolo, logo o favicon sono fissi nel codice (intestazione, pagina di login,
+  `metadata.title`, file in `public/`) e manca una pagina di branding in amministrazione, segnalalo all'utente e
+  scrivilo tra le regole del progetto come lavoro da fare (convenzione «Branding»).
 - Se c'è un `domain.ecore.yaml`, segnala che le modifiche di schema partono dal metamodello (`/modeler:metamodel`) e vanno con la migrazione, che il comportamento (`behavior.yaml`, se c'è) si modifica con `/modeler:behavior`, e riporta gli script `model:*` se l'app ha il modellatore (`tools/modeler/`).
 - Se esiste già un CLAUDE.md, leggilo: va **aggiornato** conservando ciò che l'utente ha scritto, non riscritto da zero.
 

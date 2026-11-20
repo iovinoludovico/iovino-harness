@@ -85,6 +85,10 @@ Mai scrivere segreti nel rapporto, in file o in chat: se un comando ne mostra un
 - Segreti nel bundle: scarica la pagina, estrai i chunk `/_next/static/**/*.js` e cerca `service_role`,
   `sb_secret_`, `eyJhbGciOi` (JWT), `postgres://`, `postgresql://`. Nel repository: `git grep -nE
   'sb_secret_|service_role|postgres(ql)?://[^ ]+:[^ ]+@' -- ':!*.example'`: niente fuori dagli `.example`.
+- Branding: il logo caricato dalla pagina di branding è limitato per tipo (`image/png`, `image/jpeg`, `image/webp`;
+  SVG solo se sanificato o servito con `Content-Security-Policy: sandbox`) e per dimensione, lato server e nella
+  policy del bucket; ciò che la pagina di login legge senza sessione espone solo nome, sottotitolo, logo e favicon
+  (`curl -s` sulla rotta o sulla RPC usata prima del login: nessun'altra impostazione).
 - Dipendenze di produzione: nel repository `npm audit --omit=dev` (codice di uscita e conteggio per gravità). Per
   ogni advisory alto o critico, e per ogni advisory sul framework (Next.js, `@supabase/*`): versione installata
   (`npm ls <pacchetto>`), prima versione corretta, se il codice usa l'API colpita. La correzione è un commit
