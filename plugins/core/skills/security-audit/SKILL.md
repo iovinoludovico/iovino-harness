@@ -1,6 +1,6 @@
 ---
 name: security-audit
-description: Audit di sicurezza, in sola lettura, di un'app Next.js + Supabase in produzione - login e dominio (provider, hook di dominio, redirect), RLS e permessi del database, impostazioni della piattaforma Supabase, header e redirect dell'app pubblica, segreti nel bundle e nel repository, GitHub/GHCR, coerenza della configurazione di deploy. Rapporto controllo per controllo, correzioni solo dopo conferma. Usala dopo il primo deploy in produzione, dopo cambi di Auth, dominio o infrastruttura, quando l'utente chiede "verifica che entrino solo con il nostro dominio", "controlla la sicurezza della produzione", "fai l'audit", o invoca /core:security-audit.
+description: Audit di sicurezza, in sola lettura, di un'app Next.js + Supabase in produzione - login e dominio (provider, hook di dominio, redirect), RLS e permessi del database, impostazioni della piattaforma Supabase, header e redirect dell'app pubblica, segreti nel bundle e nel repository, dipendenze con advisory, GitHub/GHCR, coerenza della configurazione di deploy. Rapporto controllo per controllo, correzioni solo dopo conferma. Usala dopo il primo deploy in produzione, dopo cambi di Auth, dominio o infrastruttura, quando l'utente chiede "verifica che entrino solo con il nostro dominio", "controlla la sicurezza della produzione", "fai l'audit", o invoca /core:security-audit.
 argument-hint: "[A|B|C|D|E|F …] (blocchi da eseguire; vuoto: tutti)"
 ---
 
@@ -85,6 +85,10 @@ Mai scrivere segreti nel rapporto, in file o in chat: se un comando ne mostra un
 - Segreti nel bundle: scarica la pagina, estrai i chunk `/_next/static/**/*.js` e cerca `service_role`,
   `sb_secret_`, `eyJhbGciOi` (JWT), `postgres://`, `postgresql://`. Nel repository: `git grep -nE
   'sb_secret_|service_role|postgres(ql)?://[^ ]+:[^ ]+@' -- ':!*.example'`: niente fuori dagli `.example`.
+- Dipendenze di produzione: nel repository `npm audit --omit=dev` (codice di uscita e conteggio per gravità). Per
+  ogni advisory alto o critico, e per ogni advisory sul framework (Next.js, `@supabase/*`): versione installata
+  (`npm ls <pacchetto>`), prima versione corretta, se il codice usa l'API colpita. La correzione è un commit
+  separato con `npm install <pacchetto>@<versione>`, dopo conferma; mai `npm audit fix --force`.
 
 ## E. GitHub e GHCR
 - `gh repo view <org>/<repo> --json visibility,isPrivate`: privato.

@@ -77,7 +77,7 @@ Differenze rispetto alla strada A:
 | `/core:handoff` | Fine sessione o cambio computer: aggiorna HANDOFF.md |
 | `/core:db-push` | Porta in produzione (Supabase cloud) le migrazioni nuove: controlli, anteprima, conferma, verifica |
 | `/core:deploy` | Passi di produzione (Supabase cloud, GHCR, Docker Manager di Hostinger, Nginx Proxy Manager, rollback, diagnosi): per scrivere `docs/deploy.md` o rispondere su server e proxy |
-| `/core:security-audit` | Dopo il primo deploy o cambi di Auth, dominio, infrastruttura: audit in sola lettura (login e dominio, RLS, piattaforma, header, segreti, GitHub, configurazione di deploy), correzioni solo dopo conferma |
+| `/core:security-audit` | Dopo il primo deploy o cambi di Auth, dominio, infrastruttura: audit in sola lettura (login e dominio, RLS, piattaforma, header, segreti, dipendenze, GitHub, configurazione di deploy), correzioni solo dopo conferma |
 | `/core:harness-note <lezione>` | Qualcosa da migliorare nell'harness: finisce in `NOTES.md` |
 | `/core:harness-review` | Nel repository harness: valuta le note aperte, applica quelle approvate, segna applicata/scartata/rinviata |
 | `/modeler:install` | Mette il modellatore in un'app (o lo aggiorna): metamodello dal database se manca, `/admin/model`, `npm run model:*` |
