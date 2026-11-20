@@ -15,7 +15,10 @@ e `gh pr merge`: è voluto).
 
 ## 1. Precondizioni (fermati se una manca e spiega cosa fare)
 - Branch corrente diverso da `main`/`master` (e dal default branch del remoto).
-- Nessuna modifica non committata (`git status --porcelain`): altrimenti proponi `/core:commit`.
+- Nessuna modifica non committata (`git status --porcelain`): se ce ne sono non rimandare a un altro comando, proponi
+  qui il commit (i passi della skill `core:commit`: diff, niente segreti né file spuri, messaggio in un blocco
+  ```text) e con il sì dell'utente committa e prosegui; con il no fermati. File che non appartengono al lavoro del
+  branch restano fuori dal commit e vanno detti.
 - `gh auth status` ok. Se `gh` manca o non è autenticato, suggerisci `! brew install gh && gh auth login`.
 - Il branch ha commit rispetto a `main` (`git log --oneline origin/main..HEAD` dopo `git fetch`); se `main` remoto è
   avanzato, segnalalo e proponi di aggiornare il branch prima di proseguire (merge o rebase solo su richiesta).
