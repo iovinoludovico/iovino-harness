@@ -1,101 +1,80 @@
-# Handoff — Revisione delle note dell'harness: i ruoli non vivono mai nel solo comportamento (PR #42)
-_Aggiornato: 2026-10-24 · branch `main` (`88e006a`, PR #42), albero pulito_
+# Handoff — Harness dopo la revisione del 2026-11-07 (PR #43): regioni, apply riga per riga, Supabase CLI 3.x
+_Aggiornato: 2026-11-20 · branch `main` (`374667a`, PR #43), allineato a `origin/main`_
 
 ## Obiettivo
-Marketplace personale di plugin per Claude Code (`core`, `modeler`). Oggi `/core:harness-review` ha valutato l'unica
-nota aperta (2026-10-24, nata in invitations-af dopo l'aggiornamento del modellatore alla 0.38.0): i ruoli dell'app
-erano rimasti solo in `behavior.yaml`, il metamodello non aveva `roles:` e nessun controllo lo diceva (`validate` 0
-errori, `drift` «aligned» con `user_roles` in `MODELER_EXCLUDE`, nessun riquadro `Role`/`User` nel diagramma, nessuna
-sezione «Ruoli» in `DOMAIN.md`). Applicata con la PR #42 (core 0.24.1, modeler 0.39.0). Il tratto «proposta in
-produzione → PR → rilascio» del modeler (PR #27/#28, #39, #40) esiste ma non ha ancora un run vero.
-`NOTES.md`: 0 note aperte, 1 rinviata (massimo finito delle collezioni, da riprendere al primo `upper` finito).
+Marketplace personale di plugin per Claude Code (`core` 0.25.0, `modeler` 0.40.0). L'ultima modifica è la PR #43, che ha
+applicato le tre note valutate il 2026-11-07. Il 2026-11-20 `/core:harness-review` non ha trovato nulla da valutare:
+`NOTES.md` ha 0 note aperte e 1 rinviata (2026-10-19, trigger del massimo delle collezioni e annotazione in `DOMAIN.md`),
+la cui condizione («primo progetto con `upper` finito») non si è avverata. Il tratto «proposta in produzione → PR →
+rilascio» del modeler non risulta ancora provato con un run vero.
 
 ## Stato
-- Fatto (PR #42, `88e006a`, squash di quattro commit):
-  - `validate` (`plugins/modeler/scripts/metamodel/behavior.py`, `_check_roles`): `roles:` nel behavior con un metamodello
-    senza `roles:` è **un** errore su `roles` con la soluzione (spostare il blocco in `domain.ecore.yaml`, `reverse` lo
-    scrive da `app_role`/`user_roles`, nel behavior restano al più `label` e `doc`); `self.<ref>` verso `User` usato come
-    principal senza `role: true` da avviso a errore (`test_behavior.py`, caso «the form before the roles moved»).
-  - `install` stampa «roles found in behavior.yaml only (…)» (`cli.py` `roles_hint`, primo della lista dei suggerimenti;
-    test `test_install_says_when_the_roles_are_declared_in_the_behaviour_only` in `test_modeler.py`); skill install §4
-    (passi: blocco, `role: true`, `user_roles` fuori da `MODELER_EXCLUDE`, `validate`/`sync`/`drift`) e checklist §6.
-  - `drift` (`dbschema.py`): riga `EXCLUDED user_roles: the metamodel declares no roles …` quando la tabella esiste, è
-    esclusa e il metamodello non ha ruoli (assert in `test_migration_reverse_and_drift`).
-  - Editor web (`kit/metamodel-editor.js`, `_warnings()`): avviso «dichiarati solo in behavior.yaml: non compaiono nel
-    diagramma, spostali nel metamodello (pannello Ruoli)» quando `this._bh.roles` ha `source: behavior` e `mm.roles` è
-    vuoto; chiave i18n `rolesInBehavior` (it/en). Non blocca il salvataggio.
-  - Documentazione: `ecore-notation.md` «Roles», `behavior-notation.md` (chiavi top-level), README del modeler,
-    `plugins/core/context/conventions.md` (riga «Utenti e ruoli vengono dal dominio» al posto di «Il comportamento (ruoli,
-    …) sta in `behavior.yaml`»).
-  - `NOTES.md` con la riga Stato della nota; `chore(release): core 0.24.1, modeler 0.39.0`
-    (`plugins/modeler/scripts/metamodel/__init__.py` a 0.39.0 via `release.py`).
-- Verificato (prima del merge, sullo stesso albero): `python3 -m unittest discover -s tests` → 24 OK;
-  `-s plugins/modeler/tests` → 119 OK, 9 saltati (Postgres spento: motore end-to-end, «view as», migrazione dei ruoli non
-  provati); `node --test plugins/modeler/tests/*.test.mjs` → 190 OK; `claude plugin validate .` OK. Nessuna CI nel
-  repository. L'avviso dell'editor non è stato visto nel browser (nessun test `.mjs` copre `_warnings()`).
-- Non committato: nulla. Plugin **non** ricaricati dopo il merge (`/reload-plugins`; sugli altri computer
-  `claude plugin marketplace update iovino-harness && claude plugin update core@iovino-harness modeler@iovino-harness`).
-- Ereditato da #39/#40: la sandbox ha i file del kit 0.38.0 copiati a mano e `package.json`/lockfile modificati
-  dall'install 0.37.0, non committati.
+- Fatto (PR #43, `374667a`, squash di cinque commit):
+  - **Regioni ortogonali** (nota 2026-10-29): `regions: {<chiave>: {state, states, transitions, label, doc}}` in un
+    workflow di `behavior.yaml`, ciascuna sul suo attributo di stato; `records: {by, at}` su qualsiasi transizione; gli
+    attributi di stato sono tipizzati come letterali (`accountingState = checked`, `state = draft`). `validate`
+    (`behavior.py`, `_check_flow`/`_check_workflow`), motore (`engine.py`, `_workflow` con `cls.flows`: stessa
+    `<entity>_perform_transition`, solleciti come `<regione>.<stato>`), `drift`/`engine_version`, `BEHAVIOR.md`, kit
+    (`metamodel-editor.js`, `<WorkflowView>` con `regionStates`, `<BehaviorView>`). Le regioni si modificano nel file,
+    non nelle tabelle del modellatore web.
+  - **`apply --write` riga per riga su entrambi i file** (nota 2026-10-15, caso del 2026-11-05): `patch_text` del
+    metamodello (`ecore.py`: ruoli voce per voce, stile della riga vicina con `_entry_lines`/`_like`) e `patch_text`
+    nuova per `behavior.yaml` (`behavior.py`); `cmd_apply` calcola le due patch prima di scrivere e senza `--rewrite` si
+    ferma se una non è possibile. Le skill `apply`, `metamodel`, `behavior` chiedono `git diff --stat` dei due file dopo
+    `--write`.
+  - **Supabase CLI 3.x** (nota 2026-11-02): `core:db-push` e `core:ship` leggono versione della CLI e
+    `SUPABASE_DB_PASSWORD`/`~/.pgpass` prima di ogni comando verso il cloud, non lanciano nulla che aspetti la password,
+    usano `--remote` (e `--yes` dopo la conferma dell'utente); `kit/github/modeler-release.yml` passa `--yes` al push vero.
+  - `NOTES.md` con le tre righe Stato; `chore(release): core 0.25.0, modeler 0.40.0`.
+- Verificato (2026-11-20, su `374667a`, Postgres spento): `python3 -m unittest discover -s tests` → 24 OK;
+  `-s plugins/modeler/tests` → 129 OK, 10 saltati (quelli con `MODELER_PG`: motore end-to-end, `test_region_end_to_end`,
+  «view as», migrazione dei ruoli **non** eseguiti oggi); `node --test plugins/modeler/tests/*.test.mjs` → 191 OK;
+  `claude plugin validate .` → passed. Nessuna CI nel repository.
+- Non committato: questo `HANDOFF.md`.
+- Stato delle app visto oggi nei cloni locali (sola lettura, senza `git pull`): order-management ha
+  `tools/modeler` 0.40.0 e `roles:` in `domain.ecore.yaml`; invitations-af ha `tools/modeler` 0.39.0, `roles:` in
+  `domain.ecore.yaml` e i workflow `modeler-apply.yml`/`modeler-release.yml`. Lo spostamento dei ruoli chiesto dalla
+  PR #42 è quindi fatto in entrambe.
 
 ## Decisioni
-- **Errore, non avviso, per i ruoli nel solo behavior** — la nota nasce proprio da un vuoto senza segnale; `install` §6
-  lancia `model:validate` nell'aggiornamento, quindi l'app lo vede nel commit di upgrade. Costo accettato: invitations-af e
-  order-management falliranno `validate` finché non spostano i ruoli (pochi minuti, nessuna migrazione: `role: true` è
-  solo un marcatore).
-- **Niente riscrittura automatica di `domain.ecore.yaml` da `install`** — `install` non legge il database; il blocco
-  `roles:` ha la stessa sintassi nei due file e si copia tale e quale seguendo la skill.
-- **`drift` segnala `user_roles` esclusa** anche se «escluso» di norma vuol dire tacere — la notazione dice già che
-  `user_roles`/`app_role` non si escludono; copre le app senza `behavior.yaml`. Un `drift` rosso blocca `modeler-release`
-  finché l'app non si adegua: voluto.
-- **Diagramma: avviso, non riquadri dai ruoli del behavior** (variante (4) della nota scartata) — il layout resta
-  funzione pura del solo metamodello e il diagramma non mostra elementi che il metamodello non ha; con `validate` e
-  `install` lo stato vecchio è transitorio. Avviso in `_warnings()` e non in `_issues()` perché gli issues disabilitano
-  «Salva» e la correzione si fa proprio dal pannello «Ruoli».
-- (Ereditate, PR #41) guard dell'hook per gli URL assoluti; le parti «kit» delle note non entrano nell'harness;
-  convenzione «Utenti» completa. (PR #39/#40) l'app è il pannello e GitHub Actions il deposito dei segreti; repository
-  secrets; il token dell'app fa da `MODELER_GH_TOKEN`; `modeler-apply.json` committato.
+- **La nota del 2026-10-19 resta rinviata** — nei cinque `domain.ecore.yaml` locali (order-management, invitations-af,
+  LudoActivityManager, ACS-GSSI, modeler-sandbox) nessun `upper` vale 2 o più: senza un caso reale il trigger del
+  massimo non avrebbe un progetto su cui provarlo.
+- **La regione è la forma modellata, il flag resta valido** (PR #43) — «flag + autotransizioni + guardia» è ancora
+  documentata per le app con il motore a mano; nessuna migrazione forzata.
+- **`apply --write` si ferma invece di riscrivere** (PR #43) — la riscrittura completa perde i commenti, che in un'app
+  con il motore a mano portano le regole del progetto; si ottiene solo con `--rewrite`.
+- **Nessun comando Supabase che possa aspettare la password** (PR #43) — senza terminale resta appeso fino al timeout:
+  i comandi si danno all'utente e l'output incollato vale come verifica.
+- (Ereditate, PR #42) ruoli nel solo behavior = errore di `validate`; `drift` segnala `user_roles` esclusa; nell'editor
+  un avviso, non riquadri dai ruoli del behavior.
 
 ## Problemi aperti
-- **Le due app sono nella forma vecchia**: invitations-af (modeler 0.38.0, ruoli `office`, `issuer`, `director` con
-  ambito `Department` solo in `behavior.yaml`, `Invitation.issuer` senza `role: true`, `user_roles` in `MODELER_EXCLUDE`)
-  e order-management (modeler ≤ 0.37.0, ruoli `admin`, `rup`, `rup_assistant`, `area_director`). Con la 0.39.0
-  `model:validate` le ferma: lo spostamento va nello stesso commit dell'aggiornamento.
-- **Il flusso dal web non ha ancora un run vero** (`modeler-apply` né `modeler-release`, in nessuna app). In
-  order-management: token `MODELER_APPLY_TOKEN` da rigenerare con Contents write + Pull requests write + Secrets write;
-  `DATABASE_URL` da passare anche a `web` nel compose e nel pannello del server; env secret `ANTHROPIC_API_KEY`
-  nell'environment `modeler-apply` che prevarrebbe (`gh secret delete ANTHROPIC_API_KEY --env modeler-apply --repo
-  gssi/order-management`). invitations-af non ha i workflow del modeler.
-- Da PR #41, ancora da fare in invitations-af: `publicUrl(req, target)` in `src/app/notifications/[id]/route.ts`, badge
-  dell'header dentro il bottone, RPC `public.delete_user` + bottone «Elimina» (se regge → `/core:harness-note` per il kit).
-- order-management: `/modeler:install` per 0.39.0, togliere `CUSTOM(modeler-theme)`, `metamodel={metamodel}` su
-  `<WorkflowView>`; restano `view_as: {users_by: [admin]}` al posto di `CUSTOM(view-as)` e «+ Nuovo» in modale.
-- Il riquadro «Applicazione dal web» e l'avviso dei ruoli nell'editor non sono stati visti nel browser. Se `next build`
-  fallisce su `libsodium-wrappers`: `serverExternalPackages: ["libsodium-wrappers"]` in `next.config.ts`.
-- Nessun progetto usa `states.<key>.model`; `MAX_ROWS` non si applica al box `Role`; la select dei template nel pannello
-  della transizione è un campo di testo.
-- Ereditati: `psql` assente sul Mac (shim in «Per riprendere»); `model:pull`/`model:done` mai riusciti su un progetto
-  cloud; `guard_harness_edit` solo Edit/Write; la cartella `help/` non è tracciata.
+- **order-management usa ancora il flag** per il controllo contabile (`accountingChecked` con `accounting_check`/
+  `accounting_uncheck` in `behavior.yaml`, visto oggi): la nota del 2026-10-29 chiede di valutare il passaggio a
+  `regions` (`accountingState`, `records` al posto della personalizzazione dei tre campi).
+- **invitations-af è a modeler 0.39.0**: le manca la 0.40.0 (`/modeler:install` nella sua sessione).
+- **`--yes` in `modeler-release.yml`** non è stato visto in un run vero (`modeler:install` §7 dice di controllarlo al
+  primo).
+- Non ricontrollati da qui, ereditati dall'handoff del 2026-10-24 (lo stato vero è nell'`HANDOFF.md` di ciascuna app):
+  primo run di `modeler-apply`/`modeler-release`; in order-management `MODELER_APPLY_TOKEN`, `DATABASE_URL` per `web`,
+  l'env secret `ANTHROPIC_API_KEY` che prevale; in invitations-af `publicUrl(req, target)`, badge dell'header,
+  `delete_user`; sandbox con modifiche dell'install non committate.
+- L'avviso dei ruoli e i riquadri delle regioni nell'editor non risultano visti nel browser (coperti solo dai test
+  `.mjs`).
+- Ereditati: `psql` assente sul Mac (shim qui sotto); `guard_harness_edit` solo Edit/Write; la cartella `help/` non è
+  tracciata; `MAX_ROWS` non si applica al box `Role`.
 
 ## Prossimi passi
-1. `/reload-plugins` qui; sugli altri computer `claude plugin marketplace update iovino-harness && claude plugin update
-   core@iovino-harness modeler@iovino-harness`.
-2. In invitations-af (sessione sua, modeler 0.39.0): `/modeler:install` → atteso «roles found in behavior.yaml only
-   (office, issuer, director)»; spostare il blocco `roles:` in `domain.ecore.yaml` (prima di `classes:`), `role: true` su
-   `Invitation.issuer`, togliere `user_roles` da `MODELER_EXCLUDE` (`.env*`: indicare la riga all'utente), `npm run
-   model:validate` → «Behaviour OK», `model:sync` (atteso «Ruoli» in `DOMAIN.md`), `model:drift` → aligned con
-   `user_roles` confrontata; aprire `/admin/model` e vedere i riquadri `Role «enumeration»` e `User «built-in»`. Poi le
-   tre cose della PR #41 (passo 3 dell'handoff precedente: `publicUrl`, badge, `delete_user`).
-3. In order-management: `/modeler:install` per 0.39.0 (stesso spostamento dei ruoli, più `modeler-apply.json`, suggerimento
-   su `DATABASE_URL`), `npm install`, `DATABASE_URL: ${DATABASE_URL}` sotto `web.environment`, `metamodel={metamodel}` su
-   `<WorkflowView>`, togliere `CUSTOM(modeler-theme)`, typecheck/lint/build, `/core:ship`; nel Docker Manager rigenerare
-   `MODELER_APPLY_TOKEN` e Redeploy.
-4. Primo run vero del flusso dal web in order-management: riquadro «Applicazione dal web», `gh secret list --repo
-   gssi/order-management` con i tre secret, cancellare l'env secret che prevale; proposta innocua da `/admin/model`,
-   «Applica», `gh run list --workflow modeler-apply.yml`, revisione della PR, «Conferma e rilascia», riga su `applied`.
-   Ogni inciampo → `/core:harness-note`.
-5. Sandbox: committare o scartare le modifiche dell'install; provare il riquadro con `MODELER_PROPOSALS=db`.
-6. Se compare un progetto con `upper` finito su una collezione: riprendere la nota rinviata del 2026-10-19.
+1. In invitations-af: `/modeler:install` per la 0.40.0, poi `npm run model:validate` e `npm run model:drift`.
+2. In order-management: decidere se portare il controllo contabile a regione (`/modeler:behavior`); se sì, colonna
+   `accountingState`, `records: {by: accountingCheckedBy, at: accountingCheckedAt}`, guardia
+   `linesWithoutCoan = 0 and accountingState = checked`, via la personalizzazione `order-workflow` dei tre campi.
+3. Primo run vero del flusso dal web in una delle due app (proposta innocua da `/admin/model`, «Applica»,
+   `gh run list --workflow modeler-apply.yml`, «Conferma e rilascia»), guardando che il push con `--yes` passi. Ogni
+   inciampo → `/core:harness-note`.
+4. Qui, con Docker acceso: i test con `MODELER_PG` (comandi sotto), per vedere `test_region_end_to_end` verde.
+5. Se compare un progetto con `upper` finito su una collezione: riprendere la nota rinviata del 2026-10-19.
 
 ## Per riprendere
 `cd <clone> && claude` — i plugin si caricano da questa cartella: dopo una modifica usa `/reload-plugins`.
@@ -113,6 +92,7 @@ chmod +x /tmp/pgbin/psql
 PATH=/tmp/pgbin:$PATH MODELER_PG=postgresql://postgres:pg@localhost:55499/postgres python3 -m unittest discover -s plugins/modeler/tests
 docker stop modeler-pg-test
 ```
-File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultima voce), `plugins/modeler/scripts/metamodel/behavior.py`
-(`_check_roles`), `plugins/modeler/scripts/metamodel/cli.py` (`roles_hint`, `cmd_install`),
-`plugins/modeler/skills/install/SKILL.md` (§4 ruoli, §6), `plugins/modeler/skills/notation/references/ecore-notation.md` («Roles»).
+File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultime tre voci e la rinviata del 2026-10-19),
+`plugins/modeler/scripts/metamodel/behavior.py` (`patch_text`, `_check_flow`), `plugins/modeler/scripts/metamodel/engine.py`
+(`_workflow`), `plugins/modeler/skills/notation/references/behavior-notation.md` («Workflows», `regions`),
+`plugins/core/skills/db-push/SKILL.md`.
