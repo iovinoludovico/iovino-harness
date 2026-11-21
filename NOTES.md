@@ -564,3 +564,11 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Plugin**: core
 - **Tipo**: convenzione
 - **Stato**: applicata il 2026-11-21: due righe in `plugins/core/context/conventions.md` «Git»: a fine iterazione il resoconto si chiude con «Stato del rilascio» (migrazioni e `/core:db-push`, codice e `/core:ship` con PR e CI, cosa è su `main` e in produzione); `/core:ship`, `/core:commit` e `/core:release` non compaiono tra le skill della sessione perché hanno `disable-model-invocation: true` (voluto: le lancia solo l'utente), e la convenzione ora dice di chiedere all'utente di digitarle invece di rifarne i passi a mano.
+
+## 2026-11-21 — I passi di rilascio residui vanno proposti con un comando, non solo elencati
+- **Progetto**: kura
+- **Cosa è successo**: a fine iterazione restavano passi da eseguire in momenti diversi (merge in attesa della CI, migrazioni di un branch successivo, tag dell'APK): il riepilogo «Stato del rilascio» li elenca, ma l'utente deve ricordarsi quale comando lanciare e quando.
+- **Proposta**: quando restano passi residui, lo «Stato del rilascio» si chiude con il comando da digitare per ciascuno, nell'ordine giusto (`/core:db-push`, `/core:ship`, `/core:release`, …). Valutare una skill di `core` (per esempio `/core:next-steps`) che ricava i passi dallo stato reale (migrazioni locali non applicate, commit non pubblicati, PR aperte con lo stato della CI, branch non allineati, tag di rilascio mancanti) e li propone uno alla volta con il comando relativo.
+- **Plugin**: core
+- **Tipo**: convenzione | skill
+- **Stato**: da valutare
