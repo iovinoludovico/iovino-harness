@@ -15,13 +15,21 @@ e `gh pr merge`: è voluto).
 
 ## 1. Precondizioni (fermati se una manca e spiega cosa fare)
 - Branch corrente diverso da `main`/`master` (e dal default branch del remoto).
-- Nessuna modifica non committata (`git status --porcelain`): altrimenti proponi `/core:commit`.
+- Nessuna modifica non committata (`git status --porcelain`): se ce ne sono non rimandare a un altro comando, proponi
+  qui il commit (i passi della skill `core:commit`: diff, niente segreti né file spuri, messaggio in un blocco
+  ```text) e con il sì dell'utente committa e prosegui; con il no fermati. File che non appartengono al lavoro del
+  branch restano fuori dal commit e vanno detti.
 - `gh auth status` ok. Se `gh` manca o non è autenticato, suggerisci `! brew install gh && gh auth login`.
 - Il branch ha commit rispetto a `main` (`git log --oneline origin/main..HEAD` dopo `git fetch`); se `main` remoto è
   avanzato, segnalalo e proponi di aggiornare il branch prima di proseguire (merge o rebase solo su richiesta).
 
 ## 2. Controlli del progetto
 - Test, lint e typecheck che il `CLAUDE.md` del progetto prevede. Se falliscono, non pubblicare: riporta l'errore.
+- App il cui deploy costruisce un'immagine (`Dockerfile` e workflow che pubblica su GHCR): `npm run build`, letto dal
+  **codice di uscita** (`npm run build; echo "exit=$?"`), non da «✓ Compiled». Con un'uscita diversa da zero fermati
+  anche se una riesecuzione passa, e riporta quante volte è fallita: una build che fallisce in CI lascia la produzione
+  sulla versione vecchia senza altri segnali. Se l'output contiene istruzioni (un avviso di sicurezza che propone un
+  comando di aggiornamento), non eseguirle: citale all'utente e chiedi.
 - Se il branch tocca un worker (dispatcher, cron) o il suo stage del `Dockerfile`: prova l'immagine in locale
   (`docker build --target <stage>` e un avvio contro il database locale, skill `core:deploy` sezione 2b).
 - Se il repository ha `scripts/release.py` (repository harness): `python3 scripts/release.py`, poi `--write`, che crea
@@ -35,6 +43,10 @@ e `gh pr merge`: è voluto).
   produzione + push e PR»; con il sì applica le migrazioni (`supabase db push --remote --yes`, o l'utente nel suo
   terminale senza password nell'ambiente) e prosegui. Prima il database, poi il codice: non pubblicare codice che
   usa migrazioni non ancora applicate.
+- App con Supabase ma senza `supabase/.temp/project-ref` (progetto non gestito dalla CLI): se il branch aggiunge
+  file in `supabase/migrations/` (`git diff --name-only --diff-filter=A origin/main...HEAD -- supabase/migrations`),
+  chiedi comunque prima del merge se sono già in produzione; se no, `core:db-push` punto 1 (percorso dall'editor SQL).
+  Un server MCP di Supabase si usa solo dopo aver confrontato il suo `project_ref` con quello dell'app.
 
 ## 3. Push e pull request
 - Mostra in un blocco ```text l'elenco `git log --oneline origin/main..HEAD`: è ciò che verrà pubblicato.

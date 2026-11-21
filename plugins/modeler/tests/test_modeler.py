@@ -521,6 +521,69 @@ class PatchTextTests(unittest.TestCase):
         new["doc"] = "altro"
         self.assertIsNone(E.patch_text(self.text, new))
 
+    def test_a_file_styled_by_hand_changes_only_the_changed_entries(self):
+        # the harness note of 2026-11-09: rules and features on one line, `doc` in double quotes; a proposal that
+        # changes a rule and a class `doc`, adds a rule and a class and removes an attribute touches those lines only
+        text = (
+            'package: access\n'
+            '\n'
+            'classes:\n'
+            '  Space:\n'
+            '    doc: "An office or a room: shown on a monitor"\n'
+            '    label: {it: Spazio, en: Space}\n'
+            '    attributes:\n'
+            '      name: {type: EString, lower: 1, doc: "Name: as on the door"}\n'
+            '      location: {type: EString, doc: "Where the space is, free text; when empty the monitor shows the building and the floor of the space, as written by the admin"}\n'
+            '      note: {type: EString, doc: "Free text"}\n'
+            '    rules:\n'
+            '      - {id: one_owner, text: "A space has one owner: the person who answers for it"}\n'
+            '  Card:\n'
+            '    doc: "An NFC card"\n'
+            '    attributes: {uid: {type: EString, lower: 1}}\n'
+            '\n'
+            'rules:\n'
+            '  - {id: tenant_scoping, text: "Every occupant and device belongs to exactly one space; people, groups and their cards are global and reach a space only through permissions"}\n'
+            '  - {id: permission_subject, text: "A permission has exactly one subject: a person or a group"}\n'
+            '  - {id: owner_scope, text: "A person who owns a space decides on its accesses; an admin decides on every space"}\n'
+        )
+        new = E.loads(text)
+        new["rules"][1]["text"] = "A permission has exactly one subject: a person, never a group"
+        new["rules"].append({"id": "log_purge", "text": "The log is kept until an admin purges it: from the console"})
+        del new["rules"][2]
+        new["classes"]["Space"]["doc"] = "An office or a room: shown on a public monitor"
+        new["classes"]["Space"]["rules"][0]["text"] = "A space has one owner"
+        del new["classes"]["Space"]["attributes"]["note"]
+        new["classes"]["Card"]["attributes"]["active"] = {"type": "EBoolean", "default": True}
+        new["classes"]["Visitor"] = {"doc": "Someone from outside", "attributes": {"fullName": {
+            "type": "EString", "lower": 1,
+            "doc": "The name as written on the badge the visitor receives at the entrance, which the dumper would spread over several lines"}}}
+        out = E.patch_text(text, new)
+        self.assertIsNotNone(out)
+        self.assertEqual(E.expand(E.loads(out)), E.expand(new))
+        changed = [x for x in difflib.unified_diff(text.splitlines(), out.splitlines(), n=0)
+                   if x[:1] in "+-" and not x.startswith(("+++", "---"))]
+        removed = sorted(x[1:].strip().split(":")[0] for x in changed if x[0] == "-")
+        self.assertEqual(removed, ["- {id", "- {id", "- {id", "attributes", "doc", "note"], changed)   # 2 changed rules, 1 removed
+        self.assertEqual(sum(x[0] == "+" for x in changed), 9, changed)        # 5 changed lines, a rule and a class of 4 lines
+        self.assertIn('  - {id: permission_subject, text: "A permission has exactly one subject: a person, never a group"}', out)
+        self.assertIn('  - {id: log_purge, text: "The log is kept until an admin purges it: from the console"}', out)
+        self.assertIn('    doc: "An office or a room: shown on a public monitor"\n', out)
+        self.assertIn('      - {id: one_owner, text: "A space has one owner"}\n', out)
+        self.assertIn("    attributes: {uid: {type: EString, lower: 1}, active: {type: EBoolean, default: true}}\n", out)
+        self.assertRegex(out, r"\n      fullName: \{type: EString, lower: 1, doc: [^\n]*several lines'?\}\n")   # one line, as its neighbours
+        for line in text.splitlines():                                         # every other line is as it was
+            if not any(k in line for k in ("permission_subject", "owner_scope", "note:", "one_owner", "uid", 'doc: "An office')):
+                self.assertIn(line, out.splitlines())
+        # rules reordered, or spread over several lines by hand: nothing is written
+        new = E.loads(text)
+        new["rules"].reverse()
+        self.assertIsNone(E.patch_text(text, new))
+        wrapped = text.replace('text: "A permission has exactly one subject: a person or a group"}',
+                               'text: "A permission has exactly one subject:\n      a person or a group"}')
+        new = E.loads(wrapped)
+        new["rules"][0]["text"] = "Changed"
+        self.assertIsNone(E.patch_text(wrapped, new))
+
 
 class MigrationTests(unittest.TestCase):
     def test_no_change_no_migration(self):

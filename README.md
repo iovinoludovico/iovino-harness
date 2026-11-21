@@ -57,8 +57,11 @@ poi `/reload-plugins`. Un plugin si aggiorna solo se la sua `version` è cambiat
 alza (vedi "Rilasciare una modifica").
 
 Differenze rispetto alla strada A:
-- le note di `/core:harness-note` vanno in `~/.claude/plugins/data/core-iovino-harness/NOTES.md`; se su quel
-  computer cloni il repository, imposta `harness_repo` con `/config` per scriverle direttamente in `NOTES.md`;
+- senza un clone sul computer le note di `/core:harness-note` vanno nel file di riserva
+  `~/.claude/plugins/data/core-iovino-harness/NOTES.md` (l'inizio sessione dice quante ce ne sono, in ogni
+  progetto). Se cloni il repository in `~/Documents/GitHub/`, `harness-note` lo trova e scrive lì; imposta comunque
+  l'opzione, una volta per computer: `/plugin` → `core` → configurazione → `harness_repo` = percorso del clone
+  (l'inizio sessione lo ricorda finché manca). Le note del file di riserva le importa `/core:harness-review`;
 - i permessi consigliati non vengono aggiunti (li applica solo `install.sh`);
 - repository privato: l'installazione usa le credenziali git del computer (`git clone` deve funzionare); per gli
   aggiornamenti automatici in background serve `GITHUB_TOKEN` nell'ambiente, altrimenti aggiorna con i comandi sopra.
@@ -77,7 +80,7 @@ Differenze rispetto alla strada A:
 | `/core:handoff` | Fine sessione o cambio computer: aggiorna HANDOFF.md |
 | `/core:db-push` | Porta in produzione (Supabase cloud) le migrazioni nuove: controlli, anteprima, conferma, verifica |
 | `/core:deploy` | Passi di produzione (Supabase cloud, GHCR, Docker Manager di Hostinger, Nginx Proxy Manager, rollback, diagnosi): per scrivere `docs/deploy.md` o rispondere su server e proxy |
-| `/core:security-audit` | Dopo il primo deploy o cambi di Auth, dominio, infrastruttura: audit in sola lettura (login e dominio, RLS, piattaforma, header, segreti, GitHub, configurazione di deploy), correzioni solo dopo conferma |
+| `/core:security-audit` | Dopo il primo deploy o cambi di Auth, dominio, infrastruttura: audit in sola lettura (login e dominio, RLS, piattaforma, header, segreti, dipendenze, GitHub, configurazione di deploy), correzioni solo dopo conferma |
 | `/core:harness-note <lezione>` | Qualcosa da migliorare nell'harness: finisce in `NOTES.md` |
 | `/core:harness-review` | Nel repository harness: valuta le note aperte, applica quelle approvate, segna applicata/scartata/rinviata |
 | `/modeler:install` | Mette il modellatore in un'app (o lo aggiorna): metamodello dal database se manca, `/admin/model`, `npm run model:*` |
@@ -99,7 +102,7 @@ Gli hook sono Python solo libreria standard: nessuna dipendenza da installare.
 
 ## Ciclo di miglioramento
 
-1. Durante il lavoro in qualunque progetto, quando Claude sbaglia qualcosa di ricorrente o manca una regola: `/core:harness-note …`. La nota finisce nel `NOTES.md` di questo clone (opzione `harness_repo` del plugin core, impostata da `install.sh`; senza clone va in `~/.claude/plugins/data/core-iovino-harness/NOTES.md`).
+1. Durante il lavoro in qualunque progetto, quando Claude sbaglia qualcosa di ricorrente o manca una regola: `/core:harness-note …`. La nota finisce nel `NOTES.md` di questo clone (opzione `harness_repo` del plugin core, impostata da `install.sh`; senza l'opzione il clone viene cercato in `~/Documents/GitHub/`, e solo senza clone va in `~/.claude/plugins/data/core-iovino-harness/NOTES.md`) e, se il clone è su `main`, viene committata subito come `docs(notes): …` (solo quel file, mai push: l'inizio sessione avvisa delle note non pubblicate).
 2. Ogni tanto, apri una sessione in questo repository, rivedi `NOTES.md` e trasforma le note in modifiche a `conventions.md`, agli hook o alle skill.
 3. `python3 -m unittest discover -s tests`, `python3 -m unittest discover -s plugins/modeler/tests` e `claude plugin validate .`, poi commit.
 4. Rilascio e push (sezione seguente).

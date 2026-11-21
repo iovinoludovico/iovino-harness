@@ -30,6 +30,13 @@ parte applicata prima, poi `- **Stato (parte rimasta)**: …`) vale per l'ultima
 
 ## 1. Leggi e raggruppa
 
+- Per prima cosa importa le note rimaste nel file di riserva (`${CLAUDE_PLUGIN_DATA}/NOTES.md`, di solito
+  `~/.claude/plugins/data/core-iovino-harness/NOTES.md`; l'inizio sessione dice quante sono): aggiungi in fondo al
+  `NOTES.md` del repository le voci che non ci sono già (stessa data e titolo = doppione, tieni quella del
+  repository aggiungendo il caso nuovo se c'è), poi lascia nel file di riserva solo il titolo `# Note per l'harness`.
+  Di' quante ne hai importate.
+- `git log origin/main..main --oneline -- NOTES.md`: i commit `docs(notes): …` fatti da `/core:harness-note` in altri
+  progetti e non ancora pubblicati entrano nella revisione come le altre note.
 - Elenca le note aperte (e, in una riga, le rinviate: la loro condizione per riprenderle si è avverata?).
 - Raggruppa quelle che toccano lo stesso punto (stessa skill, stessa sezione di `conventions.md`, stesso hook) o
   che dicono la stessa cosa da progetti diversi: si valutano e si applicano insieme.

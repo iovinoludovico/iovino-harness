@@ -18,6 +18,20 @@ conferma per `supabase db push` e `supabase link`: è voluto.
 - Non collegato: fai eseguire all'utente `supabase link --project-ref <ref>` in un suo terminale, fuori da Claude
   Code (può chiedere la password del database: un comando `! …` non ha un terminale interattivo e la richiesta
   può fallire). Non chiedere la password in chat.
+- **Progetto non gestito dalla CLI** (manca `supabase/config.toml` o `supabase/.temp/project-ref`, le migrazioni non
+  hanno il timestamp della CLI, oppure lo storico remoto non coincide con i file): non proporre subito
+  `supabase link`. Prima `supabase projects list` deve mostrare il ref di produzione (quello di
+  `NEXT_PUBLIC_SUPABASE_URL` o di `docs/deploy.md`); se l'account della CLI non lo vede («does not have the necessary
+  privileges»), **fermati e dillo**: il link non può riuscire. Percorso alternativo, dichiarato come tale: elenco
+  delle migrazioni da incollare nell'editor SQL della dashboard, in ordine, con i rischi del punto 3, e dopo ognuna
+  una query di verifica (`select` su ciò che la migrazione crea: colonne in `information_schema.columns`, policy in
+  `pg_policies`, funzioni in `pg_proc`) di cui l'utente incolla il risultato; nel resoconto scrivi che lo storico
+  delle migrazioni non è tracciato dalla CLI.
+- Server MCP di Supabase: usalo solo se è quello del progetto (`.mcp.json` del repository) e solo dopo aver
+  confrontato il suo `project_ref` con quello dell'app (`NEXT_PUBLIC_SUPABASE_URL`, `supabase/.temp/project-ref`,
+  `docs/deploy.md`): uno strumento MCP che punta a un altro progetto non si usa, nemmeno in lettura. Se manca
+  `SUPABASE_DB_PASSWORD` ma il server MCP del progetto è collegato, `list_migrations` dà la colonna Remote del
+  punto 3 senza password (solo lettura: le migrazioni non si applicano dal server MCP).
 - Versione della CLI: `supabase --version` (o `npx supabase --version`, che risolve la versione del `package.json`).
   Dalla **3.0** i comandi del database (`db push`, `db pull`, `migration list`, `gen types`) agiscono sullo **stack
   locale** se non ricevono `--remote`: «Target: local stack … pass --remote» e «Local database is up to date» parlano
@@ -33,8 +47,15 @@ conferma per `supabase db push` e `supabase link`: è voluto.
 ## 2. Pre-controlli (fermati se uno fallisce e spiega perché)
 - `git status --porcelain supabase/`: le migrazioni devono essere committate; segnala il branch corrente
   (di solito si porta in produzione ciò che sta per andare su `main`).
+- `supabase/.temp/` deve essere in `.gitignore` (`git check-ignore -q supabase/.temp`): `supabase --version` vi
+  scrive `cli-latest`, che altrimenti risulta come modifica non committata e ferma `/core:ship`. Se manca, proponi
+  la riga.
 - Se il Supabase locale è attivo (`supabase status`): `supabase db reset` e `supabase test db` devono essere verdi.
-  Se non è attivo, dillo e chiedi se proseguire comunque.
+  Se non è attivo, dillo e chiedi se proseguire comunque. In un'app senza Supabase locale le migrazioni nuove si
+  possono provare su un Postgres usa-e-getta (`docker run --rm -d -e POSTGRES_PASSWORD=pg -p 55432:5432
+  postgres:16`) con uno schema ridotto: ruoli `anon`/`authenticated`/`service_role`, `auth.uid()` e le altre
+  funzioni di supporto finte, poi le migrazioni in ordine. Nel resoconto dichiara che cosa era finto: la prova
+  dice che l'SQL è valido, non che RLS e Auth si comportano come in produzione.
 - App con il modellatore (`domain.ecore.yaml` e script `model:drift`): `npm run model:drift` deve dare "aligned".
 
 ## 3. Cosa cambierebbe

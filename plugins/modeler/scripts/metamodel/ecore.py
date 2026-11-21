@@ -326,6 +326,8 @@ def _entry_lines(name: str, value: Any, indent: int, like: str | None = None, fl
         inline = flow
     if isinstance(value, _Block):                  # a block by nature (a region, a class): never on one line
         inline = False
+    if isinstance(value, str) and m and (m.group(4) or "").startswith('"') and "\n" not in value:
+        return [" " * indent + name + ":" + m.group(3) + json.dumps(value, ensure_ascii=False)]   # quoted as it was
     if inline and isinstance(value, dict) and not isinstance(value, _Flow):
         value = _Flow(value)
     elif m and not inline and isinstance(value, _Flow):
@@ -361,6 +363,60 @@ def _yaml_list_lines(value: list[Any], indent: int) -> list[str]:
     yaml, Dumper = _flow_dumper()
     chunk = yaml.dump(value, Dumper=Dumper, sort_keys=False, allow_unicode=True, width=120)
     return [" " * indent + line for line in chunk.rstrip("\n").split("\n")]
+
+
+_RULE_LINE = re.compile(r"^(\s*)- \{id: ([a-z_][a-z0-9_]*), text: (.*)\}\s*$")
+
+
+def _rule_line(rule: dict[str, Any], indent: int, like: str | None = None) -> str:
+    """One rule on one line (`- {id: x, text: …}`), however long, with the text in double quotes when the rule
+    line it replaces or follows (`like`) quotes it so."""
+    m = _RULE_LINE.match(like or "")
+    if m and m.group(3).startswith('"') and list(rule) == ["id", "text"] and isinstance(rule["text"], str):
+        return " " * indent + "- {id: " + str(rule["id"]) + ", text: " + json.dumps(rule["text"], ensure_ascii=False) + "}"
+    yaml, Dumper = _flow_dumper()
+    chunk = yaml.dump([_Flow(rule)], Dumper=Dumper, sort_keys=False, allow_unicode=True, width=10 ** 6)
+    return "\n".join(" " * indent + line for line in chunk.rstrip("\n").split("\n"))
+
+
+def _rule_edits(lines: list[str], start: int, end: int, old: list[Any],
+                new: list[Any]) -> list[tuple[int, int, list[str]]] | None:
+    """The edits that turn the rules written in lines[start:end] (the `rules:` key, then one rule per line) from
+    `old` into `new`: only the rules that changed, went or came, each on its line in the style of its neighbour.
+    None when the block is not written one rule per line or the rules that stay change order."""
+    at: dict[str, int] = {}
+    for i in range(start + 1, end):
+        if not lines[i].strip() or lines[i].lstrip().startswith("#"):
+            continue
+        m = _RULE_LINE.match(lines[i])
+        if not m or (at and len(m.group(1)) != len(lines[next(iter(at.values()))]) - len(lines[next(iter(at.values()))].lstrip())):
+            return None
+        at[m.group(2)] = i
+    if not all(isinstance(r, dict) and "id" in r for r in [*old, *new]):
+        return None
+    old_ids, new_ids = [r["id"] for r in old], [r["id"] for r in new]
+    if not at or list(at) != old_ids or [i for i in new_ids if i in at] != [i for i in old_ids if i in new_ids]:
+        return None
+    first = lines[at[old_ids[0]]]
+    indent = len(first) - len(first.lstrip())
+    was = {r["id"]: r for r in old}
+    edits: list[tuple[int, int, list[str]]] = [(at[i], at[i] + 1, []) for i in old_ids if i not in new_ids]
+    pos, like, added = at[old_ids[0]], first, []
+    for r in [*new, None]:
+        if r is not None and r["id"] not in at:
+            added.append(_rule_line(r, indent, like))
+            continue
+        if added:
+            edits.append((pos, pos, added))
+            added = []
+        if r is not None:
+            i = at[r["id"]]
+            if r != was[r["id"]]:
+                edits.append((i, i + 1, [_rule_line(r, indent, lines[i])]))
+            pos, like = i + 1, lines[i]
+    if any("\n" in x for _, _, repl in edits for x in repl):
+        return None
+    return edits
 
 
 def _children(lines: list[str], start: int, end: int, indent: int) -> dict[str, tuple[int, int]]:
@@ -410,33 +466,84 @@ def patch_text(text: str, new: dict[str, Any]) -> str | None:
     top = _children(lines, 0, len(lines), 0)
     edits: list[tuple[int, int, list[str]]] = []   # (start, end, replacement)
 
+    def empty(v: Any) -> bool:
+        return v is None or v is False or v == [] or v == "" or v == {}
+
     def feature_edits(cname: str, cs: int, ce: int) -> list[tuple[int, int, list[str]]] | None:
+        """The class key by key: a feature line, a rule line, the line of `doc` or `label`; never the lines of a
+        key that did not change."""
         ca, cn = a["classes"][cname], b["classes"][cname]
-        if {k: v for k, v in ca.items() if k not in ("attributes", "references")} != \
-                {k: v for k, v in cn.items() if k not in ("attributes", "references")}:
+        new_c = cb["classes"][cname]
+        if not isinstance(new_c, dict):
             return None
         found: list[tuple[int, int, list[str]]] = []
         keys = _children(lines, cs + 1, ce, 4)
-        for kind in ("attributes", "references"):
-            if ca[kind] == cn[kind]:
+        if _inline(lines[cs]) or (not keys and ca != cn):
+            return None                                   # the class on one line: rewrite it
+        order = list(new_c)
+        for k in [*order, *[k for k in ca if k not in new_c]]:
+            if ca.get(k) == cn.get(k) or (empty(ca.get(k)) and empty(cn.get(k))):
                 continue
-            if kind not in keys or _inline(lines[keys[kind][0]]):
-                return None                           # missing or written inline: rewrite the class
-            ks, ke = keys[kind]
-            feats = _children(lines, ks + 1, ke, 6)
-            if set(feats) != set(ca[kind]):
-                return None
-            new_feats = cb["classes"][cname].get(kind, {})
-            for fname in ca[kind]:
-                if fname not in cn[kind]:
-                    found.append((*_removal(lines, *feats[fname]), []))
-                elif ca[kind][fname] != cn[kind][fname]:
-                    found.append((*feats[fname], _entry_lines(fname, new_feats[fname], 6, lines[feats[fname][0]])))
-            added = [f for f in cn[kind] if f not in ca[kind]]
-            if added:
-                last = max(e for _, e in feats.values()) if feats else ks + 1
-                found.append((last, last, [x for f in added for x in _entry_lines(f, new_feats[f], 6, *_like(lines, feats))]))
+            if k not in new_c:                            # gone, or back to its default
+                if k in keys:
+                    found.append((*_removal(lines, *keys[k]), []))
+                continue
+            if k not in keys:                             # new key: after the keys that precede it in the class
+                before = [keys[x][1] for x in order[:order.index(k)] if x in keys]
+                at = max(before) if before else cs + 1
+                if k == "rules":
+                    like = next((ln for ln in lines if _RULE_LINE.match(ln)), None)
+                    found.append((at, at, ["    rules:"] + [_rule_line(r, 4, like) for r in new_c[k]]))
+                else:
+                    found.append((at, at, _entry_lines(k, new_c[k], 4)))
+                continue
+            ks, ke = keys[k]
+            if k == "rules":
+                redits = None if _inline(lines[ks]) else _rule_edits(lines, ks, ke, ca.get(k) or [], cn.get(k) or [])
+                if redits is None:
+                    return None
+                found += redits
+            elif k in ("attributes", "references") and not _inline(lines[ks]):
+                feats = _children(lines, ks + 1, ke, 6)
+                if set(feats) != set(ca[k]):
+                    return None
+                for fname in ca[k]:
+                    if fname not in cn[k]:
+                        found.append((*_removal(lines, *feats[fname]), []))
+                    elif ca[k][fname] != cn[k][fname]:
+                        found.append((*feats[fname], _entry_lines(fname, new_c[k][fname], 6, lines[feats[fname][0]])))
+                added = [f for f in cn[k] if f not in ca[k]]
+                if added:
+                    last = max(e for _, e in feats.values()) if feats else ks + 1
+                    found.append((last, last, [x for f in added for x in _entry_lines(f, new_c[k][f], 6, *_like(lines, feats))]))
+            else:                                         # doc, label, unique…, or the features written on one line
+                found.append((ks, ke, _entry_lines(k, new_c[k], 4, lines[ks])))
         return found
+
+    def canonical(name: str, section: str, start: int, end: int) -> bool:
+        """The block is written as dumps writes it: rewriting it whole changes only what the proposal changed."""
+        try:
+            return lines[start:end] == _yaml_lines({name: compact(old)[section][name]}, 2)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def class_lines(name: str) -> list[str]:
+        """A new class as dumps writes it; its features one per line where dumps would spread one over several
+        lines and the classes of the file write theirs on one."""
+        whole = _yaml_lines({name: cb["classes"][name]}, 2)
+        like = next((ln for ln in lines if re.match(r"^ {6}[A-Za-z_]\w*: +\{.*\}\s*$", ln)), None)
+        spec = cb["classes"][name]
+        if like is None or not isinstance(spec, dict) or not any(len(ln) - len(ln.lstrip()) >= 8 for ln in whole):
+            return whole
+        out = [f"  {name}:"]
+        for k, v in spec.items():
+            if k in ("attributes", "references") and isinstance(v, dict):
+                out += [f"    {k}:"] + [x for f, fv in v.items() for x in _entry_lines(f, fv, 6, like)]
+            elif k == "rules":
+                out += ["    rules:"] + [_rule_line(r, 4, next((ln for ln in lines if _RULE_LINE.match(ln)), None)) for r in v]
+            else:
+                out += _yaml_lines({k: v}, 4)
+        return out
 
     for section in ("classes", "enums"):
         if a[section] == b[section]:
@@ -452,11 +559,14 @@ def patch_text(text: str, new: dict[str, Any]) -> str | None:
                 edits.append((*_removal(lines, *blocks[name]), []))
             elif a[section][name] != b[section][name]:
                 fe = feature_edits(name, *blocks[name]) if section == "classes" else None
+                if fe is None and section == "classes" and not canonical(name, section, *blocks[name]):
+                    return None                           # a class styled by hand: never rewritten whole
                 edits += fe if fe is not None else [(*blocks[name], _yaml_lines({name: cb[section][name]}, 2))]
         added = [n for n in b[section] if n not in a[section]]
         if added:
             last = max(e for _, e in blocks.values()) if blocks else ss + 1
-            edits.append((last, last, [x for n in added for x in _yaml_lines({n: cb[section][n]}, 2)]))
+            edits.append((last, last, [x for n in added for x in
+                                       (class_lines(n) if section == "classes" else _yaml_lines({n: cb[section][n]}, 2))]))
     if a["roles"] != b["roles"]:                     # the roles: their own top-level block, before the classes
         new_roles = cb.get("roles", {})
         block = ["roles:"] + [x for rn in new_roles for x in _yaml_lines({rn: new_roles[rn]}, 2)] if b["roles"] else []
@@ -490,8 +600,16 @@ def patch_text(text: str, new: dict[str, Any]) -> str | None:
         edits.append((ds, de, ["diagram:"] + _yaml_lines(cb["diagram"], 2)))
     if a["rules"] != b["rules"]:                     # package rules: their own top-level block
         block = ["rules:"] + _yaml_list_lines(cb["rules"], 2) if b["rules"] else []
-        if "rules" in top:
-            edits.append((*top["rules"], block))
+        if "rules" in top and block:                 # only the rules that changed, each on its line
+            rs, re_ = top["rules"]
+            redits = None if _inline(lines[rs]) else _rule_edits(lines, rs, re_, a["rules"], b["rules"])
+            if redits is None:                       # not one rule per line: whole only if dumps wrote it
+                if lines[rs:re_] != ["rules:"] + _yaml_list_lines(compact(old).get("rules") or [], 2):
+                    return None
+                redits = [(rs, re_, block)]
+            edits += redits
+        elif "rules" in top:
+            edits.append((*top["rules"], []))
         elif block:                                  # new block before the diagram, else after the last key
             if "diagram" in top:
                 edits.append((top["diagram"][0], top["diagram"][0], block + [""]))

@@ -37,11 +37,12 @@ Argomenti: `$ARGUMENTS`. Nell'app: `npm run model:proposals`, `npm run model:app
    rigenera `behavior.json` e `docs/BEHAVIOR.md`; se il comportamento è cambiato, il motore segue la skill `behavior`,
    punto 4: `npm run model:engine -- --write` con il motore generato (una migrazione sostituita), SQL da riportare
    a mano con un motore scritto a mano (`CUSTOM(*-workflow)`: mai `engine --write`); poi `npm run model:drift`.
-   **Entrambi i file cambiano solo nelle righe di ciò che è cambiato**: un ruolo, una feature, uno stato, una
-   transizione, una reazione, un testo; una voce nuova o cambiata è scritta nello stile delle vicine (su una riga se lo
+   **Entrambi i file cambiano solo nelle righe di ciò che è cambiato**: un ruolo, una feature, una regola (del
+   package o di una classe), la `doc` o la `label` di una classe, uno stato, una transizione, una reazione, un testo; una voce nuova o cambiata è scritta nello stile delle vicine (su una riga se lo
    sono, per quanto lunga sia la `doc`, allineata alla stessa colonna), ordine e commenti restano, e le posizioni del
    diagramma salvate dall'editor non entrano (il file tiene le sue). Se la modifica non si può scrivere riga per riga
-   (intestazione del package o `doc` del comportamento, file con un layout insolito) `--write` si ferma **senza
+   (intestazione del package o `doc` del comportamento, regole riordinate o scritte su più righe, una classe
+   scritta a mano su una riga, file con un layout insolito) `--write` si ferma **senza
    scrivere nessuno dei due file**: applicala a mano, oppure, solo se l'utente accetta di perdere ordine, virgolette e
    commenti, `--write --rewrite`. **Subito dopo `--write`: `git diff --stat domain.ecore.yaml behavior.yaml`** e un
    `git diff` dei due file: se le righe cambiate superano quelle della modifica (voci non toccate riscritte, stile

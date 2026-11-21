@@ -54,10 +54,12 @@ done
 
 if [ "$APPLY_SETTINGS" = 1 ]; then
   echo "==> Permessi consigliati in ~/.claude/settings.json"
-  # le note dell'harness si scrivono senza conferma: NOTES.md del clone e cartella dati del plugin
+  # le note dell'harness si scrivono e si committano (solo NOTES.md) senza conferma: clone e cartella dati del plugin
   python3 "$HERE/settings/merge_settings.py" "$HERE/settings/recommended-settings.json" "$HOME/.claude/settings.json" \
     --allow "Edit(/$HERE/NOTES.md)" --allow "Edit(~/.claude/plugins/data/core-$MARKETPLACE/**)" \
     --allow "Read(/$HERE/plugins/**)" \
+    --allow "Bash(git -C $HERE branch --show-current)" \
+    --allow "Bash(git -C $HERE commit NOTES.md:*)" \
     --allow "Bash(python3 $HERE/plugins/modeler/scripts/modeler.py validate:*)" \
     --allow "Bash(python3 \"$HERE/plugins/modeler/scripts/modeler.py\" validate:*)" \
     --allow "Bash(python3 $HERE/plugins/modeler/scripts/modeler.py show:*)" \

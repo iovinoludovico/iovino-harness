@@ -113,6 +113,46 @@ def note_states(notes: Path) -> dict[str, int]:
     return counts
 
 
+def _mcp_servers(data: object) -> dict:
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    return servers if isinstance(servers, dict) else {}
+
+
+def _json_file(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def supabase_mcp_warnings(root: Path) -> list[str]:
+    """A Supabase MCP server belongs to one repository (.mcp.json): at user or local scope it shows up elsewhere and
+    reaches the production database of another app; one that points to another project than the linked one is wrong."""
+    def supabase(servers: dict) -> dict[str, str]:
+        return {str(n): json.dumps(s) for n, s in servers.items() if "supabase" in (str(n) + json.dumps(s)).lower()}
+
+    out: list[str] = []
+    config = _json_file(Path.home() / ".claude.json")
+    user = supabase(_mcp_servers(config))
+    projects = config.get("projects") if isinstance(config, dict) else None
+    local = supabase(_mcp_servers(projects.get(str(root)))) if isinstance(projects, dict) else {}
+    for scope, found in (("utente", user), ("locale", local)):
+        if found:
+            out.append(f"- Server MCP di Supabase a scope {scope} ({', '.join(sorted(found))}): un database di progetto "
+                       "sta a scope progetto (`.mcp.json` del suo repository). Segnalalo all'utente e proponi di "
+                       "spostarlo; non usarlo senza aver confrontato il suo `project_ref` con quello dell'app")
+    refs = {m for spec in supabase(_mcp_servers(_json_file(root / ".mcp.json"))).values()
+            for m in re.findall(r"project_ref=([A-Za-z0-9]+)", spec)}
+    try:
+        linked = (root / "supabase" / ".temp" / "project-ref").read_text(encoding="utf-8").strip()
+    except OSError:
+        linked = ""
+    if linked and refs and linked not in refs:
+        out.append(f"- Il server MCP di Supabase in `.mcp.json` punta a `{', '.join(sorted(refs))}`, il progetto collegato "
+                   f"dalla CLI è `{linked}`: non usarlo finché l'utente non ha chiarito quale è la produzione")
+    return out
+
+
 def plugin_version(plugin_root: Path) -> str:
     try:
         return str(json.loads((plugin_root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"])
@@ -136,20 +176,78 @@ def harness_versions() -> list[str]:
 
 
 def is_harness_repo(root: Path) -> bool:
-    configured = option("harness_repo")
-    if configured and Path(configured).expanduser().resolve() == root.resolve():
+    configured = configured_harness()
+    if configured and configured == root.resolve():
         return True
     return (root / ".claude-plugin" / "marketplace.json").exists() and (root / "plugins" / "core").is_dir()
 
 
-def harness_root() -> Path | None:
-    """The harness clone: the configured harness_repo, else the clone this plugin is loaded from (install in place)."""
+def configured_harness() -> Path | None:
+    """The harness_repo option when it names a folder that exists (an unset option arrives empty, or as the
+    literal placeholder)."""
     repo = option("harness_repo")
-    if repo:
-        p = Path(repo).expanduser()
-        return p.resolve() if p.is_dir() else None
+    if not repo or repo.startswith("${"):
+        return None
+    p = Path(repo).expanduser()
+    return p.resolve() if p.is_dir() else None
+
+
+def find_harness_clone() -> Path | None:
+    """A working clone of the harness on this computer, where the repositories live (~/Documents/GitHub): found
+    by its layout, without running git. The marketplace copy under ~/.claude/plugins is not a working clone."""
+    base = Path.home() / "Documents" / "GitHub"
+    try:
+        candidates = sorted((p for p in base.iterdir() if p.is_dir()), key=lambda p: (p.name != "iovino-harness", p.name))
+    except OSError:
+        return None
+    for p in candidates:
+        if (p / ".git").exists() and (p / ".claude-plugin" / "marketplace.json").exists() and (p / "plugins" / "core").is_dir():
+            return p.resolve()
+    return None
+
+
+def harness_root() -> Path | None:
+    """The harness clone: the configured harness_repo, else the clone this plugin is loaded from (install in place),
+    else a clone found on this computer."""
+    configured = configured_harness()
+    if configured:
+        return configured
     clone = PLUGIN_ROOT.resolve().parents[1]
-    return clone if is_harness_repo(clone) else None
+    return clone if is_harness_repo(clone) else find_harness_clone()
+
+
+def fallback_notes() -> Path:
+    """Where /core:harness-note writes when this computer has no clone of the harness."""
+    data = os.environ.get("CLAUDE_PLUGIN_DATA")
+    return (Path(data) if data else Path.home() / ".claude" / "plugins" / "data" / "core-iovino-harness") / "NOTES.md"
+
+
+def harness_notes_info() -> list[str]:
+    """Where the notes go from this session, and the ones that have not reached the repository yet: entries left
+    in the fallback file, commits of notes that the clone has not pushed."""
+    lines: list[str] = []
+    clone = harness_root()
+    fallback = fallback_notes()
+    if clone:
+        lines.append(f"- Note dell'harness (`/core:harness-note`): `{clone / 'NOTES.md'}`")
+        if not configured_harness():
+            lines.append(f"- L'opzione `harness_repo` del plugin core non è impostata su questo computer: dillo "
+                         f"all'utente (`/plugin` → core → configurazione, valore `{clone}`)")
+        ahead = [s for s in git(clone, "log", "origin/main..main", "--format=%s", "--", "NOTES.md").splitlines()
+                 if s.startswith("docs(notes)")]
+        if ahead:
+            lines.append(f"- {len(ahead)} note committate nel clone dell'harness e non pubblicate (`git log "
+                         f"origin/main..main -- NOTES.md`): segnalalo all'utente, il push si fa su sua richiesta")
+    else:
+        lines.append(f"- Nessun clone dell'harness su questo computer: `/core:harness-note` scrive nel file di riserva "
+                     f"`{fallback}`")
+    waiting = sum(note_states(fallback).values())
+    if waiting:
+        where = ("`/core:harness-review` nel repository harness le importa" if clone
+                 else "vanno portate nel `NOTES.md` del repository harness")
+        lines.append(f"- {waiting} note nel file di riserva `{fallback}`, mai arrivate nel repository harness: "
+                     f"segnalalo all'utente ({where})")
+    return lines
 
 
 def is_inside(path: Path, root: Path) -> bool:
@@ -187,6 +285,8 @@ def cmd_session(data: dict) -> int:
             deferred = f" (più {counts['deferred']} rinviate)" if counts["deferred"] else ""
             info.append(f"- {counts['open']} note da valutare in NOTES.md{deferred}: segnalalo all'utente e proponi "
                         "`/core:harness-review`")
+    info += supabase_mcp_warnings(root)
+    info += harness_notes_info()
     info += harness_versions()
     parts.append("## Progetto corrente\n" + "\n".join(info))
 

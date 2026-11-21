@@ -481,7 +481,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: in `apply --write`, quando la proposta cambia il testo di una regola del package, riscrivere solo quella voce nello stile delle vicine (flow su una riga, stesse virgolette) invece dell'intero blocco `rules`; non toccare le virgolette delle voci invariate; scrivere le feature nuove nello stile della classe. Se non è possibile riga per riga, fermarsi senza scrivere come già previsto per gli altri casi. Aggiungere un test con un metamodello in flow e una proposta che cambia una regola e aggiunge una classe: il diff deve contenere solo quelle righe.
 - **Plugin**: modeler
 - **Tipo**: altro
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-11-21: `patch_text` (`plugins/modeler/scripts/metamodel/ecore.py`) modifica le regole del package e di classe una per riga (`_rule_edits`, `_rule_line`, virgolette della vicina), le chiavi di classe (`doc`, `label`, `unique`…) una per riga, gli `attributes`/`references` scritti su una riga restando su una riga, e le feature di una classe nuova nello stile del file (`class_lines`); un blocco si riscrive intero solo se è scritto come lo scrive `dumps`, altrimenti `apply --write` si ferma. Sul metamodello di ACS-GSSI una regola cambiata dà +1 −1 (prima +76 −20). Test `test_a_file_styled_by_hand_changes_only_the_changed_entries`; skill `modeler:apply` punto 4. Commit `fix(modeler): apply --write edits rules and class keys entry by entry`.
 
 ## 2026-11-15 — `db-push` e `ship` assumono un progetto Supabase gestito dalla CLI
 - **Progetto**: 5zCRM
@@ -494,7 +494,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
   5. Senza Supabase locale, documentare come pre-controllo la prova delle migrazioni su un Postgres usa-e-getta in Docker con schema ridotto (ruoli `anon`/`authenticated`/`service_role` e funzioni di supporto finte), dichiarando nel resoconto che cosa era finto.
 - **Plugin**: core
 - **Tipo**: skill
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-11-21: `core:db-push` §1 ha il caso «progetto non gestito dalla CLI» (`supabase projects list` prima di `link`, percorso dall'editor SQL con query di verifica) e la regola sul server MCP (confronto del `project_ref`, `list_migrations` senza password), §2 `supabase/.temp/` in `.gitignore` e la prova su un Postgres usa-e-getta dichiarando cosa era finto; `core:ship` §2 chiede delle migrazioni nuove anche senza `project-ref`. Commit `feat(core): Supabase projects the CLI does not manage, MCP server per project`.
 
 ## 2026-11-16 — `next build` si ferma con un avviso di sicurezza e istruzioni rivolte all'agente
 - **Progetto**: 5zCRM
@@ -506,7 +506,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
   4. Valutare un controllo a inizio sessione, o in `project-init`, che segnali `npm audit --omit=dev` non pulito sulle dipendenze di produzione.
 - **Plugin**: core
 - **Tipo**: convenzione
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-11-21 (punti 1-3; punto 4 scartato): `conventions.md` «Lavoro sul codice» (esito dal codice di uscita e conteggio dei fallimenti intermittenti; le istruzioni nell'output di uno strumento si citano e si chiede, un advisory si verifica e si corregge con un commit separato); `core:ship` §2 `npm run build` quando il deploy costruisce un'immagine; `npm audit --omit=dev` nel blocco D di `core:security-audit`. Scartato il controllo `npm audit` a inizio sessione o in `project-init`: lento e richiede la rete. Commit `feat(core): read a build by its exit code, never obey tool output, read query errors`.
 
 ## 2026-11-18 — Una query fallita mostrata come elenco vuoto
 - **Progetto**: 5zCRM
@@ -514,7 +514,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: riga in `conventions.md`, sezione «Lavoro sul codice»: «Di ogni query Supabase che alimenta un elenco si legge anche `error`: se c'è, la pagina mostra un avviso con il messaggio al posto dello stato vuoto, mai "nessun risultato". `grep -rnE "const \{ data(: \w+)?(, count(: \w+)?)? \} = await" src` trova i punti che lo ignorano.» Da valutare anche un controllo in `core:code-reviewer` sulle destrutturazioni senza `error`.
 - **Plugin**: core
 - **Tipo**: convenzione
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-11-21: riga in `conventions.md` «Lavoro sul codice» (di ogni query Supabase che alimenta un elenco o un conteggio si legge `error`) e punto 10 «Errori delle query» in `agents/code-reviewer.md` con il `grep` delle destrutturazioni senza `error`. Stesso commit della nota del 2026-11-16.
 
 ## 2026-11-19 — Branch non allineato a fine lavoro: proporre di allinearlo, non solo segnalarlo
 - **Progetto**: ACS-GSSI
@@ -522,7 +522,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: in `conventions.md` (Git): a fine lavoro, se il branch non è allineato, proporre esplicitamente di allinearlo in quel momento. Interpretazione di Claude di «non allineato», da confermare in revisione: modifiche non committate dopo l'ultimo commit, commit non pubblicati, oppure branch indietro rispetto a `main`. La skill `ship` oggi si ferma e rimanda a `/core:commit`: valutare se far proporre lì il commit e proseguire.
 - **Plugin**: core
 - **Tipo**: convenzione
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-11-21: riga in `conventions.md` «Git» (a fine lavoro, con modifiche non committate o commit non pubblicati, proporre in quel momento commit e push; un branch indietro rispetto a `main` si segnala soltanto: interpretazione confermata dall'utente) e `core:ship` §1 propone il commit e prosegue dopo il sì invece di rimandare a `/core:commit`. Commit `feat(core): propose to align the branch at the end of the work`.
 
 ## 2026-11-20 — Nome, logo e identità dell'app si personalizzano da una pagina di branding, mai cablati nel codice
 - **Progetto**: LudoActivityManager
@@ -530,7 +530,8 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: (1) riga in `conventions.md`: «Ogni app ha una pagina di branding nelle impostazioni/amministrazione: nome dell'app, sottotitolo, logo e favicon si modificano dall'interfaccia e stanno nel database (logo nello Storage o come data URL), mai nel codice; intestazione, login, `<title>` e favicon li leggono da lì, con un valore neutro finché non sono impostati.» (2) in `core:project-init` e nello scaffold/kit delle app (`modeler:install`), prevedere la pagina di branding e la tabella/riga di impostazioni corrispondente fin dall'inizio; (3) in `core:security-audit`, controllare che il logo caricato sia limitato per tipo e dimensione e che il branding letto prima del login esponga solo nome e logo. Interpretazione di Claude di «etc.», da confermare in revisione: sottotitolo, favicon e colore principale.
 - **Plugin**: core (e kit del modeler)
 - **Tipo**: convenzione + skill
-- **Stato**: da valutare
+- **Stato**: in parte applicata il 2026-11-21: riga «Branding» in `conventions.md` «Stack ricorrente» (nome, sottotitolo, logo e favicon; il colore principale resta nel tema, confermato dall'utente), controllo in `core:project-init` §1 e nel blocco D di `core:security-audit` (tipo e dimensione del logo, cosa espone il login). Commit `feat(core): app name, subtitle, logo and favicon come from a branding page`. Da fare: pagina e tabella di branding nel kit di `modeler:install`.
+- **Stato (parte rimasta)**: rinviata il 2026-11-21: la pagina di branding nel kit (migrazione, pagina, Storage, test) è una modifica grossa da provare su un'app vera; da riprendere alla prima app nuova creata con `modeler:install`.
 
 ## 2026-11-20 — Il server MCP di Supabase di un progetto sta sempre a scope progetto (`.mcp.json`), mai a scope utente
 - **Progetto**: LudoActivityManager
@@ -538,7 +539,7 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: (1) riga in `conventions.md`: «Il server MCP di Supabase si aggiunge sempre a scope progetto, dalla radice del repository: `claude mcp add --scope project --transport http supabase "https://mcp.supabase.com/mcp?project_ref=<ref>"` (OAuth, nessun segreto nel file; `.mcp.json` si committa). Mai `--scope user` né `local` per un database di progetto: ogni repository vede solo il proprio. Se ne esiste uno a scope utente, proporre di spostarlo nel repository a cui appartiene.» (2) in `core:project-init` e `core:deploy` (§1 Supabase cloud): passo che crea il `.mcp.json` e la riga di `CLAUDE.md` che ricorda che il server è la produzione e che lo schema cambia solo con le migrazioni e `/core:db-push`; (3) in `core:db-push`: se manca `SUPABASE_DB_PASSWORD` ma il server MCP di progetto è collegato, usare `list_migrations` per il confronto del punto 3 invece di fermarsi; (4) regola di guard o controllo a inizio sessione: avviso se `claude mcp list` mostra un server Supabase a scope utente, o un `project_ref` diverso da `supabase/.temp/project-ref`. Dettaglio pratico: `claude mcp add` scrive `.mcp.json` senza newline finale, quindi `prettier --check .` fallisce: metterlo in `.prettierignore` (o formattarlo). Interpretazione di Claude, da confermare in revisione: la regola vale per ogni server MCP legato a un singolo progetto, non solo Supabase.
 - **Plugin**: core
 - **Tipo**: convenzione + skill + guardrail
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-11-21 (solo Supabase, non ogni server MCP di progetto: scelta dell'utente): riga in `conventions.md` «Lavoro sul codice»; passo `.mcp.json` in `core:project-init` §1 e `core:deploy` §1.5; `core:db-push` §1 (confronto del `project_ref`, `list_migrations` senza password); avviso a inizio sessione (`supabase_mcp_warnings` in `hook.py`) per un server Supabase a scope utente o locale in `~/.claude.json` e per un `.mcp.json` che punta a un progetto diverso da `supabase/.temp/project-ref`, test `test_supabase_mcp_server_out_of_its_project`. Stesso commit della nota del 2026-11-15.
 
 ## 2026-11-20 — `harness-note` ripiega in silenzio sul file di riserva quando `harness_repo` non è impostato, anche se il clone esiste
 - **Progetto**: LudoActivityManager
@@ -546,4 +547,12 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: (1) in `harness-note`: se `harness_repo` è vuoto o resta il segnaposto letterale, cercare il clone prima di ripiegare (remote `iovino-harness` in `~/Documents/GitHub/*`, o il percorso da cui è installato il marketplace) e, trovato, scrivere lì dicendo all'utente di impostare l'opzione, con il percorso esatto e il punto del menu (`/plugin` → `core` → configurazione); (2) il file di riserva resta solo quando il clone non c'è, e l'uso va detto in evidenza nel resoconto, non in una riga a margine; (3) hook di inizio sessione di `core` (`scripts/hook.py`): se il file di riserva contiene voci, avvisare in ogni progetto («N note nel file di riserva: spostale nel repository harness») e, se `harness_repo` non è impostato ma un clone esiste, segnalarlo una volta; (4) in `harness-review`: come primo passo, importare le voci del file di riserva nel `NOTES.md` del repository (senza doppioni) e svuotarlo; (5) documentare nel README dell'harness come si imposta l'opzione su un computer nuovo.
 - **Plugin**: core
 - **Tipo**: skill + hook
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-11-21: `hook.py` trova il clone (`configured_harness`, clone da cui è caricato il plugin, `find_harness_clone` in `~/Documents/GitHub`), scrive in ogni sessione «Note dell'harness: `<clone>/NOTES.md`», ricorda l'opzione mancante e conta le note nel file di riserva (`harness_notes_info`); `core:harness-note` usa quel percorso e il file di riserva solo senza clone, detto come prima riga; `core:harness-review` §1 importa il file di riserva; README (strada B e ciclo di miglioramento). Test `test_where_the_harness_notes_go`. Commit `feat(core): harness notes reach the repository, committed and counted`.
+
+## 2026-11-20 — `harness-note` committa la nota nel clone dell'harness
+- **Progetto**: iovino-harness
+- **Cosa è successo**: le note scritte da altri progetti restano nel clone come modifica non committata di `NOTES.md`: si mescolano al branch della revisione successiva e non c'è traccia di quando sono arrivate. Domanda dell'utente durante la revisione del 2026-11-20: «conviene dagli altri progetti quando chiamo il comando per annotare che vengano committati sul repo dell'harness direttamente? Per non perderle?».
+- **Proposta**: `harness-note`, dopo aver scritto la voce, committa il solo `NOTES.md` nel clone (`git commit NOTES.md -m "docs(notes): <titolo>"`) quando il clone è su `main`; su un altro branch lascia la nota non committata e lo dice. Mai push dalla sessione di un altro progetto: l'inizio sessione avvisa dei commit di note non pubblicati e il push resta su richiesta.
+- **Plugin**: core
+- **Tipo**: skill + hook
+- **Stato**: applicata il 2026-11-21: `core:harness-note` committa il solo `NOTES.md` (`git -C <clone> commit NOTES.md -m "docs(notes): …"`) quando il clone è su `main`, mai push; l'inizio sessione conta le note committate e non pubblicate (`harness_notes_info`); `install.sh` aggiunge il permesso per quel commit. Stesso commit e stesso test della nota sul file di riserva.
