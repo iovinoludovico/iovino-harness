@@ -12,6 +12,13 @@ Marketplace personale di plugin per Claude Code (`core`, `modeler`), installato 
   vecchia. Non aggirarlo con `--no-verify`.
 - `plugins/modeler/scripts/metamodel/__init__.py` ripete la versione del modeler: la aggiorna `release.py`, mai a mano.
 - Push e tag solo su richiesta esplicita.
+- Dopo ogni rilascio pubblicato (merge su `main` con una `version` nuova), chiudi sempre il resoconto ricordando
+  all'utente i comandi per portare l'aggiornamento altrove, con le versioni appena rilasciate:
+  - su questo computer e sugli altri con il clone: `git pull && ./install.sh`; senza clone:
+    `claude plugin marketplace update iovino-harness && claude plugin update core@iovino-harness && claude plugin update modeler@iovino-harness`;
+  - in ogni sessione già aperta in un altro progetto: `/reload-plugins` (o riavvio);
+  - se è cambiato `modeler`: in ogni app che ha il modellatore, `/modeler:install` (aggiorna `tools/modeler/` e il
+    kit), poi `npm run model:validate` e `npm run model:drift`.
 
 ## Verifica prima del commit
 ```bash
