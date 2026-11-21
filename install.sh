@@ -52,6 +52,19 @@ for plugin in $PLUGINS; do
   fi
 done
 
+# Un aggiornamento non riceve --config: se l'opzione è vuota (plugin installato da GitHub, o prima che il clone
+# esistesse) o indica una cartella che non c'è più, impostala su questo clone. Un altro percorso valido resta.
+if [ "$SOURCE" = "$HERE" ] && [[ " $PLUGINS " == *" core "* ]]; then
+  CURRENT="$(claude plugin configure "core@$MARKETPLACE" --json 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("inputs", {}).get("harness_repo") or "")' 2>/dev/null || true)"
+  if [ -z "$CURRENT" ] || [ ! -d "${CURRENT/#\~/$HOME}" ]; then
+    echo "==> Opzione harness_repo del plugin core: $HERE"
+    python3 -c 'import json,sys; print(json.dumps({"harness_repo": sys.argv[1]}))' "$HERE" \
+      | claude plugin configure "core@$MARKETPLACE" --values-stdin \
+      || echo "   non impostata: fallo da /plugin → core → configurazione" >&2
+  fi
+fi
+
 if [ "$APPLY_SETTINGS" = 1 ]; then
   echo "==> Permessi consigliati in ~/.claude/settings.json"
   # le note dell'harness si scrivono e si committano (solo NOTES.md) senza conferma: clone e cartella dati del plugin
