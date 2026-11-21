@@ -556,3 +556,19 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Plugin**: core
 - **Tipo**: skill + hook
 - **Stato**: applicata il 2026-11-21: `core:harness-note` committa il solo `NOTES.md` (`git -C <clone> commit NOTES.md -m "docs(notes): …"`) quando il clone è su `main`, mai push; l'inizio sessione conta le note committate e non pubblicate (`harness_notes_info`); `install.sh` aggiunge il permesso per quel commit. Stesso commit e stesso test della nota sul file di riserva.
+
+## 2026-11-21 — A fine iterazione serve un riepilogo dei passi di rilascio ancora da fare (`db-push`, `ship`)
+- **Progetto**: kura
+- **Cosa è successo**: dopo un'iterazione con una migrazione e un commit su un branch, lo stato del rilascio era sparso nel resoconto (migrazione applicata, PR aperta, merge in attesa della CI) e l'utente ha dovuto chiedere «è tutto su main?». Nella stessa sessione `proposals-review` rimandava a `/core:ship`, che non era tra le skill disponibili: push, PR e merge sono stati fatti a mano.
+- **Proposta**: in `conventions.md` («Git» o «Comunicazione»): dopo ogni iterazione di lavoro (commit su un branch, fine di un gruppo di modifiche) chiudere con un riepilogo dei passi di rilascio, in ordine: serve `/core:db-push`? (quali migrazioni, già applicate o no), serve `/core:ship`? (quale branch, quali commit, PR e stato della CI), cosa è già su `main` e in produzione e cosa no. Verificare inoltre perché `core:ship` non compare tra le skill della sessione (le skill di progetto che la citano restano senza passo di pubblicazione) e, se è voluto, aggiornare i rimandi.
+- **Plugin**: core
+- **Tipo**: convenzione
+- **Stato**: applicata il 2026-11-21: due righe in `plugins/core/context/conventions.md` «Git»: a fine iterazione il resoconto si chiude con «Stato del rilascio» (migrazioni e `/core:db-push`, codice e `/core:ship` con PR e CI, cosa è su `main` e in produzione); `/core:ship`, `/core:commit` e `/core:release` non compaiono tra le skill della sessione perché hanno `disable-model-invocation: true` (voluto: le lancia solo l'utente), e la convenzione ora dice di chiedere all'utente di digitarle invece di rifarne i passi a mano.
+
+## 2026-11-21 — I passi di rilascio residui vanno proposti con un comando, non solo elencati
+- **Progetto**: kura
+- **Cosa è successo**: a fine iterazione restavano passi da eseguire in momenti diversi (merge in attesa della CI, migrazioni di un branch successivo, tag dell'APK): il riepilogo «Stato del rilascio» li elenca, ma l'utente deve ricordarsi quale comando lanciare e quando.
+- **Proposta**: quando restano passi residui, lo «Stato del rilascio» si chiude con il comando da digitare per ciascuno, nell'ordine giusto (`/core:db-push`, `/core:ship`, `/core:release`, …). Valutare una skill di `core` (per esempio `/core:next-steps`) che ricava i passi dallo stato reale (migrazioni locali non applicate, commit non pubblicati, PR aperte con lo stato della CI, branch non allineati, tag di rilascio mancanti) e li propone uno alla volta con il comando relativo.
+- **Plugin**: core
+- **Tipo**: convenzione | skill
+- **Stato**: da valutare
