@@ -187,6 +187,62 @@ class SessionTests(unittest.TestCase):
             (home / ".claude.json").write_text("not json")
             self.assertEqual(run("session", {"cwd": str(app)}, env).returncode, 0)
 
+    def test_where_the_harness_notes_go(self):
+        # the harness notes of 2026-11-20: without harness_repo the notes went to the fallback file for eleven days
+        # although the clone was on the computer; and a note committed in the clone must not stay unpublished unseen
+        def sh(cwd, *args):
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=cwd, check=True,
+                           capture_output=True)
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d).resolve()
+            home, app, data, plugin = d / "home", d / "app", d / "data", d / "cache" / "core" / "1.0.0"
+            for p in (home, app, data, plugin):
+                p.mkdir(parents=True)
+            env = {"HOME": str(home), "CLAUDE_PLUGIN_OPTION_HARNESS_REPO": "", "CLAUDE_PLUGIN_DATA": str(data),
+                   "CLAUDE_PLUGIN_ROOT": str(plugin)}
+            res = run("session", {"cwd": str(app)}, env)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn(f"Nessun clone dell'harness su questo computer: `/core:harness-note` scrive nel file di riserva `{data / 'NOTES.md'}`", res.stdout)
+            self.assertNotIn("note nel file di riserva", res.stdout)
+            (data / "NOTES.md").write_text("# Note per l'harness\n\n## 2026-01-01 — a\n- **Stato**: da valutare\n\n## 2026-01-02 — b\n")
+            res = run("session", {"cwd": str(app)}, env)
+            self.assertIn("2 note nel file di riserva", res.stdout)
+            self.assertIn("vanno portate nel `NOTES.md` del repository harness", res.stdout)
+            # a clone where the repositories live, the option still unset (also when it arrives as the placeholder)
+            clone = home / "Documents" / "GitHub" / "iovino-harness"
+            (clone / ".claude-plugin").mkdir(parents=True)
+            (clone / ".claude-plugin/marketplace.json").write_text("{}")
+            (clone / "plugins/core").mkdir(parents=True)
+            (clone / "NOTES.md").write_text("# Note per l'harness\n")
+            sh(clone, "init", "-q", "-b", "main")
+            sh(clone, "add", "-A")
+            sh(clone, "commit", "-q", "-m", "chore: init")
+            sh(d, "clone", "-q", "--bare", str(clone), str(d / "origin.git"))
+            sh(clone, "remote", "add", "origin", str(d / "origin.git"))
+            sh(clone, "fetch", "-q", "origin")
+            for value in ("", "${user_config.harness_repo}"):
+                res = run("session", {"cwd": str(app)}, {**env, "CLAUDE_PLUGIN_OPTION_HARNESS_REPO": value})
+                self.assertIn(f"Note dell'harness (`/core:harness-note`): `{clone / 'NOTES.md'}`", res.stdout)
+                self.assertIn(f"`harness_repo` del plugin core non è impostata su questo computer", res.stdout)
+                self.assertIn("`/core:harness-review` nel repository harness le importa", res.stdout)
+                self.assertNotIn("non pubblicate", res.stdout)
+            # an edit of the clone from the app session asks, NOTES.md does not
+            edit = {"cwd": str(app), "tool_name": "Edit", "tool_input": {"file_path": str(clone / "plugins/core/x.md"), "new_string": "x"}}
+            self.assertEqual(decision(run("guard-file", edit, env)), "ask")
+            edit["tool_input"]["file_path"] = str(clone / "NOTES.md")
+            self.assertEqual(decision(run("guard-file", edit, env)), "none")
+            # the option set: no reminder; a note committed and not pushed is reported
+            env["CLAUDE_PLUGIN_OPTION_HARNESS_REPO"] = str(clone)
+            (data / "NOTES.md").write_text("# Note per l'harness\n")
+            (clone / "NOTES.md").write_text("# Note per l'harness\n\n## 2026-01-03 — c\n- **Stato**: da valutare\n")
+            sh(clone, "commit", "-q", "NOTES.md", "-m", "docs(notes): c")
+            res = run("session", {"cwd": str(app)}, env)
+            self.assertNotIn("non è impostata", res.stdout)
+            self.assertNotIn("file di riserva", res.stdout)
+            self.assertIn("1 note committate nel clone dell'harness e non pubblicate", res.stdout)
+            sh(clone, "push", "-q", "origin", "main")
+            self.assertNotIn("non pubblicate", run("session", {"cwd": str(app)}, env).stdout)
+
     def test_not_a_repo(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "CLAUDE.md").write_text("x")
