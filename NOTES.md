@@ -556,3 +556,11 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Plugin**: core
 - **Tipo**: skill + hook
 - **Stato**: applicata il 2026-11-21: `core:harness-note` committa il solo `NOTES.md` (`git -C <clone> commit NOTES.md -m "docs(notes): …"`) quando il clone è su `main`, mai push; l'inizio sessione conta le note committate e non pubblicate (`harness_notes_info`); `install.sh` aggiunge il permesso per quel commit. Stesso commit e stesso test della nota sul file di riserva.
+
+## 2026-11-21 — A fine iterazione serve un riepilogo dei passi di rilascio ancora da fare (`db-push`, `ship`)
+- **Progetto**: kura
+- **Cosa è successo**: dopo un'iterazione con una migrazione e un commit su un branch, lo stato del rilascio era sparso nel resoconto (migrazione applicata, PR aperta, merge in attesa della CI) e l'utente ha dovuto chiedere «è tutto su main?». Nella stessa sessione `proposals-review` rimandava a `/core:ship`, che non era tra le skill disponibili: push, PR e merge sono stati fatti a mano.
+- **Proposta**: in `conventions.md` («Git» o «Comunicazione»): dopo ogni iterazione di lavoro (commit su un branch, fine di un gruppo di modifiche) chiudere con un riepilogo dei passi di rilascio, in ordine: serve `/core:db-push`? (quali migrazioni, già applicate o no), serve `/core:ship`? (quale branch, quali commit, PR e stato della CI), cosa è già su `main` e in produzione e cosa no. Verificare inoltre perché `core:ship` non compare tra le skill della sessione (le skill di progetto che la citano restano senza passo di pubblicazione) e, se è voluto, aggiornare i rimandi.
+- **Plugin**: core
+- **Tipo**: convenzione
+- **Stato**: da valutare
