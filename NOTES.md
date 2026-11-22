@@ -571,4 +571,4 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Proposta**: quando restano passi residui, lo «Stato del rilascio» si chiude con il comando da digitare per ciascuno, nell'ordine giusto (`/core:db-push`, `/core:ship`, `/core:release`, …). Valutare una skill di `core` (per esempio `/core:next-steps`) che ricava i passi dallo stato reale (migrazioni locali non applicate, commit non pubblicati, PR aperte con lo stato della CI, branch non allineati, tag di rilascio mancanti) e li propone uno alla volta con il comando relativo.
 - **Plugin**: core
 - **Tipo**: convenzione | skill
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-11-22: frase in coda alla riga «A fine iterazione» di `plugins/core/context/conventions.md` «Git» (se restano passi, i comandi da digitare uno per riga, nell'ordine di esecuzione, con la condizione quando non è «subito»). La skill `/core:next-steps` non è stata fatta (duplicherebbe i controlli di `core:ship` §1 e `core:db-push` §1): da riprendere solo se la riga non basta. Commit `feat(core): release status ends with the commands to type`.
