@@ -1,87 +1,70 @@
-# Handoff — Harness dopo la revisione del 2026-11-20 (PR #44, #45): apply voce per voce, MCP Supabase di progetto, note che arrivano nel repository
-_Aggiornato: 2026-11-21 · branch `main` (`fd85475`, PR #45), allineato a `origin/main`_
+# Handoff — Harness dopo la revisione del 2026-11-22 (PR #46, #47): «Stato del rilascio» con i comandi da digitare
+_Aggiornato: 2026-11-22 · branch `main` (`8ba3de0`, PR #47), allineato a `origin/main`_
 
 ## Obiettivo
-Marketplace personale di plugin per Claude Code (`core` 0.26.0, `modeler` 0.40.1). La revisione del 2026-11-20 ha
-valutato nove note di `NOTES.md` (otto arrivate dal file di riserva, una aggiunta in revisione) e le ha applicate con
-la PR #44; la PR #45 corregge `install.sh`. `NOTES.md` ha 0 note aperte e 2 rinviate.
+Marketplace personale di plugin per Claude Code (`core` 0.28.0, `modeler` 0.40.1). Le due note del 2026-11-21 arrivate
+da kura sono applicate (PR #46 e #47): a fine iterazione il resoconto si chiude con lo «Stato del rilascio» e con i
+comandi da digitare. `NOTES.md` ha 0 note aperte e 2 rinviate.
 
 ## Stato
-- Fatto (PR #44, `80d8dbe`, squash di otto commit):
-  - **`apply --write` voce per voce** (nota 2026-11-09): `patch_text` in `plugins/modeler/scripts/metamodel/ecore.py`
-    modifica le regole del package e di classe una per riga (`_rule_edits`, `_rule_line`, virgolette della vicina), le
-    chiavi di classe (`doc`, `label`, `unique`…) una per riga in `feature_edits`, gli `attributes`/`references` su una
-    riga restando su una riga, una classe nuova nello stile del file (`class_lines`). Un blocco si riscrive intero solo
-    se è scritto come lo scrive `dumps` (`canonical`); altrimenti `apply --write` si ferma. Sul metamodello di ACS-GSSI
-    una regola cambiata dà +1 −1 (prima +76 −20).
-  - **Supabase** (note 2026-11-15 e 2026-11-20): `core:db-push` §1 ha il caso «progetto non gestito dalla CLI»
-    (`supabase projects list` prima di `link`, percorso dall'editor SQL con query di verifica) e la regola sul server
-    MCP (confronto del `project_ref`, `list_migrations` senza password); §2 `supabase/.temp/` in `.gitignore` e prova
-    su Postgres usa-e-getta. `core:ship` §2 chiede delle migrazioni nuove anche senza `project-ref`. Server MCP di
-    Supabase solo a scope progetto: `conventions.md`, `core:project-init`, `core:deploy` §1.5, avviso a inizio sessione
-    (`supabase_mcp_warnings` in `plugins/core/scripts/hook.py`).
-  - **Build, output degli strumenti, query** (note 2026-11-16 e 2026-11-18): tre righe in `conventions.md` «Lavoro sul
-    codice»; `core:ship` §2 `npm run build` letto dal codice di uscita; `npm audit --omit=dev` nel blocco D di
-    `core:security-audit`; punto 10 «Errori delle query» in `agents/code-reviewer.md`.
-  - **Branch non allineato** (nota 2026-11-19): riga in `conventions.md` «Git»; `core:ship` §1 propone il commit.
-  - **Branding** (nota 2026-11-20, in parte): riga in `conventions.md` «Stack ricorrente», controlli in
-    `core:project-init` e `core:security-audit` blocco D.
-  - **Note che non si perdono** (due note 2026-11-20): `hook.py` trova il clone (`configured_harness`,
-    `find_harness_clone` in `~/Documents/GitHub`), scrive in ogni sessione dove vanno le note, conta quelle nel file di
-    riserva e i commit `docs(notes)` non pubblicati (`harness_notes_info`); `core:harness-note` committa il solo
-    `NOTES.md` se il clone è su `main`, mai push; `core:harness-review` §1 importa il file di riserva.
-- Fatto (PR #45, `fd85475`): `install.sh` imposta `harness_repo` con `claude plugin configure --values-stdin` anche
-  quando il plugin viene solo aggiornato (prima solo con `claude plugin install`).
-- Verificato (2026-11-21, prima del push della PR #44, Postgres spento): `python3 -m unittest discover -s tests` →
-  26 OK; `-s plugins/modeler/tests` → 130 OK, 10 saltati (quelli con `MODELER_PG`); `node --test
-  plugins/modeler/tests/*.test.mjs` → 191 OK; `claude plugin validate .` → passed. Dopo il merge rieseguiti solo i test
-  core (26 OK). Della PR #45 è stato eseguito solo il blocco nuovo di `install.sh` (prima volta imposta, seconda non
-  tocca), non lo script intero. Nessuna CI nel repository.
-- Su questo computer: `./install.sh` eseguito (core 0.26.0, modeler 0.40.1, permessi con il commit di `NOTES.md`),
-  `harness_repo` impostata su questo clone, `/reload-plugins` dato; file di riserva vuoto.
+- Fatto (PR #46, `8639134`, `core` 0.27.0): due righe in `plugins/core/context/conventions.md` «Git»: «Stato del
+  rilascio» a fine iterazione (migrazioni e `/core:db-push`, codice e `/core:ship` con PR e CI, cosa è su `main` e in
+  produzione); `/core:ship`, `/core:commit` e `/core:release` le lancia solo l'utente
+  (`disable-model-invocation: true`), quindi si chiede di digitarle invece di rifarne i passi a mano.
+- Fatto (`e915342`): `CLAUDE.md` chiede di chiudere ogni rilascio pubblicato con i comandi per portarlo altrove.
+- Fatto (PR #47, `8ba3de0`, `core` 0.28.0, revisione del 2026-11-22): frase in coda alla riga «A fine iterazione» di
+  `conventions.md` «Git»: se restano passi, i comandi da digitare uno per riga, nell'ordine di esecuzione, con la
+  condizione quando non è «subito». Nota 2026-11-21 segnata applicata in `NOTES.md`.
+- Verificato (2026-11-22, sul branch dopo il commit `chore(release)`, Postgres spento): `python3 -m unittest discover
+  -s tests` → 26 OK; `-s plugins/modeler/tests` → 130 OK, 10 saltati (quelli con `MODELER_PG`); `claude plugin
+  validate .` → passed. Non eseguiti: `node --test plugins/modeler/tests/*.test.mjs` (modeler non toccato). Nessuna CI
+  nel repository.
+- Su questo computer: `claude plugin update core@iovino-harness` dice 0.28.0; `./install.sh` non rieseguito dopo la
+  PR #47; la sessione della revisione caricava ancora le skill della 0.26.0 (serve `/reload-plugins` o riavvio). File
+  di riserva delle note vuoto.
 - Non committato: questo `HANDOFF.md`.
-- Modellatore installato nei cloni locali (sola lettura, senza `git pull`): order-management, invitations-af e
-  ACS-GSSI 0.40.0; LudoActivityManager 0.39.0; modeler-sandbox 0.36.2. Nessuna ha la 0.40.1.
+- Modellatore nei cloni locali (dato del 2026-11-21, non ricontrollato): order-management, invitations-af e ACS-GSSI
+  0.40.0; LudoActivityManager 0.39.0; modeler-sandbox 0.36.2. Nessuna ha la 0.40.1.
 
 ## Decisioni
-- **Un blocco scritto a mano non si riscrive mai intero** (PR #44) — `apply --write` si ferma se la modifica non si
-  lascia fare riga per riga; può fermarsi più spesso di prima, resta `--rewrite`. Gli enum si riscrivono ancora a
-  blocco intero (fuori dalla nota).
-- **Server MCP: regola solo per Supabase** — estenderla a ogni server MCP di progetto era un'interpretazione, non un
-  caso visto.
-- **`npm audit` a inizio sessione scartato** — lento e richiede la rete; sta in `core:security-audit`.
-- **«Non allineato» = modifiche non committate o commit non pubblicati** — si propone commit e push a fine lavoro; un
-  branch indietro rispetto a `main` si segnala soltanto.
-- **Branding = nome, sottotitolo, logo, favicon** — il colore principale resta nel tema dell'app.
-- **`harness-note` committa ma non pubblica** — un push su `main` dalla sessione di un altro progetto sarebbe un push
-  non chiesto; l'inizio sessione avvisa delle note non pubblicate.
-- **Rinviate**: nota 2026-10-19 (trigger del massimo delle collezioni, al primo progetto con `upper` finito: nessuno
-  nei cinque metamodelli locali); pagina e tabella di branding nel kit di `modeler:install` (alla prima app nuova).
+- **Skill `/core:next-steps` non fatta** (PR #47) — ricavare i passi dallo stato reale duplicherebbe i controlli di
+  `core:ship` §1 e `core:db-push` §1, e il tag dell'APK è specifico di kura; si riprende solo se la riga in
+  `conventions.md` non basta.
+- **Le skill di pubblicazione restano a sola invocazione dell'utente** (PR #46) — è voluto; le skill di progetto che
+  rimandano a `/core:ship` chiedono all'utente di digitarla.
+- Dalla revisione del 2026-11-20, ancora valide: un blocco scritto a mano non si riscrive mai intero (`apply --write`
+  si ferma, resta `--rewrite`); regola del server MCP solo per Supabase; `harness-note` committa ma non pubblica;
+  branding = nome, sottotitolo, logo, favicon.
+- **Rinviate**: nota 2026-10-19 (trigger del massimo delle collezioni, al primo progetto con `upper` finito); pagina e
+  tabella di branding nel kit di `modeler:install` (alla prima app nuova). Condizioni non ricontrollate il 2026-11-22.
 
 ## Problemi aperti
+- Le convenzioni dello «Stato del rilascio» sono istruzioni senza test: vanno osservate in una sessione vera di un'app
+  (kura è il caso d'origine).
+- L'importazione del file di riserva in `harness-review` §1 non è ancora stata provata con note presenti (il
+  2026-11-22 il file era vuoto).
 - `find_harness_clone` cerca solo in `~/Documents/GitHub/`: su un computer con i repository altrove serve l'opzione
-  `harness_repo`.
-- Il commit automatico di `harness-note` e l'importazione del file di riserva in `harness-review` sono istruzioni di
-  skill mai provate in una sessione vera; l'hook ha il test `test_where_the_harness_notes_go`.
-- L'avviso del server MCP dipende dal formato di `~/.claude.json` (`mcpServers`, `projects.<path>.mcpServers`); su
-  questo computer non c'è nessun server a scope utente, quindi si è visto solo nel test.
-- Sugli altri computer `harness_repo` può essere ancora vuota: la imposta `./install.sh` dopo `git pull`.
+  `harness_repo`; sugli altri computer può essere ancora vuota (la imposta `./install.sh` dopo `git pull`).
+- L'avviso del server MCP dipende dal formato di `~/.claude.json` (`mcpServers`, `projects.<path>.mcpServers`): visto
+  solo nel test.
 - Ereditati e non ricontrollati: order-management usa ancora il flag `accountingChecked` invece di una regione;
   `--yes` in `modeler-release.yml` mai visto in un run vero; primo run di `modeler-apply`/`modeler-release`; avviso dei
   ruoli e riquadri delle regioni non visti nel browser; `psql` assente sul Mac (shim sotto); `guard_harness_edit` solo
   Edit/Write; cartella `help/` non tracciata; `MAX_ROWS` non si applica al box `Role`.
 
 ## Prossimi passi
-1. Sugli altri computer: `git pull && ./install.sh` nel clone (o `claude plugin update core@iovino-harness` e
-   `modeler@iovino-harness`), poi riavvio; controllare che l'inizio sessione non dica «`harness_repo` non è impostata».
-2. Nelle app: `/modeler:install` per la 0.40.1 (ACS-GSSI per prima: è il caso della nota), poi `npm run
-   model:validate` e `npm run model:drift`; LudoActivityManager è alla 0.39.0.
-3. In ACS-GSSI: rifare con `npm run model:apply -- <proposta> --write` una proposta che cambia una regola e
+1. Qui e nelle sessioni aperte in altri progetti: `/reload-plugins` (o riavvio) per caricare `core` 0.28.0.
+2. Sugli altri computer: `git pull && ./install.sh` nel clone (o `claude plugin marketplace update iovino-harness &&
+   claude plugin update core@iovino-harness`), poi riavvio; controllare che l'inizio sessione non dica «`harness_repo`
+   non è impostata».
+3. Alla prossima iterazione in kura: guardare che il resoconto si chiuda con «Stato del rilascio» e con i comandi
+   nell'ordine giusto; se non basta, riaprire la nota 2026-11-21 per la skill `/core:next-steps`.
+4. Nelle app: `/modeler:install` per la 0.40.1 (ACS-GSSI per prima), poi `npm run model:validate` e `npm run
+   model:drift`; LudoActivityManager è alla 0.39.0.
+5. In ACS-GSSI: rifare con `npm run model:apply -- <proposta> --write` una proposta che cambia una regola e
    controllare `git diff --stat domain.ecore.yaml`: solo le righe cambiate.
-4. Alla prossima `/core:harness-note` da un'altra app: guardare che la nota arrivi in questo `NOTES.md` come commit
-   `docs(notes): …` e che l'inizio sessione qui la segnali come non pubblicata.
-5. Con Docker acceso: i test con `MODELER_PG` (comandi sotto), mai eseguiti dopo la PR #43.
-6. Prima app nuova con `modeler:install`: riprendere la pagina di branding nel kit.
+6. Con Docker acceso: i test con `MODELER_PG` (comandi sotto), mai eseguiti dopo la PR #43.
+7. Prima app nuova con `modeler:install`: riprendere la pagina di branding nel kit.
 
 ## Per riprendere
 `cd <clone> && claude` — dopo una modifica ai plugin: `/reload-plugins`.
@@ -99,7 +82,6 @@ chmod +x /tmp/pgbin/psql
 PATH=/tmp/pgbin:$PATH MODELER_PG=postgresql://postgres:pg@localhost:55499/postgres python3 -m unittest discover -s plugins/modeler/tests
 docker stop modeler-pg-test
 ```
-File da leggere per primi: `CLAUDE.md`, `NOTES.md` (ultime nove voci e le due rinviate),
-`plugins/modeler/scripts/metamodel/ecore.py` (`patch_text`, `_rule_edits`), `plugins/core/scripts/hook.py`
-(`harness_notes_info`, `supabase_mcp_warnings`), `plugins/core/skills/harness-note/SKILL.md`,
-`plugins/core/skills/db-push/SKILL.md`, `install.sh`.
+File da leggere per primi: `CLAUDE.md`, `NOTES.md` (le due voci del 2026-11-21 e le due rinviate),
+`plugins/core/context/conventions.md` (sezione «Git»), `plugins/core/skills/ship/SKILL.md`,
+`plugins/core/skills/harness-review/SKILL.md`, `plugins/core/scripts/hook.py` (`harness_notes_info`).
