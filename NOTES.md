@@ -572,3 +572,15 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
 - **Plugin**: core
 - **Tipo**: convenzione | skill
 - **Stato**: applicata il 2026-11-22: frase in coda alla riga «A fine iterazione» di `plugins/core/context/conventions.md` «Git» (se restano passi, i comandi da digitare uno per riga, nell'ordine di esecuzione, con la condizione quando non è «subito»). La skill `/core:next-steps` non è stata fatta (duplicherebbe i controlli di `core:ship` §1 e `core:db-push` §1): da riprendere solo se la riga non basta. Commit `feat(core): release status ends with the commands to type`.
+
+## 2026-11-24 — `core:ship` avvisa quando la produzione gira davvero la build del merge
+- **Progetto**: ACS-GSSI
+- **Cosa è successo**: tre rilasci di fila con `/core:ship`: ogni volta la skill si è fermata al run verde del workflow che pubblica le immagini, dicendo di non aver verificato l'aggiornamento del server (Watchtower lo fa qualche minuto dopo). Sapere se la produzione era sulla build nuova è rimasto un controllo chiesto a mano dopo lo ship, fatto leggendo `GET /healthz` dell'app (`sha` della build in esercizio).
+- **Proposta**: in `plugins/core/skills/ship/SKILL.md` §5, un'opzione `--notify` (o un passo finale sempre attivo quando l'app espone la build) che:
+  - legge la build in produzione da un endpoint pubblico dell'app, indicato in `docs/deploy.md` o nel `CLAUDE.md` del progetto (un `/healthz` con lo `sha`; nelle app Next.js il badge della build di `core:deploy` 7b);
+  - fa polling finché lo `sha` coincide con quello del merge (ogni 30 s, con un tetto, es. 15 min), poi **notifica l'utente** (notifica push della sessione) con build e link; allo scadere del tetto notifica che la produzione è ancora sulla build vecchia e rimanda a «Watchtower non aggiorna» di `core:deploy`;
+  - nelle app con un worker, prima di dire «tutto in produzione» fa anche il controllo già previsto (worker ripartito).
+  In `core:deploy`: chiedere a ogni app un endpoint pubblico con lo `sha` della build, così il controllo non dipende da un login.
+- **Plugin**: core
+- **Tipo**: skill
+- **Stato**: da valutare
