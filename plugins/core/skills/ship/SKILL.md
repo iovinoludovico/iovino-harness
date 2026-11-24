@@ -80,6 +80,16 @@ e `gh pr merge`: è voluto).
   precedente, o un run ancora in coda, inganna `gh run watch`): `sha=$(git rev-parse origin/main)`, poi in polling
   ogni 30 s per al massimo 15 min `gh run list --commit "$sha" --json databaseId,name,status,conclusion,url` finché
   ogni run è `completed`; riporta esito e link; un run `failure` → `gh run view <id> --log-failed`, niente altro.
+- App che dichiara l'endpoint della build (riga «Build in esercizio: <url>» in `docs/deploy.md` o nel `CLAUDE.md`
+  del progetto, es. `/healthz` con lo `sha`, `core:deploy` 7b): dopo il run verde il server non è ancora aggiornato
+  (Watchtower passa qualche minuto dopo). Lancia **in background** un ciclo che legge l'endpoint ogni 30 s per al
+  massimo 15 min finché lo `sha` coincide con quello del merge (`curl -fsS <url>`, confronto sullo SHA breve); il
+  resoconto dello ship non lo aspetta e dice che il controllo è in corso. Alla fine avvisa l'utente (notifica push
+  della sessione se disponibile, altrimenti un messaggio): «produzione sulla build #<n> · <sha>» con il link
+  dell'app, oppure allo scadere «produzione ancora sulla build <sha vecchio>» con il rimando a «Il server non si
+  aggiorna» di `core:deploy` sezione 8. Con un worker, «tutto in produzione» si dice solo dopo anche il controllo
+  del punto seguente. Senza endpoint dichiarato dillo in una riga (aggiornamento del server non verificato) e
+  proponi `core:deploy` 7b.
 - App con un worker (servizio `dispatcher`/`worker` nel compose): il run verde dice solo che l'immagine è
   pubblicata. Prima di dichiarare concluso il rilascio verifica che sia ripartito: il badge della build per `web`
   (`core:deploy` 7b) e, per il worker, una sessione del suo ruolo in `pg_stat_activity` o una consegna riuscita

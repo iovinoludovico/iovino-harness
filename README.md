@@ -75,7 +75,7 @@ Differenze rispetto alla strada A:
 | :- | :- |
 | `/core:project-init` | Primo lavoro serio su un repository senza CLAUDE.md |
 | `/core:commit` | Commit con Conventional Commits, test e lint prima, mai push |
-| `/core:ship` | Push del branch, PR, attesa della CI, merge su `main` solo dopo conferma |
+| `/core:ship` | Push del branch, PR, attesa della CI, merge su `main` solo dopo conferma; poi avvisa quando la produzione gira la build del merge |
 | `/core:release` | Nel repository harness: alza la versione dei plugin modificati e crea il commit `chore(release)` (prova a vuoto, poi `--write`); niente push |
 | `/core:handoff` | Fine sessione o cambio computer: aggiorna HANDOFF.md |
 | `/core:db-push` | Porta in produzione (Supabase cloud) le migrazioni nuove: controlli, anteprima, conferma, verifica |

@@ -152,7 +152,12 @@ dell'immagine (collaudato in invitations-af, customizzazione `build-badge`).
 - Verifica: dopo la build cercare lo SHA nei chunk (`grep -rl <sha> .next/server | head -1`); in produzione il badge
   deve corrispondere all'ultimo commit di `main` (`gh api repos/<owner>/<repo>/commits/main --jq .sha | cut -c1-7`);
   dopo un rollback (`APP_TAG=sha-<commit>`) il badge torna al numero precedente: è il modo di vedere che ha funzionato.
-- Registrare la personalizzazione in `docs/customizations.md` e la riga nel `docs/deploy.md` dell'app.
+- Endpoint pubblico della build: `src/app/healthz/route.ts`, `GET` senza login (escluso dal middleware di Auth,
+  `Cache-Control: no-store`) che risponde `{ "sha": "<sha breve>", "commits": <n> }` da `buildInfo()` e nient'altro
+  (nessun dato dell'app, nessuna query). È ciò che `/core:ship` legge dopo il merge per avvisare quando la
+  produzione gira la build nuova: il badge richiede un login, questo no. Verifica: `curl -fsS https://<dominio>/healthz`.
+- Registrare la personalizzazione in `docs/customizations.md` e nel `docs/deploy.md` dell'app la riga
+  «Build in esercizio: `https://<dominio>/healthz`».
 
 ## 8. Diagnosi
 - **Il server non si aggiorna** (Actions ha pubblicato `latest`, la produzione resta indietro):
@@ -186,5 +191,6 @@ dell'immagine (collaudato in invitations-af, customizzazione `build-badge`).
 ## Scrivere `docs/deploy.md` di un'app
 Tabella dei valori (dominio, URL, repository, immagini, rete del proxy e alias, progetto Supabase con ref, chiave
 publishable, progetto del Docker Manager), poi le sezioni 1–8 (con 2b se l'app ha un worker) con i valori dell'app
-al posto dei segnaposto.
+al posto dei segnaposto. Nella tabella anche «Build in esercizio: `https://<dominio>/healthz`» (7b): `/core:ship` la
+cerca con questo nome.
 Nel resoconto di `/core:ship` e `/core:db-push` rimanda a queste sezioni invece di inventare istruzioni.
