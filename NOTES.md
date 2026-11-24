@@ -583,4 +583,4 @@ Lezioni annotate con `/core:harness-note`, da rivedere e applicare al plugin cor
   In `core:deploy`: chiedere a ogni app un endpoint pubblico con lo `sha` della build, così il controllo non dipende da un login.
 - **Plugin**: core
 - **Tipo**: skill
-- **Stato**: da valutare
+- **Stato**: applicata il 2026-11-24: passo sempre attivo (senza `--notify`) in `plugins/core/skills/ship/SKILL.md` §5 quando `docs/deploy.md` dichiara «Build in esercizio: <url>» (polling in background ogni 30 s, tetto 15 min, avviso a fine o allo scadere); `plugins/core/skills/deploy/SKILL.md` 7b chiede a ogni app `GET /healthz` pubblico con `sha` e `commits` e la riga in `docs/deploy.md`. Le app esistenti senza `/healthz` devono aggiungere la route e la riga (ACS-GSSI ha già l'endpoint).
